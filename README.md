@@ -47,25 +47,39 @@ Workspace de Rust en [`chain/`](chain), con dependencias mínimas
 | `nn` | P3 | MLP entero bit-exacto de invarianza de rama (UBR) — **solo asesor** |
 | `ledger` | P6 | Capa commit-reveal RAMI (puerto de la referencia Python) |
 
-Binarios: [`rami-node`](chain/crates/rami-node) (génesis, minería, estado,
-verificación) y [`rami-wallet`](chain/crates/rami-wallet) (claves, saldo, envío,
-staking, commit/reveal).
+Crates de red y aplicación (v0.2):
+
+- [`rami-net`](chain/crates/rami-net) — gossip P2P sobre TCP JSON-lines, **sin
+  servidor central**: handshake con `network-id` (hash del génesis), sincronización
+  por lotes y retransmisión de bloques/tx. Solo transporte; el nodo revalida todo.
+- [`rami-node`](chain/crates/rami-node) — nodo: `init`, `run` (demonio P2P que
+  escucha, sincroniza y mina), `mine`, `status`, `verify`, `show`. También es
+  biblioteca del runtime que usa el monedero de escritorio.
+- [`rami-wallet`](chain/crates/rami-wallet) — CLI del monedero (claves, saldo,
+  envío, staking, commit/reveal) y biblioteca de firma compartida.
+- [`rami-gui`](chain/crates/rami-gui) — **monedero de escritorio**: un binario que
+  arranca tu nodo P2P (minería opcional) y sirve un panel local en el navegador
+  para hacerlo todo desde ahí. La red neuronal sigue siendo solo asesora.
 
 ## La dificultad de génesis, calculada
 
 Para una testnet minada por CPUs, con un tiempo de bloque objetivo **T = 60 s**:
 
 - Un minero CPU hace del orden de **1×10⁶ SHA-256d/s**.
-- Hashes esperados por bloque = `H0 · T = 1e6 · 60 =` **60 000 000** → esta es la
-  dificultad de génesis `d0`.
-- Objetivo de génesis = `(2²⁵⁶−1) / d0`; codificado en formato compacto →
-  **nBits = `0x1d479531`** (round-trip verificado en los tests).
-- Retarget **LWMA-1** (ventana 60 bloques, clamps [1, 6T] por solvetime y ±4×
-  por bloque) que devuelve la dificultad hacia los 60 s en pocos bloques, sin el
-  «death-spiral» clásico de las monedas nuevas.
+- Hashes esperados por bloque en régimen estable = `H0 · T = 1e6 · 60 =`
+  **60 000 000** → esta es la dificultad de equilibrio a la que converge el LWMA
+  con ~1 CPU. Con más hashrate sube; con menos, baja (siempre hacia 60 s/bloque).
+- **Arranque de la testnet:** el génesis es fijo y canónico (mismo bloque en
+  todas las máquinas → mismo `network-id`) con una **dificultad de arranque baja**
+  (`crate::genesis`), para que la red pueda nacer con poco hashrate. El LWMA la
+  reconduce hacia el equilibrio en pocos bloques, sin el «death-spiral» de las
+  monedas nuevas ni un número mágico grabado.
+- Retarget **LWMA-1** (ventana 60 bloques, clamps por solvetime y ±4× por bloque).
 
-`seconds/block` según hashrate agregado: 1 CPU → 60 s, 10 CPUs → 6 s, 50 → 1,2 s
-(el LWMA los reconduce hacia 60 s).
+Es decir, la dificultad **se calcula sola** a partir del hashrate real: no se fija
+a mano. La cifra de 60 M es el punto de equilibrio calculado para 1 CPU a 1e6 H/s;
+se verificó de extremo a extremo (un nodo minando llevó la dificultad de 4096
+hacia ~1e6 en decenas de bloques mientras un segundo nodo sincronizaba por P2P).
 
 ## Emisión
 
@@ -74,22 +88,32 @@ Estilo Bitcoin, entera y determinista: **50 RAMI** de recompensa inicial,
 (1 RAMI = 10⁸ unidades base). **Sin premine.** El faucet se financia **minando**,
 como cualquiera — no hay excepción a la cota de emisión.
 
-## Empezar en 2 minutos
+## Lo más fácil: el monedero de escritorio
 
 ```bash
-# 1) compilar (Rust estable, rustup.rs)
-cd chain && cargo build --release        # binarios en target/release/
+cd chain && cargo build --release        # o descarga el binario de las releases
+./target/release/rami-gui --network testnet
+# abre el panel en http://127.0.0.1:8645 — minar (un clic), enviar, recibir,
+# apostar y anclar predicciones, todo desde ahí. Para unirte a un par:
+./target/release/rami-gui --network testnet --connect IP_DEL_PAR:30301
+```
 
-# 2) monedero
+## En la terminal (usuarios avanzados)
+
+```bash
+# 1) monedero
 rami-wallet new --label yo
 ADDR=$(rami-wallet address --label yo)
 
-# 3) red local instantánea (regtest, dificultad 1) y minería
+# 2a) demonio P2P de testnet: escucha, sincroniza y mina hacia tu dirección
+rami-node run --network testnet --listen 30301 --connect IP_DEL_PAR:30301 --miner $ADDR --mine
+
+# 2b) o una red local instantánea (regtest, dificultad 1)
 rami-node init --chain ./midato --network regtest --miner $ADDR
 rami-node mine --chain ./midato --network regtest --address $ADDR --blocks 5
 rami-node status --chain ./midato --network regtest
 
-# 4) enviar, apostar, anclar una predicción y verificar
+# 3) enviar, apostar, anclar una predicción y verificar (regtest)
 rami-wallet send   --chain ./midato --network regtest --to <PUBKEY> --amount 10 --label yo
 rami-wallet stake  --chain ./midato --network regtest --amount 50 --label yo
 rami-wallet commit --chain ./midato --network regtest --payload '{"pair":"BTC","dir":"LONG"}' --label yo
@@ -97,7 +121,8 @@ rami-node   mine   --chain ./midato --network regtest --address $ADDR   # incluy
 rami-node   verify --chain ./midato --network regtest
 ```
 
-`regtest` mina al instante; `--network testnet` usa la dificultad real (60 s).
+`regtest` mina al instante; `--network testnet` usa el génesis canónico y la
+dificultad real (arranca baja y el LWMA la reconduce hacia 60 s/bloque).
 
 ## Los dos componentes experimentales (y por qué son seguros)
 
@@ -117,7 +142,9 @@ consenso ni crear monedas aunque fallen.
 
 ```bash
 cd chain && cargo test          # núcleo: decenas de tests (consenso, emisión,
-                                # commit/reveal, doble-gasto, fork-choice, Collatz, NN)
+                                # commit/reveal, doble-gasto, fork-choice, Collatz, NN),
+                                # protocolo P2P y una prueba de integración de dos
+                                # nodos reales que comparten génesis y sincronizan.
 ```
 
 `rami-node verify` reconstruye la cadena desde `chain.jsonl` re-admitiendo cada
@@ -125,12 +152,17 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
 
 ## Estado y hoja de ruta
 
-- **v0.1 (esto):** consenso completo, minería, monedero, commit/reveal, emisión,
-  persistencia y verificación en una sola máquina. Sitio web honesto ([`web/`](web))
-  para Netlify.
-- **v0.2:** gossip P2P (TCP JSON-lines, id de red = hash del génesis), génesis
-  público canónico fijo, faucet como Netlify Function (monedero automatizado,
-  nunca una excepción de consenso), explorador sobre instantáneas re-verificables.
+- **v0.1:** consenso completo, minería, monedero CLI, commit/reveal, emisión,
+  persistencia y verificación en una sola máquina.
+- **v0.2 (esto):** **gossip P2P** (TCP JSON-lines, `network-id` = hash del
+  génesis; sincronización y retransmisión, sin servidor central), **génesis
+  canónico fijo**, demonio `rami-node run`, y un **monedero de escritorio**
+  (`rami-gui`) que hace de nodo + minero + panel local. Binarios multiplataforma
+  publicados por CI con `SHA256SUMS`.
+- **v0.3 (siguiente):** descubrimiento de pares por DNS-seed, explorador sobre
+  instantáneas re-verificables, y un faucet **opcional** que un operador puede
+  desplegar sobre su propio nodo con fondos (nunca una excepción de consenso).
+  Mientras tanto, la vía para conseguir monedas es minar desde el monedero.
 
 ## Referencia
 

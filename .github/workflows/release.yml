@@ -46,7 +46,7 @@ jobs:
           cargo build --release --locked
           --manifest-path chain/Cargo.toml
           --target ${{ matrix.target }}
-          -p rami-node -p rami-wallet
+          -p rami-node -p rami-wallet -p rami-gui
 
       - name: Empaquetar (tar.gz)
         if: matrix.archive == 'tar.gz'
@@ -57,7 +57,7 @@ jobs:
           NAME="rami-chain-${TAG}-${{ matrix.target }}"
           OUT="chain/target/${{ matrix.target }}/release"
           mkdir -p "dist/$NAME"
-          cp "$OUT/rami-node" "$OUT/rami-wallet" "dist/$NAME/"
+          cp "$OUT/rami-node" "$OUT/rami-wallet" "$OUT/rami-gui" "dist/$NAME/"
           cp README.md NOTICE.md LICENSE "dist/$NAME/" 2>/dev/null || true
           tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
 
@@ -70,7 +70,7 @@ jobs:
           NAME="rami-chain-${TAG}-${{ matrix.target }}"
           OUT="chain/target/${{ matrix.target }}/release"
           mkdir -p "dist/$NAME"
-          cp "$OUT/rami-node.exe" "$OUT/rami-wallet.exe" "dist/$NAME/"
+          cp "$OUT/rami-node.exe" "$OUT/rami-wallet.exe" "$OUT/rami-gui.exe" "dist/$NAME/"
           cp README.md NOTICE.md LICENSE "dist/$NAME/" 2>/dev/null || true
           ( cd dist && 7z a "$NAME.zip" "$NAME" >/dev/null )
 

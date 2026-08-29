@@ -94,10 +94,10 @@
     RAMI-CHAIN
   </div>
   <div class="navlinks">
+    <a href="#monedero">Monedero</a>
     <a href="#teoria">Teoría</a>
     <a href="#tech">Tecnología</a>
     <a href="#empezar">Empezar</a>
-    <a href="#faucet">Faucet</a>
     <a href="#explorer">Explorador</a>
     <a href="https://github.com/baydounr01-blip/rami-ledger">GitHub</a>
   </div>
@@ -111,7 +111,8 @@
   el consenso fija por decoherencia. Prueba de trabajo, commit-reveal nativo, una capa de red
   neuronal asesora y un desempate basado en matemática no probada — todo verificable byte a byte.</p>
   <div class="cta">
-    <a class="btn btn-primary" href="#empezar">▶ Empezar (minar / monedero)</a>
+    <a class="btn btn-primary" href="https://github.com/baydounr01-blip/rami-ledger/releases">⬇ Descargar monedero de escritorio</a>
+    <a class="btn btn-ghost" href="#empezar">Cómo empezar</a>
     <a class="btn btn-ghost" href="https://github.com/baydounr01-blip/rami-ledger">Código en GitHub</a>
   </div>
   <div class="facts">
@@ -121,6 +122,37 @@
     <div class="fact"><b>0</b><span>premine · 0 venta pública</span></div>
   </div>
 </header>
+
+<section id="monedero">
+  <span class="pill">MONEDERO DE ESCRITORIO · v0.2</span>
+  <h2>Un solo programa: tu nodo, tu minería y tu monedero.</h2>
+  <p class="sub">Descarga <code>rami-gui</code> (Linux, macOS, Windows), ejecútalo y se abre un
+  <strong>panel local en tu navegador</strong>. Desde ahí lo haces todo: <strong>minar</strong> con un
+  clic (la recompensa va a tu monedero), <strong>enviar</strong> y <strong>recibir</strong>,
+  <strong>apostar (staking)</strong> y anclar <strong>predicciones</strong> (commit-reveal). Sin
+  configurar nada. La CLI (<code>rami-node</code>, <code>rami-wallet</code>) sigue ahí para quien la quiera.</p>
+  <div class="grid3">
+    <div class="card"><div class="tag">UN CLIC</div><h3>Minar desde el monedero</h3>
+      <p>Pulsa «Empezar a minar» y tu CPU asegura la red. La dificultad se ajusta sola (LWMA) hacia
+      60 s/bloque según el hashrate real. Sin premine: las monedas nacen minando.</p></div>
+    <div class="card"><div class="tag">P2P · SIN PUNTO DE FALLO ÚNICO</div><h3>Red sin servidor central</h3>
+      <p>El panel es local; la red es entre pares (gossip TCP). Cualquiera corre un nodo y se conecta a
+      otros por su IP: el <em>network-id</em> es el hash del génesis, así que todos hablan la misma red.
+      No hay una empresa que apagar.</p></div>
+    <div class="card"><div class="tag">VERIFICABLE</div><h3>Descarga comprobable</h3>
+      <p>Los binarios se compilan en CI con <code>--locked</code> y se publican con su
+      <code>SHA256SUMS.txt</code>. Comprueba el hash antes de ejecutar; no llevan <em>code-signing</em>
+      de plataforma.</p></div>
+  </div>
+  <p style="margin:18px 0 0">
+    <a class="btn btn-primary" href="https://github.com/baydounr01-blip/rami-ledger/releases">⬇ Descargar (releases de GitHub)</a>
+  </p>
+  <p style="color:var(--mut);font-size:13px;margin-top:10px">
+    <strong>Recuerda:</strong> testnet experimental, <strong>sin valor monetario</strong>. Las monedas se
+    obtienen gratis minando o con staking. Aquí no hay botón de compra; cualquier web que te pida dinero
+    o cripto por monedas de RAMI-Chain es fraudulenta.
+  </p>
+</section>
 
 <section id="teoria">
   <span class="pill">LA IDEA</span>
@@ -182,6 +214,17 @@
   <p style="margin:0 0 18px">
     <a class="btn btn-primary" href="https://github.com/baydounr01-blip/rami-ledger/releases">⬇ Descargar monedero (releases)</a>
   </p>
+  <div class="card" style="margin:0 0 18px">
+    <div class="tag">LO MÁS FÁCIL</div>
+    <h3>Monedero de escritorio en un paso</h3>
+    <pre><span class="c"># descomprime el release y ejecuta:</span>
+./rami-gui --network testnet
+<span class="c"># abre el panel en http://127.0.0.1:8645 — minar, enviar,</span>
+<span class="c"># recibir, apostar y predecir, todo desde ahí.</span>
+<span class="c"># conéctate a un par conocido:</span>
+./rami-gui --network testnet --connect IP_DEL_PAR:30301</pre>
+  </div>
+  <p class="sub" style="margin:0 0 12px">¿Prefieres la terminal? El nodo P2P y la CLI del monedero:</p>
   <div class="two">
     <div>
       <h3 style="font-size:15px;color:#cfd3e6">1 · Compilar</h3>
@@ -210,27 +253,28 @@ rami-node verify --chain ./midato --network regtest</pre>
     </div>
   </div>
   <p style="color:var(--mut);font-size:13px;margin-top:14px"><code>regtest</code> mina al instante (dificultad 1),
-  ideal para probar. <code>testnet</code> usa la dificultad real (60 s/bloque). El comando
-  <code>rami-wallet commit</code> / <code>reveal</code> ancla predicciones en la cadena.</p>
+  ideal para probar. Para unirte a la red P2P: <code>rami-node run --network testnet --connect IP:30301 --miner $ADDR --mine</code>
+  (escucha, sincroniza y mina). <code>rami-wallet commit</code> / <code>reveal</code> ancla predicciones en la cadena.</p>
 </section>
 
 <section id="faucet">
-  <span class="pill">FAUCET</span>
-  <h2>Monedas de prueba, gratis</h2>
+  <span class="pill">CÓMO CONSIGUES MONEDAS</span>
+  <h2>Gratis: minando o con staking</h2>
   <div class="warnbox">
-    <b>El faucet nunca pide pago.</b> Las monedas de RAMI-Chain se obtienen sin coste: minando,
-    haciendo staking o pidiéndolas al faucet cuando la testnet pública esté en marcha. Cualquier
-    web que te pida BTC, euros u otra cripto por monedas de RAMI-Chain es fraudulenta y no es
-    nuestra.
+    <b>Nadie te vende monedas de RAMI-Chain.</b> Se obtienen sin coste. Con el monedero de escritorio,
+    la vía principal es <b>minar con un clic</b>: la recompensa del bloque va a tu cuenta. También puedes
+    hacer <b>staking</b>. No hay compra ni pago: cualquier web o persona que te pida BTC, euros u otra
+    cripto por monedas de RAMI-Chain es un <b>fraude</b> y no es nuestra.
     <div class="disc">
-      <div><b>Drip:</b> 10 RAMI por solicitud (cuando esté activo)</div>
-      <div><b>Reserva:</b> financiada minando, divulgada, finita</div>
+      <div><b>Minar:</b> pulsa «Empezar a minar» en el monedero</div>
+      <div><b>Staking:</b> apuesta tus RAMI desde el panel</div>
       <div><b>Sin KYC, sin compra, sin pago.</b></div>
-      <div><b>¿Vacío?</b> mina tú mismo: es la vía principal.</div>
+      <div><b>Sin premine</b> · emisión finita (~21 M)</div>
     </div>
-    <p style="margin:14px 0 0;font-size:13px">Estado actual: la red pública v0.1 aún no está desplegada
-    (nodo único; el gossip P2P llega en v0.2). Usa <code>regtest</code> o <code>testnet</code> en tu
-    máquina para minar tus propias monedas de prueba ahora mismo.</p>
+    <p style="margin:14px 0 0;font-size:13px">Un <b>faucet</b> hospedado (repartir monedas a quien las pida)
+    requiere que un operador tenga un nodo con fondos siempre encendido; como cualquiera puede minar sus
+    propias monedas al instante desde el monedero, esa es la vía recomendada. Sin punto de fallo único:
+    la red es P2P (v0.2), no depende de ningún servidor.</p>
   </div>
 </section>
 
