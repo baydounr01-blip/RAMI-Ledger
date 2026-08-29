@@ -16,3 +16,4 @@ pub mod block;
 pub mod tx;
 pub mod state;
 pub mod blocktree;
+pub mod store;
