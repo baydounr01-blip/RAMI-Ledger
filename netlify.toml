@@ -1,0 +1,11 @@
+# RAMI-Chain — sitio estático (testnet experimental, sin valor monetario).
+[build]
+  publish = "web"
+  command = ""
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"
