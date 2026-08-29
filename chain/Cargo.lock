@@ -234,6 +234,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rami-gui"
+version = "0.2.0"
+dependencies = [
+ "hex",
+ "rami-core",
+ "rami-node",
+ "rami-wallet",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rami-net"
 version = "0.2.0"
 dependencies = [

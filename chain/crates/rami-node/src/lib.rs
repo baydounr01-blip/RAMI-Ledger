@@ -24,7 +24,7 @@ use rami_core::params::Params;
 use rami_core::pow::{difficulty_from_bits, meets_target, pow_hash};
 use rami_core::state::{block_reward, Account, State, COIN};
 use rami_core::store::ChainDir;
-use rami_core::tx::{merkle_root_txids, txid, verify_tx, AccountId, Tx, TxId};
+use rami_core::tx::{merkle_root_txids, signer_of, txid, verify_tx, AccountId, Tx, TxId};
 
 use rami_net::{Frame, NetConfig, NetEvent, Network};
 
@@ -304,6 +304,7 @@ enum NodeCmd {
     SetMiner(AccountId),
     AddPeer(String),
     GetAccount(AccountId, Sender<AccountView>),
+    NextNonce(AccountId, Sender<u64>),
     RecentBlocks(usize, Sender<Vec<BlockView>>),
 }
 
@@ -340,6 +341,14 @@ impl NodeHandle {
             return AccountView::default();
         }
         rx.recv().unwrap_or_default()
+    }
+    /// Siguiente nonce utilizable = nonce en cadena + tx pendientes de ese firmante.
+    pub fn next_nonce(&self, a: AccountId) -> u64 {
+        let (r, rx) = channel();
+        if self.tx.send(NodeMsg::Cmd(NodeCmd::NextNonce(a, r))).is_err() {
+            return 0;
+        }
+        rx.recv().unwrap_or(0)
     }
     pub fn recent_blocks(&self, n: usize) -> Vec<BlockView> {
         let (r, rx) = channel();
@@ -619,7 +628,13 @@ impl Node {
         if self.seen_tx.contains(&id) {
             return Ok(hex::encode(id));
         }
+        // Valida sobre el estado de la punta CON el mempool ya aplicado en orden,
+        // para admitir nonces consecutivos del mismo firmante (p. ej. enviar y
+        // luego comprometer sin esperar a que se mine el primero).
         let mut sim = self.tree.head_state().unwrap_or_default();
+        for t in &self.mempool {
+            let _ = try_apply(&mut sim, t);
+        }
         try_apply(&mut sim, &tx).map_err(|e| format!("no aplica: {e}"))?;
         self.mempool.push(tx.clone());
         self.seen_tx.insert(id);
@@ -637,6 +652,7 @@ impl Node {
     fn on_mined(&mut self, block: Block) {
         match self.accept_block(block.clone(), None) {
             Ok(true) => {
+                self.mining.found.fetch_add(1, Ordering::Relaxed);
                 self.net.broadcast(Frame::NewBlock { block });
                 self.net.broadcast(self.my_status_frame());
                 self.refresh_candidate();
@@ -682,6 +698,11 @@ impl Node {
                 let st = self.tree.head_state().unwrap_or_default();
                 let acc: Account = st.accounts.get(&a).cloned().unwrap_or_default();
                 let _ = reply.send(AccountView { balance: acc.balance, staked: acc.staked, nonce: acc.nonce });
+            }
+            NodeCmd::NextNonce(a, reply) => {
+                let base = self.tree.head_state().map(|s| s.nonce_of(&a)).unwrap_or(0);
+                let pending = self.mempool.iter().filter(|t| signer_of(t) == Some(&a)).count() as u64;
+                let _ = reply.send(base + pending);
             }
             NodeCmd::RecentBlocks(n, reply) => {
                 let chain = self.tree.observer_chain();

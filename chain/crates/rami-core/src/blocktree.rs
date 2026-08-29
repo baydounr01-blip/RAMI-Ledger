@@ -257,7 +257,7 @@ mod tests {
     use crate::block::BlockHeader;
     use crate::params::Params;
     use crate::pow::pow_hash;
-    use crate::state::{block_reward, COIN};
+    use crate::state::block_reward;
     use crate::tx::{merkle_root_txids, txid, Tx, TxId};
 
     fn mine(mut header: BlockHeader) -> BlockHeader {

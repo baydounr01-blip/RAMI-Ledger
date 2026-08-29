@@ -1,0 +1,807 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAMI-Chain</title>
+<style>
+  :root{
+    --bg:#0b0e17;
+    --panel:#121725;
+    --border:#1e2740;
+    --blue:#6ea8fe;
+    --green:#7ef0c0;
+    --text:#e8eaf2;
+    --muted:#9aa3bf;
+    --danger:#ff6b6b;
+    --warn:#ffd166;
+    --radius:12px;
+    --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,Monaco,"Courier New",monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--sans);
+    font-size:14px;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--blue)}
+  code,.mono{font-family:var(--mono)}
+
+  /* ---------- Banner ---------- */
+  .banner{
+    background:linear-gradient(90deg,rgba(126,240,192,.08),rgba(110,168,254,.08));
+    border-bottom:1px solid var(--border);
+    padding:10px 20px;
+    font-size:12.5px;
+    color:var(--text);
+  }
+  .banner strong{color:var(--warn)}
+  .banner .fraude{color:var(--danger);font-weight:600}
+  .banner .row{display:flex;gap:8px;align-items:flex-start;max-width:1400px;margin:0 auto}
+  .banner .shield{font-size:16px;line-height:1.3}
+
+  /* ---------- Top bar ---------- */
+  .topbar{
+    display:flex;align-items:center;gap:16px;
+    padding:12px 20px;
+    border-bottom:1px solid var(--border);
+    background:rgba(18,23,37,.6);
+    position:sticky;top:0;z-index:5;
+    backdrop-filter:blur(6px);
+  }
+  .wordmark{
+    font-weight:700;font-size:18px;letter-spacing:.5px;
+    display:flex;align-items:center;gap:8px;
+  }
+  .wordmark .logo{
+    display:inline-flex;width:26px;height:26px;border-radius:7px;
+    align-items:center;justify-content:center;
+    background:linear-gradient(135deg,var(--blue),var(--green));
+    color:#0b0e17;font-size:15px;
+  }
+  .wordmark .rami{color:var(--text)}
+  .wordmark .chain{color:var(--blue)}
+  .pill{
+    display:inline-flex;align-items:center;gap:8px;
+    background:var(--panel);border:1px solid var(--border);
+    border-radius:999px;padding:5px 12px;font-size:12px;color:var(--muted);
+  }
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none;
+    box-shadow:0 0 0 3px rgba(255,255,255,.03)}
+  .dot.sync{background:var(--green);box-shadow:0 0 8px rgba(126,240,192,.7)}
+  .dot.syncing{background:var(--warn);box-shadow:0 0 8px rgba(255,209,102,.6);
+    animation:pulse 1.2s ease-in-out infinite}
+  .dot.off{background:var(--danger);box-shadow:0 0 8px rgba(255,107,107,.6)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .topbar .spacer{flex:1}
+  .topbar .ver{color:var(--muted);font-size:12px;font-family:var(--mono)}
+
+  /* ---------- Layout ---------- */
+  .shell{display:flex;max-width:1400px;margin:0 auto;min-height:calc(100vh - 120px)}
+  nav.side{
+    width:210px;flex:none;padding:18px 12px;border-right:1px solid var(--border);
+  }
+  nav.side button{
+    display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+    background:transparent;border:1px solid transparent;color:var(--muted);
+    padding:10px 12px;border-radius:10px;font-size:14px;cursor:pointer;
+    margin-bottom:4px;font-family:inherit;transition:.12s;
+  }
+  nav.side button:hover{background:rgba(110,168,254,.06);color:var(--text)}
+  nav.side button.active{
+    background:rgba(110,168,254,.12);color:var(--text);
+    border-color:var(--border);
+  }
+  nav.side button .ico{width:20px;text-align:center;font-size:15px}
+  main{flex:1;padding:22px 26px;min-width:0}
+
+  @media(max-width:820px){
+    .shell{flex-direction:column}
+    nav.side{width:auto;display:flex;flex-wrap:wrap;gap:4px;border-right:none;
+      border-bottom:1px solid var(--border)}
+    nav.side button{width:auto;margin-bottom:0}
+  }
+
+  /* ---------- Cards / tiles ---------- */
+  h1.section-title{font-size:20px;margin:0 0 4px}
+  .section-sub{color:var(--muted);margin:0 0 20px;font-size:13px}
+  .card{
+    background:var(--panel);border:1px solid var(--border);
+    border-radius:var(--radius);padding:18px;
+  }
+  .grid{display:grid;gap:14px}
+  .grid.two{grid-template-columns:1fr 1fr}
+  .grid.tiles{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:900px){.grid.tiles{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:560px){.grid.two{grid-template-columns:1fr}.grid.tiles{grid-template-columns:1fr}}
+
+  .big-card{
+    background:linear-gradient(135deg,rgba(110,168,254,.10),rgba(126,240,192,.06));
+    border:1px solid var(--border);border-radius:var(--radius);padding:20px;
+  }
+  .big-card .lbl{color:var(--muted);font-size:13px;margin-bottom:6px;
+    display:flex;align-items:center;gap:6px}
+  .big-card .val{font-size:30px;font-weight:700;font-family:var(--mono);letter-spacing:-.5px}
+  .big-card .val .unit{font-size:15px;color:var(--muted);font-weight:500;margin-left:6px;
+    font-family:var(--sans)}
+  .big-card.green .val{color:var(--green)}
+  .big-card.blue .val{color:var(--blue)}
+
+  .tile{
+    background:var(--panel);border:1px solid var(--border);
+    border-radius:var(--radius);padding:14px 16px;
+  }
+  .tile .lbl{color:var(--muted);font-size:12px;margin-bottom:4px}
+  .tile .val{font-size:20px;font-weight:600;font-family:var(--mono)}
+
+  /* ---------- Forms ---------- */
+  label.field{display:block;margin-bottom:14px}
+  label.field .cap{display:block;color:var(--muted);font-size:12.5px;margin-bottom:6px}
+  input[type=text],input[type=number],textarea{
+    width:100%;background:#0d1220;border:1px solid var(--border);
+    color:var(--text);border-radius:9px;padding:10px 12px;font-size:14px;
+    font-family:var(--mono);outline:none;transition:.12s;
+  }
+  input:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(110,168,254,.15)}
+  textarea{min-height:96px;resize:vertical;line-height:1.5}
+  .row-fields{display:flex;gap:14px;flex-wrap:wrap}
+  .row-fields > label.field{flex:1;min-width:140px}
+
+  button.btn{
+    background:var(--blue);color:#08111f;border:none;border-radius:9px;
+    padding:11px 18px;font-size:14px;font-weight:600;cursor:pointer;
+    font-family:inherit;transition:.12s;
+  }
+  button.btn:hover{filter:brightness(1.08)}
+  button.btn:active{transform:translateY(1px)}
+  button.btn:disabled{opacity:.5;cursor:not-allowed}
+  button.btn.ghost{background:transparent;color:var(--text);border:1px solid var(--border)}
+  button.btn.ghost:hover{background:rgba(255,255,255,.04)}
+  button.btn.green{background:var(--green);color:#08211a}
+  button.btn.danger{background:var(--danger);color:#2a0808}
+  button.btn.small{padding:6px 12px;font-size:12.5px}
+
+  .copybtn{
+    background:transparent;border:1px solid var(--border);color:var(--muted);
+    border-radius:7px;padding:4px 9px;font-size:11.5px;cursor:pointer;
+    font-family:inherit;transition:.12s;
+  }
+  .copybtn:hover{color:var(--text);border-color:var(--blue)}
+
+  /* ---------- Status area ---------- */
+  .status{
+    margin-top:14px;padding:12px 14px;border-radius:9px;font-size:13px;
+    border:1px solid var(--border);background:#0d1220;display:none;
+    word-break:break-all;
+  }
+  .status.show{display:block}
+  .status.ok{border-color:rgba(126,240,192,.4);background:rgba(126,240,192,.06)}
+  .status.err{border-color:rgba(255,107,107,.4);background:rgba(255,107,107,.06)}
+  .status .k{color:var(--muted);font-family:var(--sans)}
+  .status .txid{color:var(--green)}
+
+  /* ---------- Tables ---------- */
+  .tbl-wrap{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;color:var(--muted);font-weight:500;font-size:12px;
+    padding:8px 10px;border-bottom:1px solid var(--border)}
+  td{padding:9px 10px;border-bottom:1px solid rgba(30,39,64,.5);font-family:var(--mono)}
+  tr:last-child td{border-bottom:none}
+  td.num{text-align:right}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;
+    font-family:var(--sans);border:1px solid var(--border)}
+  .badge.in{color:var(--green);border-color:rgba(126,240,192,.35);background:rgba(126,240,192,.06)}
+  .badge.out{color:var(--blue);border-color:rgba(110,168,254,.35);background:rgba(110,168,254,.06)}
+
+  .addr-block{
+    background:#0d1220;border:1px solid var(--border);border-radius:10px;
+    padding:14px;font-family:var(--mono);font-size:14px;word-break:break-all;
+    line-height:1.7;
+  }
+  .muted{color:var(--muted)}
+  .note{color:var(--muted);font-size:12.5px;line-height:1.6;margin-top:12px}
+  .note .em{color:var(--text)}
+  hr.sep{border:none;border-top:1px solid var(--border);margin:20px 0}
+  .kv{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .kv .k{color:var(--muted);font-size:12.5px}
+  .toggle-wrap{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .mining-live{display:inline-flex;align-items:center;gap:8px;color:var(--green);
+    font-size:13px}
+  .spin{display:inline-block;animation:spin 2.4s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .hidden{display:none}
+  .inline-tag{font-family:var(--mono);color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+
+<!-- ================= BANNER (persistente) ================= -->
+<div class="banner">
+  <div class="row">
+    <span class="shield">🛡️</span>
+    <div>
+      <strong>RED DE PRUEBAS EXPERIMENTAL (TESTNET).</strong>
+      Esta moneda <strong>no tiene valor monetario</strong>, no es una inversión, no es un valor financiero y no se vende.
+      Las monedas se obtienen <strong>gratis</strong> minando, apostando (staking) o mediante un faucet. Aquí no hay ningún botón para comprar.
+      <span class="fraude">Cualquier web o persona que te pida dinero o cripto por monedas de RAMI-Chain es un fraude.</span>
+    </div>
+  </div>
+</div>
+
+<!-- ================= TOP BAR ================= -->
+<div class="topbar">
+  <div class="wordmark">
+    <span class="logo">🔗</span>
+    <span><span class="rami">RAMI</span><span class="chain">-Chain</span></span>
+  </div>
+  <div class="pill">
+    <span id="netName">testnet</span>
+    <span id="syncDot" class="dot off"></span>
+    <span id="syncTxt">conectando…</span>
+  </div>
+  <div class="spacer"></div>
+  <span class="ver">v<span id="verTxt">—</span></span>
+</div>
+
+<!-- ================= SHELL ================= -->
+<div class="shell">
+  <nav class="side" id="nav">
+    <button data-view="resumen" class="active"><span class="ico">📊</span> Resumen</button>
+    <button data-view="enviar"><span class="ico">↗️</span> Enviar</button>
+    <button data-view="recibir"><span class="ico">↙️</span> Recibir</button>
+    <button data-view="minar"><span class="ico">⛏</span> Minar</button>
+    <button data-view="predicciones"><span class="ico">🔮</span> Predicciones</button>
+    <button data-view="red"><span class="ico">🌐</span> Red</button>
+  </nav>
+
+  <main>
+
+    <!-- ============ RESUMEN ============ -->
+    <section id="v-resumen">
+      <h1 class="section-title">Resumen</h1>
+      <p class="section-sub">Estado de tu monedero y del nodo local.</p>
+
+      <div class="grid two" style="margin-bottom:14px">
+        <div class="big-card green">
+          <div class="lbl">💰 Saldo disponible</div>
+          <div class="val"><span id="sumBalance">—</span><span class="unit">RAMI</span></div>
+        </div>
+        <div class="big-card blue">
+          <div class="lbl">🔒 Apostado (staking)</div>
+          <div class="val"><span id="sumStaked">—</span><span class="unit">RAMI</span></div>
+        </div>
+      </div>
+
+      <div class="grid tiles" style="margin-bottom:14px">
+        <div class="tile"><div class="lbl">Altura</div><div class="val" id="sumHeight">—</div></div>
+        <div class="tile"><div class="lbl">Dificultad</div><div class="val" id="sumDiff">—</div></div>
+        <div class="tile"><div class="lbl">Pares</div><div class="val" id="sumPeers">—</div></div>
+        <div class="tile"><div class="lbl">Suministro</div><div class="val" id="sumSupply">—</div></div>
+      </div>
+      <div class="grid tiles" style="margin-bottom:18px">
+        <div class="tile"><div class="lbl">Mempool</div><div class="val" id="sumMempool">—</div></div>
+        <div class="tile"><div class="lbl">Bloques en el árbol</div><div class="val" id="sumBlocksTotal">—</div></div>
+        <div class="tile"><div class="lbl">Ramas / puntas</div><div class="val" id="sumTips">—</div></div>
+        <div class="tile"><div class="lbl">Trabajo (work)</div><div class="val" id="sumWork">—</div></div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px">
+        <div class="kv" style="justify-content:space-between">
+          <div class="kv">
+            <span class="k">ID de red:</span>
+            <span class="mono" id="sumNetId">—</span>
+          </div>
+          <button class="copybtn" data-copy-target="netIdFull">Copiar</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="kv" style="justify-content:space-between;margin-bottom:10px">
+          <strong>Bloques recientes</strong>
+          <span class="muted" style="font-size:12px">se actualiza cada 4 s</span>
+        </div>
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr><th>Altura</th><th>Hash</th><th class="num">Txs</th><th class="num">Dificultad</th><th class="num">Hora</th></tr>
+            </thead>
+            <tbody id="blocksBody">
+              <tr><td colspan="5" class="muted">Cargando…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ENVIAR ============ -->
+    <section id="v-enviar" class="hidden">
+      <h1 class="section-title">Enviar</h1>
+      <p class="section-sub">Transfiere RAMI a otra dirección de la testnet.</p>
+      <div class="card" style="max-width:640px">
+        <label class="field">
+          <span class="cap">Destino (dirección, hex de 64 caracteres)</span>
+          <input type="text" id="sendTo" placeholder="clave pública del destinatario en hexadecimal" autocomplete="off">
+        </label>
+        <div class="row-fields">
+          <label class="field">
+            <span class="cap">Importe (RAMI)</span>
+            <input type="text" id="sendAmount" placeholder="10.5" inputmode="decimal">
+          </label>
+          <label class="field">
+            <span class="cap">Comisión (ram)</span>
+            <input type="number" id="sendFee" value="1" min="0" step="1">
+          </label>
+        </div>
+        <button class="btn" id="sendBtn">Firmar y enviar</button>
+        <div class="status" id="sendStatus"></div>
+        <p class="note">La transacción se firma localmente con tu clave privada y se difunde a la red. No hay intermediarios ni custodios.</p>
+      </div>
+    </section>
+
+    <!-- ============ RECIBIR ============ -->
+    <section id="v-recibir" class="hidden">
+      <h1 class="section-title">Recibir</h1>
+      <p class="section-sub">Esta es tu dirección de pago pública.</p>
+      <div class="card" style="max-width:720px">
+        <div class="kv" style="justify-content:space-between;margin-bottom:8px">
+          <span class="cap muted">Tu dirección (clave pública en hexadecimal)</span>
+          <span class="inline-tag" id="recvShort">—</span>
+        </div>
+        <div class="addr-block" id="recvAddr">—</div>
+        <div style="margin-top:12px">
+          <button class="btn green" data-copy-target="recvAddrFull">Copiar dirección</button>
+        </div>
+        <p class="note">
+          <span class="em">¿Cómo recibo monedas?</span> Recibes RAMI cuando <span class="em">minas</span> un bloque (la recompensa va a esta dirección)
+          o cuando alguien te envía monedas a esta dirección. Compártela libremente: solo sirve para recibir, nunca revela tu clave privada.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ MINAR ============ -->
+    <section id="v-minar" class="hidden">
+      <h1 class="section-title">Minar ⛏</h1>
+      <p class="section-sub">Aporta trabajo a la red y gana la recompensa del bloque.</p>
+      <div class="card" style="max-width:720px">
+        <div class="toggle-wrap" style="margin-bottom:18px">
+          <button class="btn green" id="mineToggle">Empezar a minar</button>
+          <span class="mining-live hidden" id="mineLive"><span class="spin">⛏</span> minando…</span>
+        </div>
+
+        <div class="grid tiles">
+          <div class="tile"><div class="lbl">Estado</div><div class="val" id="mineState">—</div></div>
+          <div class="tile"><div class="lbl">Hashrate</div><div class="val" id="mineRate">—</div></div>
+          <div class="tile"><div class="lbl">Bloques encontrados</div><div class="val" id="mineFound">—</div></div>
+          <div class="tile"><div class="lbl">Dificultad actual</div><div class="val" id="mineDiff">—</div></div>
+        </div>
+
+        <div class="status" id="mineStatus"></div>
+
+        <p class="note">
+          La minería paga la <span class="em">recompensa del bloque</span> a este monedero. La dificultad se autoajusta con el algoritmo
+          <span class="em">LWMA</span> buscando un bloque cada <span class="em">60 s</span> de media. No hay preminado (no premine): todas las monedas
+          se emiten por minería y staking.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ PREDICCIONES ============ -->
+    <section id="v-predicciones" class="hidden">
+      <h1 class="section-title">Predicciones 🔮</h1>
+      <p class="section-sub">Compromiso y revelación (commit-reveal).</p>
+
+      <div class="card" style="max-width:720px;margin-bottom:14px">
+        <p class="note" style="margin-top:0">
+          Ancla una predicción cifrada ahora y revélala después. El nodo comprueba que no hiciste trampa:
+          <span class="em">el reveal va en un bloque estrictamente posterior</span> al del commit, de modo que no puedes cambiar tu predicción
+          una vez conocido el resultado.
+        </p>
+        <hr class="sep">
+        <label class="field">
+          <span class="cap">Payload (JSON) — lo que predices</span>
+          <textarea id="commitPayload" placeholder='{"pair":"BTC","dir":"LONG"}'></textarea>
+        </label>
+        <div class="row-fields">
+          <label class="field" style="max-width:200px">
+            <span class="cap">Comisión (ram)</span>
+            <input type="number" id="commitFee" value="1" min="0" step="1">
+          </label>
+        </div>
+        <button class="btn" id="commitBtn">Comprometer (commit) ⚡</button>
+        <div class="status" id="commitStatus"></div>
+      </div>
+
+      <div class="card" style="max-width:720px">
+        <strong>Revelar</strong>
+        <p class="note" style="margin-top:6px">Cuando tu commit ya esté en un bloque, revélalo indicando su txid de commit.</p>
+        <label class="field" style="margin-top:12px">
+          <span class="cap">Txid del commit</span>
+          <input type="text" id="revealCommit" placeholder="hash hex del commit" autocomplete="off">
+        </label>
+        <div class="row-fields">
+          <label class="field" style="max-width:200px">
+            <span class="cap">Comisión (ram)</span>
+            <input type="number" id="revealFee" value="1" min="0" step="1">
+          </label>
+        </div>
+        <button class="btn green" id="revealBtn">Revelar</button>
+        <div class="status" id="revealStatus"></div>
+      </div>
+    </section>
+
+    <!-- ============ RED ============ -->
+    <section id="v-red" class="hidden">
+      <h1 class="section-title">Red 🌐</h1>
+      <p class="section-sub">Nodos de la red RAMI-Chain.</p>
+
+      <div class="grid tiles" style="margin-bottom:14px">
+        <div class="tile"><div class="lbl">Puerto de escucha</div><div class="val" id="netPort">—</div></div>
+        <div class="tile"><div class="lbl">ID de nodo</div><div class="val" id="netNodeId">—</div></div>
+        <div class="tile"><div class="lbl">Pares conectados</div><div class="val" id="netPeerCount">—</div></div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px;max-width:720px">
+        <label class="field" style="margin-bottom:10px">
+          <span class="cap">Añadir par (host:puerto)</span>
+          <input type="text" id="peerAddr" placeholder="127.0.0.1:30302" autocomplete="off">
+        </label>
+        <button class="btn" id="peerBtn">Conectar</button>
+        <div class="status" id="peerStatus"></div>
+      </div>
+
+      <div class="card">
+        <strong style="display:block;margin-bottom:10px">Pares</strong>
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr><th>Dirección</th><th>Sentido</th><th class="num">Altura</th></tr>
+            </thead>
+            <tbody id="peersBody">
+              <tr><td colspan="3" class="muted">Sin pares.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">
+          No hay servidor central. Cualquiera puede ejecutar un nodo y unirse a la red conectándose a otros pares; la cadena se
+          replica de igual a igual (peer-to-peer).
+        </p>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+"use strict";
+(function(){
+  // ---------- estado ----------
+  var state = { status:null, connected:false };
+  var currentView = "resumen";
+
+  // ---------- helpers red ----------
+  function jget(url){
+    return fetch(url, {headers:{"Accept":"application/json"}})
+      .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); });
+  }
+  function jpost(url, body){
+    return fetch(url, {
+      method:"POST",
+      headers:{"Content-Type":"application/json","Accept":"application/json"},
+      body:JSON.stringify(body)
+    }).then(function(r){ return r.json(); });
+  }
+
+  // ---------- formato ----------
+  function fmtHashrate(hs){
+    hs = Number(hs)||0;
+    if(hs < 1000) return hs.toFixed(0)+" H/s";
+    if(hs < 1e6)  return (hs/1e3).toFixed(2)+" kH/s";
+    if(hs < 1e9)  return (hs/1e6).toFixed(2)+" MH/s";
+    return (hs/1e9).toFixed(2)+" GH/s";
+  }
+  function fmtNum(n){
+    n = Number(n);
+    if(!isFinite(n)) return "—";
+    return n.toLocaleString("es-ES");
+  }
+  function fmtTime(ts){
+    var d = new Date(Number(ts)*1000);
+    if(isNaN(d.getTime())) return "—";
+    function p(x){return (x<10?"0":"")+x;}
+    return p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());
+  }
+  function shortHash(h){
+    if(!h || h.length <= 16) return h||"";
+    return h.slice(0,8)+"…"+h.slice(-6);
+  }
+
+  // ---------- copiar ----------
+  var copyStore = {}; // clave lógica -> texto completo
+  function copyText(txt, btn){
+    function done(){
+      if(!btn) return;
+      var old = btn.textContent;
+      btn.textContent = "¡Copiado!";
+      setTimeout(function(){ btn.textContent = old; }, 1400);
+    }
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(txt).then(done, function(){ fallback(txt); done(); });
+    } else { fallback(txt); done(); }
+  }
+  function fallback(txt){
+    try{
+      var ta = document.createElement("textarea");
+      ta.value = txt; ta.style.position="fixed"; ta.style.opacity="0";
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      document.execCommand("copy"); document.body.removeChild(ta);
+    }catch(e){}
+  }
+  document.addEventListener("click", function(e){
+    var b = e.target.closest ? e.target.closest("[data-copy-target]") : null;
+    if(!b) return;
+    var key = b.getAttribute("data-copy-target");
+    if(copyStore[key]) copyText(copyStore[key], b);
+  });
+
+  // ---------- status boxes ----------
+  function showStatus(el, ok, html){
+    el.className = "status show " + (ok ? "ok" : "err");
+    el.innerHTML = html;
+  }
+  function txidLine(txid){
+    return '<span class="k">txid:</span> <span class="txid">'+esc(txid)+'</span>';
+  }
+  function esc(s){
+    return String(s==null?"":s).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+
+  // ---------- navegación ----------
+  var views = ["resumen","enviar","recibir","minar","predicciones","red"];
+  document.getElementById("nav").addEventListener("click", function(e){
+    var b = e.target.closest("button[data-view]");
+    if(!b) return;
+    setView(b.getAttribute("data-view"));
+  });
+  function setView(v){
+    currentView = v;
+    views.forEach(function(name){
+      document.getElementById("v-"+name).classList.toggle("hidden", name!==v);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("nav.side button"), function(btn){
+      btn.classList.toggle("active", btn.getAttribute("data-view")===v);
+    });
+    if(v==="resumen") pollBlocks();
+  }
+
+  // ---------- render top bar / conexión ----------
+  function setConnection(ok){
+    state.connected = ok;
+    var dot = document.getElementById("syncDot");
+    var txt = document.getElementById("syncTxt");
+    if(!ok){
+      dot.className = "dot off";
+      txt.textContent = "sin conexión con el nodo";
+      return;
+    }
+    var s = state.status;
+    if(s && s.synced){
+      dot.className = "dot sync";
+      txt.textContent = "sincronizado";
+    } else {
+      dot.className = "dot syncing";
+      txt.textContent = "sincronizando";
+    }
+  }
+
+  // ---------- render status ----------
+  function renderStatus(s){
+    state.status = s;
+    document.getElementById("netName").textContent = s.network || "testnet";
+    document.getElementById("verTxt").textContent = s.version || "—";
+
+    // Resumen
+    var w = s.wallet || {};
+    document.getElementById("sumBalance").textContent = w.balance != null ? w.balance : "—";
+    document.getElementById("sumStaked").textContent  = w.staked  != null ? w.staked  : "—";
+    document.getElementById("sumHeight").textContent  = fmtNum(s.height);
+    document.getElementById("sumDiff").textContent    = fmtNum(s.difficulty);
+    document.getElementById("sumPeers").textContent   = (s.peers||[]).length;
+    document.getElementById("sumSupply").textContent  = s.supply_ram != null ? s.supply_ram : "—";
+    document.getElementById("sumMempool").textContent = fmtNum(s.mempool);
+    document.getElementById("sumBlocksTotal").textContent = fmtNum(s.blocks_total);
+    document.getElementById("sumTips").textContent    = fmtNum(s.tips);
+    document.getElementById("sumWork").textContent    = s.work != null ? fmtNum(s.work) : "—";
+
+    var nid = s.network_id || "";
+    copyStore.netIdFull = nid;
+    document.getElementById("sumNetId").textContent = nid ? shortHash(nid) : "—";
+
+    // Recibir
+    var addr = w.address || "";
+    copyStore.recvAddrFull = addr;
+    document.getElementById("recvAddr").textContent = addr || "—";
+    document.getElementById("recvShort").textContent = w.short || "";
+
+    // Minar
+    var mining = !!s.mining;
+    document.getElementById("mineState").textContent = mining ? "Activa" : "Detenida";
+    document.getElementById("mineState").style.color = mining ? "var(--green)" : "var(--muted)";
+    document.getElementById("mineRate").textContent  = fmtHashrate(s.hashrate);
+    document.getElementById("mineFound").textContent = fmtNum(s.found);
+    document.getElementById("mineDiff").textContent  = fmtNum(s.difficulty);
+    var tgl = document.getElementById("mineToggle");
+    tgl.textContent = mining ? "Detener minería" : "Empezar a minar";
+    tgl.className = "btn " + (mining ? "danger" : "green");
+    document.getElementById("mineLive").classList.toggle("hidden", !mining);
+
+    // Red
+    document.getElementById("netPort").textContent = s.listen_port != null ? s.listen_port : "—";
+    document.getElementById("netNodeId").textContent = s.node_id != null ? s.node_id : "—";
+    document.getElementById("netPeerCount").textContent = (s.peers||[]).length;
+    renderPeers(s.peers||[]);
+
+    setConnection(true);
+  }
+
+  function renderPeers(peers){
+    var body = document.getElementById("peersBody");
+    if(!peers.length){
+      body.innerHTML = '<tr><td colspan="3" class="muted">Sin pares.</td></tr>';
+      return;
+    }
+    body.innerHTML = peers.map(function(p){
+      var badge = p.inbound
+        ? '<span class="badge in">entrante</span>'
+        : '<span class="badge out">saliente</span>';
+      return "<tr><td>"+esc(p.addr)+"</td><td>"+badge+"</td><td class='num'>"+fmtNum(p.height)+"</td></tr>";
+    }).join("");
+  }
+
+  function renderBlocks(list){
+    var body = document.getElementById("blocksBody");
+    if(!list || !list.length){
+      body.innerHTML = '<tr><td colspan="5" class="muted">Sin bloques.</td></tr>';
+      return;
+    }
+    // ordenar por altura descendente (más reciente arriba)
+    var arr = list.slice().sort(function(a,b){ return (b.height||0)-(a.height||0); });
+    body.innerHTML = arr.map(function(b){
+      return "<tr>"+
+        "<td>"+fmtNum(b.height)+"</td>"+
+        "<td>"+esc(shortHash(b.hash))+"</td>"+
+        "<td class='num'>"+fmtNum(b.txs)+"</td>"+
+        "<td class='num'>"+fmtNum(b.difficulty)+"</td>"+
+        "<td class='num'>"+fmtTime(b.timestamp)+"</td>"+
+      "</tr>";
+    }).join("");
+  }
+
+  // ---------- polling ----------
+  function pollStatus(){
+    jget("/api/status")
+      .then(renderStatus)
+      .catch(function(){ setConnection(false); });
+  }
+  function pollBlocks(){
+    jget("/api/blocks?n=15")
+      .then(function(d){ renderBlocks(d.blocks||[]); })
+      .catch(function(){ /* silencioso: el estado ya muestra la desconexión */ });
+  }
+
+  // ---------- acciones ----------
+  // Enviar
+  document.getElementById("sendBtn").addEventListener("click", function(){
+    var to = document.getElementById("sendTo").value.trim();
+    var amount = document.getElementById("sendAmount").value.trim();
+    var fee = document.getElementById("sendFee").value.trim();
+    var st = document.getElementById("sendStatus");
+    if(!to){ showStatus(st, false, "Indica la dirección de destino."); return; }
+    if(!amount){ showStatus(st, false, "Indica el importe."); return; }
+    var btn = this; btn.disabled = true;
+    showStatus(st, true, '<span class="k">Enviando…</span>');
+    jpost("/api/send", {to:to, amount:amount, fee:Number(fee)||0})
+      .then(function(r){
+        if(r.ok) showStatus(st, true, "Enviado. "+txidLine(r.txid));
+        else showStatus(st, false, "Error: "+esc(r.error||"desconocido"));
+      })
+      .catch(function(){ showStatus(st, false, "Sin conexión con el nodo."); })
+      .then(function(){ btn.disabled = false; });
+  });
+
+  // Minar
+  document.getElementById("mineToggle").addEventListener("click", function(){
+    var on = !(state.status && state.status.mining);
+    var st = document.getElementById("mineStatus");
+    var btn = this; btn.disabled = true;
+    jpost("/api/mine", {on:on})
+      .then(function(r){
+        if(r.ok){
+          showStatus(st, true, on ? "Minería iniciada." : "Minería detenida.");
+          pollStatus();
+        } else {
+          showStatus(st, false, "Error: "+esc(r.error||"desconocido"));
+        }
+      })
+      .catch(function(){ showStatus(st, false, "Sin conexión con el nodo."); })
+      .then(function(){ btn.disabled = false; });
+  });
+
+  // Commit
+  document.getElementById("commitBtn").addEventListener("click", function(){
+    var payload = document.getElementById("commitPayload").value.trim();
+    var fee = document.getElementById("commitFee").value.trim();
+    var st = document.getElementById("commitStatus");
+    if(!payload){ showStatus(st, false, "Escribe el payload JSON de tu predicción."); return; }
+    // validación ligera de JSON
+    try{ JSON.parse(payload); }
+    catch(e){ showStatus(st, false, "El payload no es JSON válido."); return; }
+    var btn = this; btn.disabled = true;
+    showStatus(st, true, '<span class="k">Comprometiendo…</span>');
+    jpost("/api/commit", {payload:payload, fee:Number(fee)||0})
+      .then(function(r){
+        if(r.ok){
+          var ctx = r.commit_txid || r.txid;
+          showStatus(st, true,
+            "Compromiso registrado.<br>"+txidLine(r.txid)+
+            '<br><span class="k">commit_txid:</span> <span class="txid">'+esc(ctx)+'</span>'+
+            '<div style="margin-top:10px"><button class="btn green small" id="useCommitBtn">Usar en «Revelar» →</button></div>');
+          var useBtn = document.getElementById("useCommitBtn");
+          if(useBtn) useBtn.addEventListener("click", function(){
+            document.getElementById("revealCommit").value = ctx;
+          });
+        } else {
+          showStatus(st, false, "Error: "+esc(r.error||"desconocido"));
+        }
+      })
+      .catch(function(){ showStatus(st, false, "Sin conexión con el nodo."); })
+      .then(function(){ btn.disabled = false; });
+  });
+
+  // Reveal
+  document.getElementById("revealBtn").addEventListener("click", function(){
+    var commit = document.getElementById("revealCommit").value.trim();
+    var fee = document.getElementById("revealFee").value.trim();
+    var st = document.getElementById("revealStatus");
+    if(!commit){ showStatus(st, false, "Indica el txid del commit."); return; }
+    var btn = this; btn.disabled = true;
+    showStatus(st, true, '<span class="k">Revelando…</span>');
+    jpost("/api/reveal", {commit:commit, fee:Number(fee)||0})
+      .then(function(r){
+        if(r.ok) showStatus(st, true, "Revelado. "+txidLine(r.txid));
+        else showStatus(st, false, "Error: "+esc(r.error||"desconocido"));
+      })
+      .catch(function(){ showStatus(st, false, "Sin conexión con el nodo."); })
+      .then(function(){ btn.disabled = false; });
+  });
+
+  // Añadir par
+  document.getElementById("peerBtn").addEventListener("click", function(){
+    var addr = document.getElementById("peerAddr").value.trim();
+    var st = document.getElementById("peerStatus");
+    if(!addr){ showStatus(st, false, "Indica host:puerto."); return; }
+    var btn = this; btn.disabled = true;
+    jpost("/api/peer", {addr:addr})
+      .then(function(r){
+        if(r.ok){ showStatus(st, true, "Conexión solicitada a "+esc(addr)+"."); document.getElementById("peerAddr").value=""; pollStatus(); }
+        else showStatus(st, false, "Error: "+esc(r.error||"desconocido"));
+      })
+      .catch(function(){ showStatus(st, false, "Sin conexión con el nodo."); })
+      .then(function(){ btn.disabled = false; });
+  });
+
+  // ---------- arranque ----------
+  pollStatus();
+  pollBlocks();
+  setInterval(pollStatus, 2000);
+  setInterval(function(){ if(currentView==="resumen") pollBlocks(); }, 4000);
+})();
+</script>
+</body>
+</html>
