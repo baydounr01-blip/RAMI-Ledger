@@ -4,12 +4,18 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+name = "rami_node"
+path = "src/lib.rs"
+
 [[bin]]
 name = "rami-node"
 path = "src/main.rs"
 
 [dependencies]
 rami-core = { path = "../rami-core" }
+rami-net = { path = "../rami-net" }
 serde.workspace = true
 serde_json.workspace = true
 hex.workspace = true
+rand_core.workspace = true
