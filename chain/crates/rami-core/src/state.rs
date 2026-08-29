@@ -311,4 +311,93 @@ mod tests {
         let b2 = block_with(2, b1.hash(), vec![coinbase(2, mid, block_reward(2)), tx]);
         assert!(apply_block(&mut st, &b2, 2).is_err());
     }
+
+    /// Firma cualquier tx con firma poniendo su campo `sig`; deja la coinbase intacta.
+    fn signed(kp: &KeyPair, mut tx: Tx) -> Tx {
+        let sig = kp.sign(&signing_message(&tx));
+        match &mut tx {
+            Tx::Transfer { sig: s, .. }
+            | Tx::Stake { sig: s, .. }
+            | Tx::Unstake { sig: s, .. }
+            | Tx::Commit { sig: s, .. }
+            | Tx::Reveal { sig: s, .. } => *s = sig,
+            Tx::Coinbase { .. } => {}
+        }
+        tx
+    }
+
+    // Un Reveal colocado en el MISMO bloque que su Commit viola la regla
+    // anti-look-ahead: no puedes «revelar» una predicción en el mismo instante en
+    // que la anclas. Debe rechazarse aunque el commitment sea correcto.
+    #[test]
+    fn reveal_in_commit_block_rejected() {
+        let mut st = State::default();
+        let signer = KeyPair::from_secret(&[9u8; 32]);
+        let who = signer.public_bytes();
+
+        // bloque 0: el firmante recibe fondos para pagar comisiones
+        let b0 = block_with(0, ZERO_HASH, vec![coinbase(0, who, 50 * COIN)]);
+        apply_block(&mut st, &b0, 0).unwrap();
+
+        // commitment VÁLIDO sobre una señal concreta
+        let payload = serde_json::json!({"pair": "BTC", "dir": "LONG"});
+        let secret = b"semilla-anti-look-ahead".to_vec();
+        let commitment = crate::tx::commit_hash(&payload, &secret).unwrap();
+
+        let commit = signed(&signer, Tx::Commit { by: who, commitment, fee: 1, nonce: 0, sig: [0u8; 64] });
+        let commit_id = txid(&commit);
+        let reveal = signed(&signer, Tx::Reveal {
+            by: who,
+            commit_txid: commit_id,
+            payload: serde_json::to_vec(&payload).unwrap(),
+            secret: secret.clone(),
+            fee: 1,
+            nonce: 1,
+            sig: [0u8; 64],
+        });
+
+        // bloque 1: commit y reveal en el MISMO bloque -> rechazado por anti-look-ahead
+        let b1 = block_with(1, b0.hash(), vec![coinbase(1, who, block_reward(1)), commit, reveal]);
+        let err = apply_block(&mut st, &b1, 1).unwrap_err();
+        assert!(err.contains("mismo bloque o anterior"), "motivo inesperado: {err}");
+        // y el commit NO queda marcado como revelado
+        assert!(st.revealed.is_empty());
+    }
+
+    // El mismo commit, revelado en un bloque ESTRICTAMENTE posterior, sí se acepta:
+    // demuestra que el rechazo anterior es por la regla temporal, no por el hash.
+    #[test]
+    fn reveal_in_later_block_accepted() {
+        let mut st = State::default();
+        let signer = KeyPair::from_secret(&[9u8; 32]);
+        let who = signer.public_bytes();
+
+        let b0 = block_with(0, ZERO_HASH, vec![coinbase(0, who, 50 * COIN)]);
+        apply_block(&mut st, &b0, 0).unwrap();
+
+        let payload = serde_json::json!({"pair": "BTC", "dir": "LONG"});
+        let secret = b"semilla-anti-look-ahead".to_vec();
+        let commitment = crate::tx::commit_hash(&payload, &secret).unwrap();
+
+        let commit = signed(&signer, Tx::Commit { by: who, commitment, fee: 1, nonce: 0, sig: [0u8; 64] });
+        let commit_id = txid(&commit);
+
+        // bloque 1: solo el commit
+        let b1 = block_with(1, b0.hash(), vec![coinbase(1, who, block_reward(1)), commit]);
+        apply_block(&mut st, &b1, 1).unwrap();
+
+        // bloque 2: el reveal, en un bloque estrictamente posterior -> aceptado
+        let reveal = signed(&signer, Tx::Reveal {
+            by: who,
+            commit_txid: commit_id,
+            payload: serde_json::to_vec(&payload).unwrap(),
+            secret,
+            fee: 1,
+            nonce: 1,
+            sig: [0u8; 64],
+        });
+        let b2 = block_with(2, b1.hash(), vec![coinbase(2, who, block_reward(2)), reveal]);
+        apply_block(&mut st, &b2, 2).unwrap();
+        assert!(st.revealed.contains(&commit_id));
+    }
 }
