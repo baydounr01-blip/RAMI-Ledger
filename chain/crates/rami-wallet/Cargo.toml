@@ -1,0 +1,15 @@
+[package]
+name = "rami-wallet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rami-wallet"
+path = "src/main.rs"
+
+[dependencies]
+rami-core = { path = "../rami-core" }
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true

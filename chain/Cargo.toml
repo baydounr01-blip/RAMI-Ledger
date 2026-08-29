@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = ["crates/rami-core", "crates/rami-node", "crates/rami-wallet"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Rami Baydoun Nabhan"]
+
+[workspace.dependencies]
+sha2 = "0.10"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+hex = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true

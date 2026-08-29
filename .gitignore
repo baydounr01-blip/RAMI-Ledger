@@ -1,0 +1,13 @@
+# Rust
+chain/target/
+**/*.rs.bk
+Cargo.lock
+# RAMI ledger secretos (NUNCA se publican)
+**/secrets.json
+**/.tmp_*
+rami_ledger/
+# Node/Netlify
+web/node_modules/
+web/.netlify/
+# binarios de wallet compilados para distribución (se suben como release, no al repo)
+dist/
