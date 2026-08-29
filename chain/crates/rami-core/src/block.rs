@@ -53,7 +53,7 @@ impl BlockHeader {
 
 /// Bloque = cabecera + transacciones. La raíz de Merkle de la cabecera debe ser
 /// la de `txs` (verificado en la transición de estado).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Block {
     pub header: BlockHeader,
     pub txs: Vec<Tx>,

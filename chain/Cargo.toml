@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/rami-core", "crates/rami-node", "crates/rami-wallet"]
+members = ["crates/rami-core", "crates/rami-net", "crates/rami-node", "crates/rami-wallet"]
 
 [workspace.package]
 version = "0.1.0"

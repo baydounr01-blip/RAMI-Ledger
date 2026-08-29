@@ -1,0 +1,13 @@
+[package]
+name = "rami-net"
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+authors = ["Rami Baydoun Nabhan"]
+description = "Capa de gossip P2P de RAMI-Chain (TCP JSON-lines, sin servidor central)"
+
+[dependencies]
+rami-core = { path = "../rami-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
