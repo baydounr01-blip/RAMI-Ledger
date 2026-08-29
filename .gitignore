@@ -1,7 +1,8 @@
 # Rust
 chain/target/
 **/*.rs.bk
-Cargo.lock
+# El Cargo.lock del workspace SÍ se versiona: los binarios (nodo/monedero) que
+# se distribuyen deben construirse de forma reproducible con --locked.
 # RAMI ledger secretos (NUNCA se publican)
 **/secrets.json
 **/.tmp_*
