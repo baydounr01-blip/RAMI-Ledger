@@ -13,6 +13,7 @@ pub mod params;
 pub mod tiebreak;
 pub mod serdehex;
 pub mod block;
+pub mod genesis;
 pub mod tx;
 pub mod state;
 pub mod blocktree;

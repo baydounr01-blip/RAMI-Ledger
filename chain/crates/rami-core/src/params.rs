@@ -2,7 +2,8 @@
 //! `testnet()` usa la calibración real (≈1 CPU a 1e6 H/s => 60 s/bloque). `regtest()`
 //! usa dificultad 1 (todo hash pasa) para pruebas deterministas e instantáneas.
 
-use crate::pow::{bits_from_target, target_from_difficulty, GENESIS_BITS, GENESIS_DIFFICULTY};
+use crate::genesis::{testnet_genesis_bits, TESTNET_MIN_DIFFICULTY};
+use crate::pow::{bits_from_target, target_from_difficulty};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Params {
@@ -11,9 +12,12 @@ pub struct Params {
 }
 
 impl Params {
-    /// Red de pruebas pública de RAMI-Chain (la real).
+    /// Red de pruebas pública de RAMI-Chain (la real). Arranca con dificultad
+    /// baja y el LWMA la reconduce hacia 60 s/bloque según el hashrate real.
+    /// El génesis es fijo (`crate::genesis::testnet_genesis`), así que todos los
+    /// nodos comparten el mismo network-id.
     pub fn testnet() -> Self {
-        Params { genesis_bits: GENESIS_BITS, min_difficulty: GENESIS_DIFFICULTY }
+        Params { genesis_bits: testnet_genesis_bits(), min_difficulty: TESTNET_MIN_DIFFICULTY }
     }
 
     /// Regtest: dificultad 1, minería instantánea. Solo para tests locales.
