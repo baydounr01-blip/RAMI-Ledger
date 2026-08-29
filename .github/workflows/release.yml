@@ -110,7 +110,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          NOTES=$'Binarios de la testnet **EXPERIMENTAL** de RAMI-Chain.\n\n- Moneda **sin valor monetario**; no es una inversión ni un valor negociable; **no se vende**.\n- Se obtienen monedas gratis minando, con staking o por el faucet. **Sin premine.**\n- Verifica tu descarga con `SHA256SUMS.txt` antes de ejecutar. Lee `NOTICE.md`.'
+          NOTES=$'Binarios de la testnet **EXPERIMENTAL** de RAMI-Chain: nodo (`rami-node`), monedero CLI (`rami-wallet`) y **monedero de escritorio** (`rami-gui`).\n\n- Moneda **sin valor monetario**; no es una inversión ni un valor negociable; **no se vende**.\n- Se obtienen monedas gratis **minando** (un clic en el monedero de escritorio) o con **staking**. **Sin premine.**\n- Verifica tu descarga con `SHA256SUMS.txt` antes de ejecutar. Lee `NOTICE.md`.'
           gh release create "$TAG" out/* \
             --title "RAMI-Chain $TAG" \
             --notes "$NOTES" \
