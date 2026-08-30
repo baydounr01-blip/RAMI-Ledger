@@ -80,6 +80,7 @@ macos)
 
   DMG="dist/RAMI-Chain-$TAG-macos-${ARCH:-universal}.dmg"
   mkdir -p stage/dmg; cp -R "$APP" stage/dmg/; ln -s /Applications stage/dmg/Applications
+  cp "packaging/macos/COMO-ABRIR.txt" "stage/dmg/CÓMO ABRIR - LÉEME.txt"
   hdiutil create -volname "RAMI-Chain" -srcfolder stage/dmg -ov -format UDZO "$DMG"
 
   if [ "$SIGNED" = "1" ] && [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ] && [ -n "${APPLE_APP_PASSWORD:-}" ]; then
@@ -98,6 +99,7 @@ windows)
   mkdir -p stage/win
   cp "$REL/rami-gui.exe" "$REL/rami-node.exe" "$REL/rami-wallet.exe" stage/win/
   cp packaging/windows/installer.nsi "$ICON/rami.ico" stage/win/
+  cp packaging/windows/COMO-ABRIR.txt stage/win/
   cp README.md NOTICE.md stage/win/ 2>/dev/null || true
   # choco instala NSIS pero no siempre lo deja en el PATH de git-bash.
   MAKENSIS="makensis"

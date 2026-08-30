@@ -1,0 +1,45 @@
+CÓMO ABRIR RAMI-Chain EN macOS
+================================
+
+La primera vez, macOS dirá:
+  «Apple no pudo verificar que "RAMI-Chain" no contenga software malicioso.»
+
+Es LO NORMAL en una app que todavía no está firmada con un certificado de Apple
+(la firma/notarización es de pago y va a nombre del proyecto). NO significa que
+sea peligrosa. Puedes comprobar su integridad con SHA256SUMS.txt del release.
+
+Ábrela con el método OFICIAL de Apple — elige una opción:
+
+OPCIÓN A (recomendada, sin Terminal)
+  1) Arrastra RAMI-Chain a la carpeta Aplicaciones.
+  2) En Aplicaciones, haz CLIC DERECHO sobre RAMI-Chain  ->  Abrir  ->  Abrir.
+  3) Si no aparece "Abrir": ve a
+       Ajustes del Sistema  ->  Privacidad y seguridad
+     y pulsa  "Abrir de todas formas".
+
+OPCIÓN B (Terminal — quita el aviso del todo en TU Mac)
+     xattr -dr com.apple.quarantine "/Applications/RAMI-Chain.app"
+  y luego abre la app con normalidad.
+
+Para que NO aparezca ningún aviso a NADIE, la app debe estar NOTARIZADA por
+Apple, lo que requiere una cuenta Apple Developer (de pago). El repositorio ya
+tiene el sistema montado para firmarla y notarizarla automáticamente en cuanto
+se añaden los certificados: ver SIGNING.md.
+
+RAMI-Chain es una TESTNET experimental, sin valor monetario. No es una inversión.
+
+--------------------------------------------------------------------------------
+HOW TO OPEN ON macOS (English)
+
+The first time, macOS says "Apple could not verify RAMI-Chain is free of
+malware." This is expected for an app that isn't code-signed yet (signing and
+notarization are paid and issued in the project's name). It does NOT mean it is
+dangerous; verify integrity with the release's SHA256SUMS.txt.
+
+Open it the official way:
+  A) Right-click RAMI-Chain -> Open -> Open. If "Open" is missing, go to
+     System Settings -> Privacy & Security -> "Open Anyway".
+  B) Terminal: xattr -dr com.apple.quarantine "/Applications/RAMI-Chain.app"
+
+Removing the warning for everyone requires Apple notarization (a paid Apple
+Developer ID). See SIGNING.md.
