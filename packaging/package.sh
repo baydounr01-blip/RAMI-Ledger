@@ -89,7 +89,14 @@ windows)
   cp "$REL/rami-gui.exe" "$REL/rami-node.exe" "$REL/rami-wallet.exe" stage/win/
   cp packaging/windows/installer.nsi "$ICON/rami.ico" stage/win/
   cp README.md NOTICE.md stage/win/ 2>/dev/null || true
-  ( cd stage/win && makensis "-DVERSION=${TAG#v}" installer.nsi )
+  # choco instala NSIS pero no siempre lo deja en el PATH de git-bash.
+  MAKENSIS="makensis"
+  if ! command -v makensis >/dev/null 2>&1; then
+    for c in "/c/Program Files (x86)/NSIS/makensis.exe" "/c/Program Files/NSIS/makensis.exe"; do
+      [ -x "$c" ] && MAKENSIS="$c" && break
+    done
+  fi
+  ( cd stage/win && "$MAKENSIS" "-DVERSION=${TAG#v}" installer.nsi )
   SETUP="dist/RAMI-Chain-$TAG-setup.exe"
   mv "stage/win/RAMI-Chain-Setup.exe" "$SETUP"
 
