@@ -12,3 +12,5 @@ web/node_modules/
 web/.netlify/
 # binarios de wallet compilados para distribución (se suben como release, no al repo)
 dist/
+# descargas que baja el build de Netlify desde el release (no se versionan)
+web/descargas/

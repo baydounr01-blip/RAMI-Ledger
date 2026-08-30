@@ -95,11 +95,12 @@
   </div>
   <div class="navlinks">
     <a href="#monedero">Monedero</a>
+    <a href="#descargas">Descargas</a>
     <a href="#teoria">Teoría</a>
     <a href="#tech">Tecnología</a>
     <a href="#empezar">Empezar</a>
-    <a href="#explorer">Explorador</a>
     <a href="https://github.com/baydounr01-blip/rami-ledger">GitHub</a>
+    <a class="lang" href="/en/" title="English"><b>ES</b> · EN</a>
   </div>
 </nav>
 
@@ -111,10 +112,11 @@
   el consenso fija por decoherencia. Prueba de trabajo, commit-reveal nativo, una capa de red
   neuronal asesora y un desempate basado en matemática no probada — todo verificable byte a byte.</p>
   <div class="cta">
-    <a class="btn btn-primary" href="https://github.com/baydounr01-blip/rami-ledger/releases">⬇ Descargar monedero de escritorio</a>
-    <a class="btn btn-ghost" href="#empezar">Cómo empezar</a>
+    <a class="btn btn-primary dl-oneclick" href="#descargas">⬇ Descargar monedero<span class="dl-os"></span></a>
+    <a class="btn btn-ghost" href="#descargas">Otras plataformas</a>
     <a class="btn btn-ghost" href="https://github.com/baydounr01-blip/rami-ledger">Código en GitHub</a>
   </div>
+  <p style="margin:10px 0 0;color:var(--mut);font-size:12.5px">Un clic para tu sistema · sin cuentas · testnet <span class="dl-version">experimental</span></p>
   <div class="facts">
     <div class="fact"><b>60 s</b><span>tiempo de bloque objetivo</span></div>
     <div class="fact"><b>50 → ½</b><span>recompensa, halving cada 210 000</span></div>
@@ -145,7 +147,8 @@
       de plataforma.</p></div>
   </div>
   <p style="margin:18px 0 0">
-    <a class="btn btn-primary" href="https://github.com/baydounr01-blip/rami-ledger/releases">⬇ Descargar (releases de GitHub)</a>
+    <a class="btn btn-primary dl-oneclick" href="#descargas">⬇ Descargar monedero<span class="dl-os"></span></a>
+    <a class="btn btn-ghost" href="#descargas">Otras plataformas · avanzados</a>
   </p>
   <p style="color:var(--mut);font-size:13px;margin-top:10px">
     <strong>Recuerda:</strong> testnet experimental, <strong>sin valor monetario</strong>. Las monedas se
@@ -203,17 +206,36 @@
   </div>
 </section>
 
-<section id="empezar">
-  <span class="pill">EMPEZAR</span>
-  <h2>Descarga el monedero, o compila</h2>
-  <p class="sub">Descarga los binarios del <strong>monedero y el nodo</strong> (Linux, macOS, Windows) desde
-  las <a href="https://github.com/baydounr01-blip/rami-ledger/releases">releases de GitHub</a> y
-  <strong>verifícalos con su <code>SHA256SUMS.txt</code></strong> antes de ejecutar: no llevan
-  <em>code-signing</em> de plataforma, así que la comprobación del hash es tu garantía. ¿Prefieres
-  compilar tú mismo? En dos minutos tienes tu propia red local desde el código.</p>
-  <p style="margin:0 0 18px">
-    <a class="btn btn-primary" href="https://github.com/baydounr01-blip/rami-ledger/releases">⬇ Descargar monedero (releases)</a>
+<section id="descargas">
+  <span class="pill">DESCARGAS</span>
+  <h2>Un clic para tu sistema, o elige plataforma</h2>
+  <p class="sub">Para la mayoría: pulsa el botón grande y listo (se descarga desde <strong>esta web</strong>, sin
+  cuentas ni tiendas). Para quien quiera: elige tu plataforma o ve a GitHub. Todos los archivos se pueden
+  <strong>verificar con <code>SHA256SUMS</code></strong> — no llevan <em>code-signing</em> de plataforma,
+  así que el hash es tu garantía.</p>
+  <p style="margin:0 0 14px">
+    <a class="btn btn-primary dl-oneclick" href="#dl-todas">⬇ Descargar monedero<span class="dl-os"></span></a>
   </p>
+  <div id="dl-todas" class="grid3" style="margin:8px 0 4px">
+    <div class="card"><div class="tag">LINUX</div><h3>x86-64</h3>
+      <p style="font-size:13px;color:var(--mut)">tar.gz · nodo + monedero + panel</p>
+      <a class="btn btn-ghost" href="/descargas/rami-chain-linux-x86_64.tar.gz" download>⬇ Linux</a></div>
+    <div class="card"><div class="tag">MACOS</div><h3>Apple Silicon · Intel</h3>
+      <p style="font-size:13px;color:var(--mut)">tar.gz · elige según tu Mac</p>
+      <a class="btn btn-ghost" href="/descargas/rami-chain-macos-aarch64.tar.gz" download>⬇ Apple Silicon</a>
+      <a class="btn btn-ghost" href="/descargas/rami-chain-macos-x86_64.tar.gz" download>⬇ Intel</a></div>
+    <div class="card"><div class="tag">WINDOWS</div><h3>x86-64</h3>
+      <p style="font-size:13px;color:var(--mut)">zip · nodo + monedero + panel</p>
+      <a class="btn btn-ghost" href="/descargas/rami-chain-windows-x86_64.zip" download>⬇ Windows</a></div>
+  </div>
+  <p style="color:var(--mut);font-size:13px;margin:6px 0 26px">
+    Verificación: <a href="/descargas/SHA256SUMS.txt">SHA256SUMS.txt</a> ·
+    Avanzados y código: <a href="https://github.com/baydounr01-blip/rami-ledger/releases">releases en GitHub</a>.
+    Versión: <span class="dl-version">testnet experimental</span>.
+  </p>
+  <span id="empezar"></span>
+  <span class="pill">EMPEZAR</span>
+  <h2>Ejecuta el monedero, o compila</h2>
   <div class="card" style="margin:0 0 18px">
     <div class="tag">LO MÁS FÁCIL</div>
     <h3>Monedero de escritorio en un paso</h3>
@@ -318,8 +340,41 @@ $ rami-node show --chain ./midato --network regtest 10<br>
   Rami Baydoun Nabhan · 2026. &nbsp;·&nbsp;
   <a href="https://github.com/baydounr01-blip/rami-ledger">GitHub</a> ·
   <a href="#teoria">Teoría</a> ·
-  <a href="https://github.com/baydounr01-blip/rami-ledger/blob/HEAD/NOTICE.md">Aviso legal</a>
+  <a href="https://github.com/baydounr01-blip/rami-ledger/blob/HEAD/NOTICE.md">Aviso legal</a> ·
+  <a href="/en/">English</a>
 </footer>
 </div>
+<script>
+/* Descarga «de un clic»: detecta el SO y apunta los botones .dl-oneclick al
+   binario correcto servido desde ESTA web (/descargas/). Sin telemetría. */
+(function () {
+  var FILES = {
+    win:     { f: 'rami-chain-windows-x86_64.zip',  name: 'Windows' },
+    mac_arm: { f: 'rami-chain-macos-aarch64.tar.gz', name: 'macOS (Apple Silicon)' },
+    linux:   { f: 'rami-chain-linux-x86_64.tar.gz',  name: 'Linux' }
+  };
+  function detect() {
+    var s = ((navigator.platform || '') + ' ' + (navigator.userAgent || ''));
+    if (/Win/i.test(s)) return FILES.win;
+    if (/Mac/i.test(s) && !/iPhone|iPad|iPod/i.test(s)) return FILES.mac_arm;
+    if (/Linux|X11/i.test(s) && !/Android/i.test(s)) return FILES.linux;
+    return null;
+  }
+  var pick = detect();
+  document.querySelectorAll('.dl-oneclick').forEach(function (a) {
+    if (pick) {
+      a.setAttribute('href', '/descargas/' + pick.f);
+      a.setAttribute('download', '');
+      var os = a.querySelector('.dl-os');
+      if (os) os.textContent = ' · ' + pick.name;
+    }
+  });
+  fetch('/descargas/version.json').then(function (r) { return r.json(); }).then(function (v) {
+    document.querySelectorAll('.dl-version').forEach(function (e) {
+      e.textContent = 'RAMI-Chain ' + v.version + ' · testnet';
+    });
+  }).catch(function () {});
+})();
+</script>
 </body>
 </html>

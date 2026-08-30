@@ -1,7 +1,9 @@
 # RAMI-Chain — sitio estático (testnet experimental, sin valor monetario).
+# El paso de build baja los binarios del último release a web/descargas/ para
+# que la descarga «de un clic» se sirva desde ESTE dominio (no desde GitHub).
 [build]
   publish = "web"
-  command = ""
+  command = "bash web/fetch-downloads.sh"
 
 [[headers]]
   for = "/*"
@@ -9,3 +11,10 @@
     X-Frame-Options = "DENY"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "no-referrer"
+
+# Cabeceras de descarga para los binarios servidos localmente.
+[[headers]]
+  for = "/descargas/*"
+  [headers.values]
+    Content-Disposition = "attachment"
+    Cache-Control = "public, max-age=3600"
