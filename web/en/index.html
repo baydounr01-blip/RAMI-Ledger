@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAMI-Chain — blockchain of the Branching Universe (experimental testnet)</title>
+<meta name="description" content="RAMI-Chain: experimental test network, with no monetary value. A blockchain where past, present and future coexist as the complete tree. Open source in Rust.">
+<style>
+  :root{
+    --bg:#07080c; --panel:#0e1018; --panel2:#12141f; --line:#20233333;
+    --ink:#e8eaf2; --mut:#8b90a6; --acc:#7c5cff; --acc2:#31e0c8;
+    --warn:#e5a943; --line:#22263a; --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.65}
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+    background:
+      radial-gradient(60% 50% at 80% -5%,rgba(124,92,255,.14),transparent 60%),
+      radial-gradient(50% 40% at 5% 10%,rgba(49,224,200,.08),transparent 60%);}
+  .wrap{width:min(1080px,calc(100% - 40px));margin:auto;position:relative;z-index:1}
+  a{color:var(--acc2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,kbd{font-family:var(--mono)}
+  /* disclaimer banner */
+  .banner{background:linear-gradient(90deg,#2a1c07,#1c1608);border-bottom:1px solid #5a4a26;
+    color:#f0d9a6;font-size:13px;padding:10px 0}
+  .banner b{color:#ffcf70}
+  /* nav */
+  nav{display:flex;align-items:center;justify-content:space-between;padding:22px 0}
+  .brand{display:flex;align-items:center;gap:12px;font-weight:800;letter-spacing:.5px;color:#fff}
+  .logo{width:34px;height:34px;display:grid;place-items:center;border:1px solid #3a3f5e;
+    border-radius:9px;background:var(--panel);color:var(--acc)}
+  .logo svg{width:20px;height:20px}
+  .navlinks{display:flex;gap:26px;font-size:14px}
+  .navlinks a{color:var(--mut)}
+  /* hero */
+  .hero{padding:60px 0 40px}
+  .kick{font:600 12px/1 var(--mono);letter-spacing:2px;color:var(--acc2);text-transform:uppercase}
+  h1{font-size:clamp(38px,6vw,66px);line-height:1.05;letter-spacing:-2px;margin:18px 0 10px;font-weight:800}
+  h1 em{font-style:normal;background:linear-gradient(90deg,var(--acc),var(--acc2));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .lead{color:#aeb3c9;font-size:18px;max-width:620px}
+  .cta{display:flex;gap:14px;flex-wrap:wrap;margin:30px 0 10px}
+  .btn{display:inline-flex;align-items:center;gap:9px;padding:13px 20px;border-radius:11px;
+    font:600 14px/1 Inter;border:1px solid transparent;cursor:pointer}
+  .btn-primary{background:linear-gradient(90deg,var(--acc),#6b4cf0);color:#fff}
+  .btn-ghost{border-color:#2c3150;color:#cfd3e6;background:var(--panel)}
+  .facts{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:34px}
+  .fact{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:16px}
+  .fact b{display:block;font:700 20px/1 var(--mono);color:#fff}
+  .fact span{font-size:12px;color:var(--mut)}
+  /* sections */
+  section{padding:46px 0;border-top:1px solid var(--line)}
+  h2{font-size:30px;letter-spacing:-.5px;margin:0 0 6px}
+  .sub{color:var(--mut);max-width:640px;margin-bottom:26px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
+  .card h3{margin:0 0 8px;font-size:17px}
+  .card p{margin:0;color:#a6abc2;font-size:14px}
+  .card .tag{font:600 11px var(--mono);color:var(--acc2);letter-spacing:1px}
+  pre{background:#0a0b12;border:1px solid var(--line);border-radius:12px;padding:16px 18px;
+    overflow-x:auto;font:13px/1.7 var(--mono);color:#d6daf0}
+  pre .c{color:#6b7192}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .warnbox{background:#170f04;border:1px solid #5a4a26;border-radius:14px;padding:20px 22px;color:#f0d9a6}
+  .warnbox b{color:#ffcf70}
+  .disc{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:16px;font-size:13px}
+  .disc div{background:#0c0d15;border:1px solid var(--line);border-radius:10px;padding:12px 14px;color:#c9ccdd}
+  .explorer{font:13px/1.9 var(--mono);color:#aeb3c9;background:#0a0b12;border:1px solid var(--line);
+    border-radius:12px;padding:16px}
+  footer{border-top:1px solid var(--line);padding:34px 0 60px;color:var(--mut);font-size:13px}
+  .pill{display:inline-block;font:600 11px var(--mono);color:var(--acc2);border:1px solid #23415c;
+    background:#0a1520;border-radius:999px;padding:4px 10px;letter-spacing:1px}
+  @media(max-width:820px){.facts{grid-template-columns:repeat(2,1fr)}.grid3{grid-template-columns:1fr}
+    .two{grid-template-columns:1fr}.disc{grid-template-columns:1fr}.navlinks{display:none}}
+</style>
+</head>
+<body>
+
+<div class="banner"><div class="wrap">
+  <b>⚠ EXPERIMENTAL NETWORK (testnet).</b> The RAMI-Chain coin <b>has no monetary value</b>,
+  it is not an investment or a tradable security. It is not sold: it is obtained for free (faucet, mining,
+  staking). &nbsp;<b>EN:</b> Experimental testnet. The coin has no monetary value, is not an
+  investment or a security. Never for sale.
+</div></div>
+
+<div class="wrap">
+<nav>
+  <div class="brand">
+    <span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+      <path d="M12 2v6M12 8L6 12M12 8l6 4M6 12v6l6 3 6-3v-6M6 12l6 3 6-3"/></svg></span>
+    RAMI-CHAIN
+  </div>
+  <div class="navlinks">
+    <a href="#monedero">Wallet</a>
+    <a href="#descargas">Downloads</a>
+    <a href="#teoria">Theory</a>
+    <a href="#tech">Technology</a>
+    <a href="#empezar">Get started</a>
+    <a href="https://github.com/baydounr01-blip/rami-ledger">GitHub</a>
+    <a class="lang" href="/" title="Español">ES · <b>EN</b></a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="kick">Branching Block Universe · Rust · Open source</div>
+  <h1>A chain where the past, the present<br>and the future <em>coexist</em>.</h1>
+  <p class="lead">RAMI-Chain brings the theory of the Branching Block Universe to a real
+  blockchain: every valid block is preserved as the complete tree, and your "reality" is the branch that
+  consensus fixes through decoherence. Proof of work, native commit-reveal, an advisory neural-network
+  layer and a tiebreaker based on unproven mathematics — all verifiable byte by byte.</p>
+  <div class="cta">
+    <a class="btn btn-primary dl-oneclick" href="#descargas">⬇ Download wallet<span class="dl-os"></span></a>
+    <a class="btn btn-ghost" href="#descargas">Other platforms</a>
+    <a class="btn btn-ghost" href="https://github.com/baydounr01-blip/rami-ledger">Code on GitHub</a>
+  </div>
+  <p style="margin:10px 0 0;color:var(--mut);font-size:12.5px">One click for your system · no accounts · testnet <span class="dl-version">experimental</span></p>
+  <div class="facts">
+    <div class="fact"><b>60 s</b><span>target block time</span></div>
+    <div class="fact"><b>50 → ½</b><span>reward, halving every 210,000</span></div>
+    <div class="fact"><b>~21 M</b><span>issuance cap (RAMI)</span></div>
+    <div class="fact"><b>0</b><span>premine · 0 public sale</span></div>
+  </div>
+</header>
+
+<section id="monedero">
+  <span class="pill">DESKTOP WALLET · v0.2</span>
+  <h2>A single program: your node, your mining and your wallet.</h2>
+  <p class="sub">Download <code>rami-gui</code> (Linux, macOS, Windows), run it and a
+  <strong>local dashboard opens in your browser</strong>. From there you do everything: <strong>mine</strong> with one
+  click (the reward goes to your wallet), <strong>send</strong> and <strong>receive</strong>,
+  <strong>stake</strong> and anchor <strong>predictions</strong> (commit-reveal). Without
+  configuring anything. The CLI (<code>rami-node</code>, <code>rami-wallet</code>) is still there for anyone who wants it.</p>
+  <div class="grid3">
+    <div class="card"><div class="tag">ONE CLICK</div><h3>Mine from the wallet</h3>
+      <p>Hit "Start mining" and your CPU secures the network. The difficulty adjusts itself (LWMA) toward
+      60 s/block based on the real hashrate. No premine: coins are born by mining.</p></div>
+    <div class="card"><div class="tag">P2P · NO SINGLE POINT OF FAILURE</div><h3>Network with no central server</h3>
+      <p>The dashboard is local; the network is peer-to-peer (TCP gossip). Anyone runs a node and connects to
+      others by their IP: the <em>network-id</em> is the hash of the genesis, so everyone speaks on the same network.
+      There is no company to shut down.</p></div>
+    <div class="card"><div class="tag">VERIFIABLE</div><h3>Checkable download</h3>
+      <p>The binaries are compiled in CI with <code>--locked</code> and published with their
+      <code>SHA256SUMS.txt</code>. Check the hash before running; they do not carry platform
+      <em>code-signing</em>.</p></div>
+  </div>
+  <p style="margin:18px 0 0">
+    <a class="btn btn-primary dl-oneclick" href="#descargas">⬇ Download wallet<span class="dl-os"></span></a>
+    <a class="btn btn-ghost" href="#descargas">Other platforms · advanced</a>
+  </p>
+  <p style="color:var(--mut);font-size:13px;margin-top:10px">
+    <strong>Remember:</strong> experimental testnet, <strong>with no monetary value</strong>. Coins are
+    obtained for free by mining or staking. There is no buy button here; any site that asks you for money
+    or crypto for RAMI-Chain coins is fraudulent.
+  </p>
+</section>
+
+<section id="teoria">
+  <span class="pill">THE IDEA</span>
+  <h2>Bitcoin discards the losing branches. RAMI-Chain keeps them.</h2>
+  <p class="sub">In a normal chain only the chain with the most work survives; orphan blocks
+  are thrown away. Here the whole tree persists: "sibling branches" (same parent, different reality)
+  coexist and are auditable forever. The fork-choice —the "decoherence"— picks the observer's
+  branch deterministically.</p>
+  <div class="grid3">
+    <div class="card"><div class="tag">P2 · CAUSALITY</div><h3>Link = cause</h3>
+      <p>Each block references the hash of the previous one over fixed big-endian bytes; the consensus
+      hash does not depend on floats or JSON. Anyone can reproduce it.</p></div>
+    <div class="card"><div class="tag">P3 · BRANCHING</div><h3>Sibling branches</h3>
+      <p>Two blocks with the same parent are different realities. Both are kept; none is
+      discarded. The same balance can exist across two branches — never within one.</p></div>
+    <div class="card"><div class="tag">P4 · DECOHERENCE</div><h3>Fork-choice</h3>
+      <p>The observed branch = greatest accumulated work. If two branches tie EXACTLY, they collapse
+      to one through a deterministic tiebreaker (see "unproven mathematics").</p></div>
+  </div>
+</section>
+
+<section id="tech">
+  <span class="pill">TECHNOLOGY</span>
+  <h2>What's inside</h2>
+  <p class="sub">All in Rust, with a minimal set of dependencies and verifiable from the bytes.
+  Two experimental pieces are clearly labeled and <b>cannot break consensus</b> even if they fail.</p>
+  <div class="grid3">
+    <div class="card"><div class="tag">CONSENSUS</div><h3>PoW + computed difficulty</h3>
+      <p>SHA-256d, Bitcoin-style compact target and per-block LWMA retarget. Calibrated genesis:
+      ~1 CPU at 1e6 H/s ⇒ 60 s/block, difficulty 60,000,000, nBits <code>0x1d479531</code>.</p></div>
+    <div class="card"><div class="tag">LEDGER</div><h3>Native commit-reveal</h3>
+      <p>Publish <code>sha256(signal‖nonce)</code> BEFORE the event and reveal it afterward, as a
+      first-class transaction. Anti-look-ahead rule: the reveal goes in a strictly
+      later block.</p></div>
+    <div class="card"><div class="tag">NEURAL NETWORK</div><h3>Branch invariance (BBU)</h3>
+      <p>A full bit-exact MLP scores how well a branch "survives" small perturbations.
+      It is <b>advisory only</b>: it never decides validity, PoW or fork-choice.</p></div>
+    <div class="card"><div class="tag">UNPROVEN MATHEMATICS</div><h3>Coherence collapse</h3>
+      <p>The tiebreaker for branches with identical work uses the <b>Collatz conjecture</b>. Bounded by
+      a step cap: if the conjecture were false, it degrades to lexicographic order. It never affects
+      issuance or validity.</p></div>
+    <div class="card"><div class="tag">ACCOUNTS</div><h3>Issuance and anti-double-spend</h3>
+      <p>Account model with sequential nonce (double spend impossible), issuance with halving and
+      a ~21 M cap, and testnet staking. Integer arithmetic, no floats in consensus.</p></div>
+    <div class="card"><div class="tag">VERIFIABLE</div><h3>Parity and tests</h3>
+      <p>Canonicalization, hashing and commit-reveal match the Python reference byte by byte.
+      The core carries dozens of tests; <code>rami-node verify</code> revalidates the entire chain.</p></div>
+  </div>
+</section>
+
+<section id="descargas">
+  <span class="pill">DOWNLOADS</span>
+  <h2>One click for your system, or pick a platform</h2>
+  <p class="sub">For most people: hit the big button and you're done (it downloads from <strong>this site</strong>, no
+  accounts or stores). For those who want to: choose your platform or go to GitHub. Every file can be
+  <strong>verified with <code>SHA256SUMS</code></strong> — they do not carry platform <em>code-signing</em>,
+  so the hash is your guarantee.</p>
+  <p style="margin:0 0 14px">
+    <a class="btn btn-primary dl-oneclick" href="#dl-todas">⬇ Download wallet<span class="dl-os"></span></a>
+  </p>
+  <div id="dl-todas" class="grid3" style="margin:8px 0 4px">
+    <div class="card"><div class="tag">LINUX</div><h3>x86-64</h3>
+      <p style="font-size:13px;color:var(--mut)">tar.gz · node + wallet + dashboard</p>
+      <a class="btn btn-ghost" href="/descargas/rami-chain-linux-x86_64.tar.gz" download>⬇ Linux</a></div>
+    <div class="card"><div class="tag">MACOS</div><h3>Apple Silicon · Intel</h3>
+      <p style="font-size:13px;color:var(--mut)">tar.gz · choose the one for your Mac</p>
+      <a class="btn btn-ghost" href="/descargas/rami-chain-macos-aarch64.tar.gz" download>⬇ Apple Silicon</a>
+      <a class="btn btn-ghost" href="/descargas/rami-chain-macos-x86_64.tar.gz" download>⬇ Intel</a></div>
+    <div class="card"><div class="tag">WINDOWS</div><h3>x86-64</h3>
+      <p style="font-size:13px;color:var(--mut)">zip · node + wallet + dashboard</p>
+      <a class="btn btn-ghost" href="/descargas/rami-chain-windows-x86_64.zip" download>⬇ Windows</a></div>
+  </div>
+  <p style="color:var(--mut);font-size:13px;margin:6px 0 26px">
+    Verification: <a href="/descargas/SHA256SUMS.txt">SHA256SUMS.txt</a> ·
+    Advanced users and code: <a href="https://github.com/baydounr01-blip/rami-ledger/releases">releases on GitHub</a>.
+    Version: <span class="dl-version">experimental testnet</span>.
+  </p>
+  <span id="empezar"></span>
+  <span class="pill">GET STARTED</span>
+  <h2>Run the wallet, or build it</h2>
+  <div class="card" style="margin:0 0 18px">
+    <div class="tag">THE EASIEST WAY</div>
+    <h3>Desktop wallet in one step</h3>
+    <pre><span class="c"># unzip the release and run:</span>
+./rami-gui --network testnet
+<span class="c"># open the dashboard at http://127.0.0.1:8645 — mine, send,</span>
+<span class="c"># receive, stake and predict, all from there.</span>
+<span class="c"># connect to a known peer:</span>
+./rami-gui --network testnet --connect PEER_IP:30301</pre>
+  </div>
+  <p class="sub" style="margin:0 0 12px">Prefer the terminal? The P2P node and the wallet CLI:</p>
+  <div class="two">
+    <div>
+      <h3 style="font-size:15px;color:#cfd3e6">1 · Build</h3>
+      <pre><span class="c"># requires stable Rust (rustup.rs)</span>
+git clone https://github.com/baydounr01-blip/rami-ledger
+cd rami-ledger/chain
+cargo build --release
+<span class="c"># binaries in target/release/: rami-node, rami-wallet</span></pre>
+      <h3 style="font-size:15px;color:#cfd3e6">2 · Create a wallet</h3>
+      <pre>rami-wallet new --label me
+<span class="c"># prints your address (pubkey in hex)</span>
+rami-wallet address --label me</pre>
+    </div>
+    <div>
+      <h3 style="font-size:15px;color:#cfd3e6">3 · Genesis and mining (local network)</h3>
+      <pre>ADDR=$(rami-wallet address --label me)
+rami-node init --chain ./mydata --network regtest --miner $ADDR
+rami-node mine --chain ./mydata --network regtest \
+          --address $ADDR --blocks 5
+rami-node status --chain ./mydata --network regtest</pre>
+      <h3 style="font-size:15px;color:#cfd3e6">4 · Send and verify</h3>
+      <pre>rami-wallet send --chain ./mydata --network regtest \
+   --to &lt;OTHER_PUBKEY&gt; --amount 10 --label me
+rami-node mine --chain ./mydata --network regtest --address $ADDR
+rami-node verify --chain ./mydata --network regtest</pre>
+    </div>
+  </div>
+  <p style="color:var(--mut);font-size:13px;margin-top:14px"><code>regtest</code> mines instantly (difficulty 1),
+  ideal for testing. To join the P2P network: <code>rami-node run --network testnet --connect IP:30301 --miner $ADDR --mine</code>
+  (listens, syncs and mines). <code>rami-wallet commit</code> / <code>reveal</code> anchors predictions on the chain.</p>
+</section>
+
+<section id="faucet">
+  <span class="pill">HOW YOU GET COINS</span>
+  <h2>Free: by mining or staking</h2>
+  <div class="warnbox">
+    <b>No one sells you RAMI-Chain coins.</b> They are obtained at no cost. With the desktop wallet,
+    the main way is to <b>mine with one click</b>: the block reward goes to your account. You can also
+    <b>stake</b>. There is no purchase or payment: any site or person that asks you for BTC, euros or other
+    crypto for RAMI-Chain coins is a <b>fraud</b> and is not ours.
+    <div class="disc">
+      <div><b>Mine:</b> hit "Start mining" in the wallet</div>
+      <div><b>Staking:</b> stake your RAMI from the dashboard</div>
+      <div><b>No KYC, no purchase, no payment.</b></div>
+      <div><b>No premine</b> · finite issuance (~21 M)</div>
+    </div>
+    <p style="margin:14px 0 0;font-size:13px">A hosted <b>faucet</b> (handing out coins to whoever asks)
+    requires an operator to keep a funded node always on; since anyone can mine their
+    own coins instantly from the wallet, that is the recommended way. No single point of failure:
+    the network is P2P (v0.2), it does not depend on any server.</p>
+  </div>
+</section>
+
+<section id="explorer">
+  <span class="pill">EXPLORER</span>
+  <h2>Block explorer <span style="font-size:14px;color:var(--warn)">· stub</span></h2>
+  <p class="sub">The explorer will read a periodically published snapshot of the chain, which
+  anyone can re-verify with <code>rami-node verify</code>. Until the public network launches,
+  your local node is your explorer:</p>
+  <div class="explorer">
+$ rami-node show --chain ./mydata --network regtest 10<br>
+#0&nbsp;&nbsp;&nbsp;&nbsp;8c444c12…&nbsp;&nbsp;1 tx&nbsp;&nbsp;GENESIS&nbsp;&nbsp;<span style="color:#6b7192">"…the past, the present and the future coexist…"</span><br>
+#1&nbsp;&nbsp;&nbsp;&nbsp;5b7e455b…&nbsp;&nbsp;1 tx<br>
+#2&nbsp;&nbsp;&nbsp;&nbsp;38c17819…&nbsp;&nbsp;1 tx<br>
+<span style="color:#6b7192">— accumulated work, sibling branches and reorgs are reconstructible: nothing is discarded —</span>
+  </div>
+</section>
+
+<section>
+  <span class="pill">HONESTY</span>
+  <h2>What RAMI-Chain is not</h2>
+  <div class="disc" style="grid-template-columns:1fr 1fr">
+    <div>❌ It is not an investment and promises no returns.</div>
+    <div>❌ It is not a tradable security.</div>
+    <div>❌ It is not sold: no purchase with crypto or fiat.</div>
+    <div>❌ There is no premine for founders (0).</div>
+    <div>✔ It is an open-source, verifiable experiment.</div>
+    <div>✔ The test coins have no monetary value.</div>
+  </div>
+  <p style="color:var(--mut);font-size:13px;margin-top:16px">If one day there were a public offering
+  with real value, it would require legal advice and regulatory compliance. This project does not do that.
+  Software with no warranty (MIT license). Operate only with what you can afford to lose — which here is
+  literally nothing, because it has no value.</p>
+</section>
+
+<footer>
+  <div class="brand" style="margin-bottom:10px"><span class="logo"><svg viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" stroke-width="1.6"><path d="M12 2v6M12 8L6 12M12 8l6 4M6 12v6l6 3 6-3v-6"/></svg></span>
+    RAMI-CHAIN</div>
+  RAMI-Chain — experimental network with no monetary value. Open source (MIT).
+  Rami Baydoun Nabhan · 2026. &nbsp;·&nbsp;
+  <a href="https://github.com/baydounr01-blip/rami-ledger">GitHub</a> ·
+  <a href="#teoria">Theory</a> ·
+  <a href="https://github.com/baydounr01-blip/rami-ledger/blob/HEAD/NOTICE.md">Legal notice</a> ·
+  <a href="/">Español</a>
+</footer>
+</div>
+<script>
+/* Descarga «de un clic»: detecta el SO y apunta los botones .dl-oneclick al
+   binario correcto servido desde ESTA web (/descargas/). Sin telemetría. */
+(function () {
+  var FILES = {
+    win:     { f: 'rami-chain-windows-x86_64.zip',  name: 'Windows' },
+    mac_arm: { f: 'rami-chain-macos-aarch64.tar.gz', name: 'macOS (Apple Silicon)' },
+    linux:   { f: 'rami-chain-linux-x86_64.tar.gz',  name: 'Linux' }
+  };
+  function detect() {
+    var s = ((navigator.platform || '') + ' ' + (navigator.userAgent || ''));
+    if (/Win/i.test(s)) return FILES.win;
+    if (/Mac/i.test(s) && !/iPhone|iPad|iPod/i.test(s)) return FILES.mac_arm;
+    if (/Linux|X11/i.test(s) && !/Android/i.test(s)) return FILES.linux;
+    return null;
+  }
+  var pick = detect();
+  document.querySelectorAll('.dl-oneclick').forEach(function (a) {
+    if (pick) {
+      a.setAttribute('href', '/descargas/' + pick.f);
+      a.setAttribute('download', '');
+      var os = a.querySelector('.dl-os');
+      if (os) os.textContent = ' · ' + pick.name;
+    }
+  });
+  fetch('/descargas/version.json').then(function (r) { return r.json(); }).then(function (v) {
+    document.querySelectorAll('.dl-version').forEach(function (e) {
+      e.textContent = 'RAMI-Chain ' + v.version + ' · testnet';
+    });
+  }).catch(function () {});
+})();
+</script>
+</body>
+</html>
