@@ -208,30 +208,42 @@
 
 <section id="descargas">
   <span class="pill">DESCARGAS</span>
-  <h2>Un clic para tu sistema, o elige plataforma</h2>
-  <p class="sub">Para la mayoría: pulsa el botón grande y listo (se descarga desde <strong>esta web</strong>, sin
-  cuentas ni tiendas). Para quien quiera: elige tu plataforma o ve a GitHub. Todos los archivos se pueden
-  <strong>verificar con <code>SHA256SUMS</code></strong> — no llevan <em>code-signing</em> de plataforma,
-  así que el hash es tu garantía.</p>
-  <p style="margin:0 0 14px">
-    <a class="btn btn-primary dl-oneclick" href="#dl-todas">⬇ Descargar monedero<span class="dl-os"></span></a>
+  <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
+    <img src="/assets/rami-icon.svg" alt="RAMI-Chain" width="84" height="84" style="border-radius:18px">
+    <div>
+      <h2 style="margin:0">Descarga RAMI-Chain</h2>
+      <p class="sub" style="margin:6px 0 0">Un solo archivo, con instalador e icono — como debe ser. Se descarga desde
+      <strong>esta web</strong>, sin cuentas ni tiendas.</p>
+    </div>
+  </div>
+  <p style="margin:18px 0 14px">
+    <a class="btn btn-primary dl-oneclick" href="#dl-todas">⬇ Descargar<span class="dl-os"></span></a>
+    <span class="dl-version" style="color:var(--mut);font-size:13px;margin-left:8px">testnet experimental</span>
   </p>
   <div id="dl-todas" class="grid3" style="margin:8px 0 4px">
-    <div class="card"><div class="tag">LINUX</div><h3>x86-64</h3>
-      <p style="font-size:13px;color:var(--mut)">tar.gz · nodo + monedero + panel</p>
-      <a class="btn btn-ghost" href="/descargas/rami-chain-linux-x86_64.tar.gz" download>⬇ Linux</a></div>
-    <div class="card"><div class="tag">MACOS</div><h3>Apple Silicon · Intel</h3>
-      <p style="font-size:13px;color:var(--mut)">tar.gz · elige según tu Mac</p>
-      <a class="btn btn-ghost" href="/descargas/rami-chain-macos-aarch64.tar.gz" download>⬇ Apple Silicon</a>
-      <a class="btn btn-ghost" href="/descargas/rami-chain-macos-x86_64.tar.gz" download>⬇ Intel</a></div>
-    <div class="card"><div class="tag">WINDOWS</div><h3>x86-64</h3>
-      <p style="font-size:13px;color:var(--mut)">zip · nodo + monedero + panel</p>
-      <a class="btn btn-ghost" href="/descargas/rami-chain-windows-x86_64.zip" download>⬇ Windows</a></div>
+    <div class="card"><div class="tag">🍎 MACOS</div><h3>Archivo .dmg</h3>
+      <p style="font-size:13px;color:var(--mut)">Ábrelo y arrastra a Aplicaciones.</p>
+      <a class="btn btn-primary" href="/descargas/rami-chain-macos-arm64.dmg" download>⬇ Apple Silicon</a>
+      <a class="btn btn-ghost" href="/descargas/rami-chain-macos-intel.dmg" download>Intel</a></div>
+    <div class="card"><div class="tag">🪟 WINDOWS</div><h3>Instalador .exe</h3>
+      <p style="font-size:13px;color:var(--mut)">Un asistente de instalación con icono.</p>
+      <a class="btn btn-primary" href="/descargas/rami-chain-windows-setup.exe" download>⬇ Windows</a></div>
+    <div class="card"><div class="tag">🐧 LINUX</div><h3>AppImage</h3>
+      <p style="font-size:13px;color:var(--mut)">Dale permiso de ejecución y listo.</p>
+      <a class="btn btn-primary" href="/descargas/rami-chain-linux.AppImage" download>⬇ Linux</a></div>
+  </div>
+  <div class="warnbox" style="margin:16px 0 26px">
+    <b>¿macOS o Windows te avisa la primera vez?</b> Es normal en apps aún sin certificado de firma
+    (no significa que sea peligrosa). En <b>macOS</b>: clic derecho → <b>Abrir</b> → <b>Abrir</b>. En
+    <b>Windows</b>: <b>Más información</b> → <b>Ejecutar de todas formas</b>. Y siempre puedes verificar el
+    hash con <a href="/descargas/SHA256SUMS.txt">SHA256SUMS.txt</a>.
+    <div style="margin-top:8px;font-size:13px">Cuando el proyecto tenga certificados de Apple y de Windows,
+    estas descargas saldrán <b>firmadas y notarizadas</b> y no habrá ningún aviso
+    (<a href="https://github.com/baydounr01-blip/rami-ledger/blob/HEAD/SIGNING.md">detalles</a>).</div>
   </div>
   <p style="color:var(--mut);font-size:13px;margin:6px 0 26px">
-    Verificación: <a href="/descargas/SHA256SUMS.txt">SHA256SUMS.txt</a> ·
-    Avanzados y código: <a href="https://github.com/baydounr01-blip/rami-ledger/releases">releases en GitHub</a>.
-    Versión: <span class="dl-version">testnet experimental</span>.
+    Avanzados y código fuente (binarios sueltos, <code>.tar.gz</code>/<code>.zip</code>):
+    <a href="https://github.com/baydounr01-blip/rami-ledger/releases">releases en GitHub</a>.
   </p>
   <span id="empezar"></span>
   <span class="pill">EMPEZAR</span>
@@ -349,9 +361,9 @@ $ rami-node show --chain ./midato --network regtest 10<br>
    binario correcto servido desde ESTA web (/descargas/). Sin telemetría. */
 (function () {
   var FILES = {
-    win:     { f: 'rami-chain-windows-x86_64.zip',  name: 'Windows' },
-    mac_arm: { f: 'rami-chain-macos-aarch64.tar.gz', name: 'macOS (Apple Silicon)' },
-    linux:   { f: 'rami-chain-linux-x86_64.tar.gz',  name: 'Linux' }
+    win:     { f: 'rami-chain-windows-setup.exe', name: 'Windows' },
+    mac_arm: { f: 'rami-chain-macos-arm64.dmg',   name: 'macOS (Apple Silicon)' },
+    linux:   { f: 'rami-chain-linux.AppImage',    name: 'Linux' }
   };
   function detect() {
     var s = ((navigator.platform || '') + ' ' + (navigator.userAgent || ''));

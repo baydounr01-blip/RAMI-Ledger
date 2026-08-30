@@ -1,10 +1,11 @@
-# Construye binarios reproducibles del nodo y el monedero de RAMI-Chain para
-# Linux/macOS/Windows y los publica como Release de GitHub con SHA256SUMS.
-# Se dispara al empujar una etiqueta v* (p. ej. v0.1.0) o a mano.
+# Construye instaladores de UN SOLO archivo con icono para cada plataforma
+# (AppImage / .dmg / instalador .exe), los firma/notariza si hay certificados en
+# los secrets (ver SIGNING.md) y publica un Release de GitHub con SHA256SUMS.
+# Dispara al empujar una etiqueta v* o a mano (workflow_dispatch).
 #
-# RECORDATORIO: RAMI-Chain es una red de PRUEBAS experimental. Su moneda no tiene
-# valor monetario, no es una inversión ni un valor negociable. Estos binarios no
-# van firmados con code-signing de plataforma: verifícalos con SHA256SUMS.txt.
+# RAMI-Chain es una testnet EXPERIMENTAL: la moneda no tiene valor monetario, no
+# es inversión ni valor negociable. Sin certificados, los binarios NO van
+# firmados: verifícalos con SHA256SUMS.txt.
 name: release
 
 on:
@@ -13,26 +14,39 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Etiqueta a construir (p. ej. v0.1.0)'
+        description: 'Etiqueta a construir (p. ej. v0.2.1)'
         required: true
 
 permissions:
   contents: write
 
 jobs:
+  icons:
+    name: iconos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Herramientas de icono
+        run: sudo apt-get update && sudo apt-get install -y librsvg2-bin imagemagick
+      - name: Rasterizar SVG -> ico/iconset/png
+        run: bash packaging/make-icons.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: icons
+          path: packaging/out
+
   build:
     name: build ${{ matrix.target }}
+    needs: icons
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu, archive: tar.gz }
-          # macOS Intel se compila cruzado desde el runner arm64 (los runners
-          # macos-13 están retirados y el job se quedaría en cola para siempre).
-          - { os: macos-latest,   target: x86_64-apple-darwin,      archive: tar.gz }
-          - { os: macos-latest,   target: aarch64-apple-darwin,     archive: tar.gz }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc,   archive: zip }
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu, kind: linux,   arch: x86_64 }
+          - { os: macos-latest,   target: aarch64-apple-darwin,     kind: macos,   arch: arm64 }
+          - { os: macos-latest,   target: x86_64-apple-darwin,      kind: macos,   arch: x64 }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc,   kind: windows, arch: x86_64 }
     steps:
       - uses: actions/checkout@v4
 
@@ -41,6 +55,16 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Recuperar iconos
+        uses: actions/download-artifact@v4
+        with:
+          name: icons
+          path: packaging/out
+
+      - name: NSIS (solo Windows)
+        if: matrix.kind == 'windows'
+        run: choco install nsis -y --no-progress
+
       - name: Compilar (--locked, reproducible)
         run: >
           cargo build --release --locked
@@ -48,39 +72,27 @@ jobs:
           --target ${{ matrix.target }}
           -p rami-node -p rami-wallet -p rami-gui
 
-      - name: Empaquetar (tar.gz)
-        if: matrix.archive == 'tar.gz'
+      - name: Empaquetar (un archivo con icono; firma si hay certificado)
         shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          NAME="rami-chain-${TAG}-${{ matrix.target }}"
-          OUT="chain/target/${{ matrix.target }}/release"
-          mkdir -p "dist/$NAME"
-          cp "$OUT/rami-node" "$OUT/rami-wallet" "$OUT/rami-gui" "dist/$NAME/"
-          cp README.md NOTICE.md LICENSE "dist/$NAME/" 2>/dev/null || true
-          tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
-
-      - name: Empaquetar (zip)
-        if: matrix.archive == 'zip'
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          NAME="rami-chain-${TAG}-${{ matrix.target }}"
-          OUT="chain/target/${{ matrix.target }}/release"
-          mkdir -p "dist/$NAME"
-          cp "$OUT/rami-node.exe" "$OUT/rami-wallet.exe" "$OUT/rami-gui.exe" "dist/$NAME/"
-          cp README.md NOTICE.md LICENSE "dist/$NAME/" 2>/dev/null || true
-          ( cd dist && 7z a "$NAME.zip" "$NAME" >/dev/null )
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          # Firma macOS (opcional) — ver SIGNING.md
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          # Firma Windows (opcional) — ver SIGNING.md
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: bash packaging/package.sh "${{ matrix.kind }}" "${{ matrix.target }}" "${{ matrix.arch }}"
 
       - name: Subir artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}
-          path: |
-            dist/*.tar.gz
-            dist/*.zip
+          name: pkg-${{ matrix.target }}
+          path: dist/*
 
   publish:
     name: publicar release
@@ -99,7 +111,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} out/ \;
+          find artifacts -type f \( -name '*.AppImage' -o -name '*.dmg' -o -name '*-setup.exe' -o -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} out/ \;
           ( cd out && sha256sum * > SHA256SUMS.txt )
           echo "== SHA256SUMS.txt ==" && cat out/SHA256SUMS.txt
 
@@ -110,7 +122,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          NOTES=$'Binarios de la testnet **EXPERIMENTAL** de RAMI-Chain: nodo (`rami-node`), monedero CLI (`rami-wallet`) y **monedero de escritorio** (`rami-gui`).\n\n- Moneda **sin valor monetario**; no es una inversión ni un valor negociable; **no se vende**.\n- Se obtienen monedas gratis **minando** (un clic en el monedero de escritorio) o con **staking**. **Sin premine.**\n- Verifica tu descarga con `SHA256SUMS.txt` antes de ejecutar. Lee `NOTICE.md`.'
+          NOTES=$'Instaladores de la testnet **EXPERIMENTAL** de RAMI-Chain — un archivo por sistema, con icono:\n\n- **macOS:** `.dmg` · **Windows:** instalador `.exe` · **Linux:** `.AppImage`.\n- Moneda **sin valor monetario**; no es inversión ni valor negociable; **no se vende**. Se obtiene minando o con staking. **Sin premine.**\n- **Firma:** si el repo tiene certificados (ver `SIGNING.md`), las descargas van firmadas y notarizadas; si no, van **sin firmar** — verifícalas con `SHA256SUMS.txt` y ábrelas siguiendo las notas de la web.\n- Para avanzados: también hay `.tar.gz`/`.zip` con los binarios sueltos.'
           gh release create "$TAG" out/* \
             --title "RAMI-Chain $TAG" \
             --notes "$NOTES" \

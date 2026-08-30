@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=RAMI-Chain
+Comment=Monedero de escritorio de RAMI-Chain (testnet experimental)
+Exec=rami-gui --network testnet
+Icon=rami-chain
+Categories=Network;Finance;
+Terminal=false

@@ -18,12 +18,12 @@ json="$(curl -fsSL "${AUTH[@]}" "https://api.github.com/repos/${REPO}/releases/l
 tag="$(printf '%s' "$json" | jq -r '.tag_name')"
 echo "  release: ${tag}"
 
-# sufijo del asset -> nombre estable servido en la web
+# sufijo del asset -> nombre estable servido en la web (instaladores de un archivo)
 map_suffix=(
-  "x86_64-unknown-linux-gnu.tar.gz:rami-chain-linux-x86_64.tar.gz"
-  "x86_64-apple-darwin.tar.gz:rami-chain-macos-x86_64.tar.gz"
-  "aarch64-apple-darwin.tar.gz:rami-chain-macos-aarch64.tar.gz"
-  "x86_64-pc-windows-msvc.zip:rami-chain-windows-x86_64.zip"
+  "x86_64.AppImage:rami-chain-linux.AppImage"
+  "macos-arm64.dmg:rami-chain-macos-arm64.dmg"
+  "macos-x64.dmg:rami-chain-macos-intel.dmg"
+  "-setup.exe:rami-chain-windows-setup.exe"
   "SHA256SUMS.txt:SHA256SUMS.txt"
 )
 
