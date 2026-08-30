@@ -504,7 +504,7 @@
         <div class="tbl-wrap">
           <table>
             <thead>
-              <tr><th>Tipo</th><th>Txid</th><th>De → Para</th><th class="num">Importe (RAMI)</th><th class="num">Comisión</th><th>Memo</th></tr>
+              <tr><th>Tipo</th><th>Txid</th><th>De → Para</th><th class="num">Importe (RAMI)</th><th class="num">Comisión (RAMI)</th><th>Memo</th></tr>
             </thead>
             <tbody id="expTxBody">
               <tr><td colspan="6" class="muted">—</td></tr>
@@ -818,13 +818,20 @@
       return;
     }
     body.innerHTML = txs.map(function(t){
-      var route = (t.from ? esc(shortHash(t.from)) : "—")+" → "+(t.to ? esc(shortHash(t.to)) : "—");
+      // En un reveal, 'to' es el TXID del commit, no una dirección: se rotula
+      // como tal para que nadie lo confunda con una cuenta a la que enviar.
+      var route;
+      if(t.kind === "reveal"){
+        route = (t.from ? esc(shortHash(t.from)) : "—")+' <span class="muted">→ commit</span> '+(t.to ? esc(shortHash(t.to)) : "—");
+      } else {
+        route = (t.from ? esc(shortHash(t.from)) : "—")+" → "+(t.to ? esc(shortHash(t.to)) : "—");
+      }
       return "<tr>"+
         "<td>"+kindBadge(t.kind)+"</td>"+
         "<td>"+esc(shortHash(t.txid))+"</td>"+
         "<td>"+route+"</td>"+
         "<td class='num'>"+(t.amount!=null ? fmtRam(t.amount) : "—")+"</td>"+
-        "<td class='num'>"+fmtNum(t.fee)+"</td>"+
+        "<td class='num'>"+fmtRam(t.fee)+"</td>"+
         "<td>"+(t.memo ? esc(t.memo) : '<span class="muted">—</span>')+"</td>"+
       "</tr>";
     }).join("");

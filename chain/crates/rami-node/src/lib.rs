@@ -637,8 +637,10 @@ impl Node {
             NetEvent::Connected { peer, addr, inbound, dial_addr } => {
                 self.peer_height.insert(peer, 0);
                 // Recuerda al par si es remarcable (descubrimiento persistente).
+                // El tope también rige en memoria: un atacante no puede hacer
+                // crecer known_peers sin límite a base de conexiones.
                 if let Some(d) = &dial_addr {
-                    if self.known_peers.insert(d.clone()) {
+                    if self.known_peers.len() < KNOWN_PEERS_CAP && self.known_peers.insert(d.clone()) {
                         persist_known_peers(&self.chain.root, &self.known_peers);
                     }
                 }

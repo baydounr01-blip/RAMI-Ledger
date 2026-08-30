@@ -174,7 +174,13 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
     detalle de cada bloque con sus transacciones (`/api/block`).
   - **Faucet de operador** (`rami-node faucet`): reparte monedas del monedero
     del PROPIO operador (financiado minando) con goteo y espera por dirección.
-    Es un monedero normal — **jamás** una excepción de consenso — y nunca pide pago.
+    Es un monedero normal — **jamás** una excepción de consenso — y nunca pide
+    pago. La espera se indexa por la clave canónica de la dirección (mismo pubkey
+    en mayúsculas/minúsculas o con prefijo `rami1` = una sola espera), y solo se
+    registra si el goteo se encoló de verdad. *Nota:* el faucet y el nodo
+    comparten `mempool.jsonl`; si el nodo lo reescribe justo al encolarse un
+    goteo, ese goteo puede perderse y bastará re-pedirlo — el IPC dedicado
+    faucet↔nodo llega en v0.4.
 - **v0.4 (siguiente):** instantáneas de cadena re-verificables publicadas para
   el explorador web, seeds comunitarios documentados, y endurecimiento P2P
   (puntuación de pares, límites por IP).

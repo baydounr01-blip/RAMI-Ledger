@@ -264,34 +264,40 @@ fn cmd_faucet(args: &[String]) -> ExitCode {
                     Ok(a) => a,
                     Err(e) => return Response::json(&serde_json::json!({"ok": false, "error": e})),
                 };
+                // Clave CANÓNICA del cooldown: hex en minúsculas de la pubkey ya
+                // parseada. "ABC…", "abc…" y "rami1abc…" son la MISMA dirección.
+                let claim_key = hex::encode(to);
                 let now = rami_node::now_secs();
-                {
-                    let mut g = claims.lock().unwrap();
-                    if let Some(last) = g.get(&addr_s) {
-                        if now.saturating_sub(*last) < cooldown {
-                            let wait = cooldown - now.saturating_sub(*last);
-                            return Response::json(&serde_json::json!({
-                                "ok": false,
-                                "error": format!("espera {wait}s antes de volver a pedir (o mina tú mismo)")
-                            }));
-                        }
+
+                // TODO el camino del claim va bajo un único lock: el cooldown, el
+                // cálculo de nonce/saldo y el append al mempool. Así dos claims
+                // concurrentes no pueden duplicar nonce ni gastar de más, y el
+                // cooldown solo se consume si el goteo REALMENTE se encola.
+                let mut g = claims.lock().unwrap();
+                if let Some(last) = g.get(&claim_key) {
+                    if now.saturating_sub(*last) < cooldown {
+                        let wait = cooldown - now.saturating_sub(*last);
+                        return Response::json(&serde_json::json!({
+                            "ok": false,
+                            "error": format!("espera {wait}s antes de volver a pedir (o mina tú mismo)")
+                        }));
                     }
-                    g.insert(addr_s.clone(), now);
-                    let _ = std::fs::write(&claims_path, serde_json::to_string(&*g).unwrap_or_default());
                 }
-                // nonce = estado + pendientes del faucet en el mempool
-                let (nonce, balance) = match chain.load_tree(params).and_then(|t| t.head_state()) {
+                // nonce = estado + pendientes del faucet en el mempool; el saldo
+                // debe cubrir también los goteos aún no minados (drip + fee cada uno).
+                let (nonce, balance, pending) = match chain.load_tree(params).and_then(|t| t.head_state()) {
                     Ok(st) => {
                         let pending = chain
                             .load_mempool()
                             .iter()
                             .filter(|t| rami_core::tx::signer_of(t) == Some(&me))
                             .count() as u64;
-                        (st.nonce_of(&me) + pending, st.balance_of(&me))
+                        (st.nonce_of(&me) + pending, st.balance_of(&me) as u128, pending as u128)
                     }
                     Err(e) => return Response::json(&serde_json::json!({"ok": false, "error": e})),
                 };
-                if balance < drip + 1 {
+                let per_drip = drip as u128 + 1; // goteo + comisión
+                if balance < (pending + 1) * per_drip {
                     return Response::json(&serde_json::json!({
                         "ok": false,
                         "error": "faucet sin fondos ahora mismo — mina tú mismo desde el monedero: es la vía principal"
@@ -300,10 +306,15 @@ fn cmd_faucet(args: &[String]) -> ExitCode {
                 let tx = build_transfer(&kp, to, drip, 1, nonce);
                 let id = hex::encode(rami_core::tx::txid(&tx));
                 match chain.append_mempool(&tx) {
-                    Ok(()) => Response::json(&serde_json::json!({
-                        "ok": true, "txid": id, "drip": fmt_ram(drip),
-                        "note": "se incluirá cuando el nodo mine el próximo bloque"
-                    })),
+                    Ok(()) => {
+                        // El cooldown se registra SOLO cuando el goteo quedó encolado.
+                        g.insert(claim_key, now);
+                        let _ = std::fs::write(&claims_path, serde_json::to_string(&*g).unwrap_or_default());
+                        Response::json(&serde_json::json!({
+                            "ok": true, "txid": id, "drip": fmt_ram(drip),
+                            "note": "se incluirá cuando el nodo mine el próximo bloque"
+                        }))
+                    }
                     Err(e) => Response::json(&serde_json::json!({"ok": false, "error": e})),
                 }
             }
