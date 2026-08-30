@@ -223,7 +223,7 @@ dependencies = [
 
 [[package]]
 name = "rami-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "rami-gui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "hex",
  "rami-core",
@@ -247,7 +247,7 @@ dependencies = [
 
 [[package]]
 name = "rami-net"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "hex",
  "rami-core",
@@ -257,11 +257,12 @@ dependencies = [
 
 [[package]]
 name = "rami-node"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "hex",
  "rami-core",
  "rami-net",
+ "rami-wallet",
  "rand_core",
  "serde",
  "serde_json",
@@ -269,7 +270,7 @@ dependencies = [
 
 [[package]]
 name = "rami-wallet"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "hex",
  "rami-core",

@@ -11,7 +11,7 @@
 //! Sin punto de fallo único: el panel es local; la red es P2P. TESTNET
 //! experimental, sin valor monetario.
 
-mod http;
+use rami_node::http;
 
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -90,6 +90,16 @@ fn route(g: &Gui, req: Request) -> Response {
         ("GET", "/api/blocks") => {
             let n = req.query_get("n").and_then(|s| s.parse().ok()).unwrap_or(15);
             Response::json(&json!({"blocks": g.node.recent_blocks(n)}))
+        }
+
+        ("GET", "/api/block") => {
+            let Some(h) = req.query_get("height").and_then(|s| s.parse::<u64>().ok()) else {
+                return err("falta ?height=N");
+            };
+            match g.node.block(h) {
+                Some(b) => Response::json(&json!({"ok": true, "block": b})),
+                None => err("bloque no encontrado en la cadena del observador"),
+            }
         }
 
         ("POST", "/api/mine") => {

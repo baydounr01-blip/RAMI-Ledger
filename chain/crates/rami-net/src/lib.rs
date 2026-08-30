@@ -57,12 +57,25 @@ pub struct PeerInfo {
     pub inbound: bool,
 }
 
-/// Eventos que la red entrega al nodo.
+/// Eventos que la red entrega al nodo. `dial_addr` es la dirección REMARCABLE
+/// del par (su IP + el puerto de escucha que anunció en el Hello); None si el
+/// par no escucha. Para entrantes el `addr` del socket lleva un puerto efímero
+/// que NO sirve para volver a conectar — usa `dial_addr`.
 #[derive(Debug)]
 pub enum NetEvent {
-    Connected { peer: PeerId, addr: String, inbound: bool },
+    Connected { peer: PeerId, addr: String, inbound: bool, dial_addr: Option<String> },
     Disconnected { peer: PeerId },
     Message { peer: PeerId, frame: Frame },
+}
+
+/// IP del socket + puerto anunciado => dirección remarcable.
+fn dialable(addr: &str, announced_port: u16) -> Option<String> {
+    if announced_port == 0 {
+        return None;
+    }
+    // "1.2.3.4:5678" o "[::1]:5678" -> host es todo menos el último ':'
+    let host = addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(addr);
+    Some(format!("{host}:{announced_port}"))
 }
 
 // --- mensajería interna del hilo central ---
@@ -74,6 +87,8 @@ enum Internal {
         addr: String,
         inbound: bool,
         node: u64,
+        /// Puerto de escucha ANUNCIADO por el par en su Hello (0 = no escucha).
+        port: u16,
         assign: Sender<PeerId>,
     },
     FromPeer(PeerId, Frame),
@@ -221,7 +236,7 @@ fn central_loop(
             Internal::Outbound(stream, addr) => {
                 spawn_conn(stream, addr, false, &cfg, listen_port, tx.clone());
             }
-            Internal::Registered { writer, addr, inbound, node, assign } => {
+            Internal::Registered { writer, addr, inbound, node, port, assign } => {
                 if node == cfg.node_id || by_node.contains_key(&node) || peers.len() >= cfg.max_peers {
                     // auto-conexión, duplicado o aforo lleno: se rechaza (assign se cae).
                     let _ = writer.shutdown(Shutdown::Both);
@@ -242,7 +257,8 @@ fn central_loop(
                     continue;
                 }
                 refresh(&peers);
-                let _ = event_tx.send(NetEvent::Connected { peer: id, addr, inbound });
+                let dial_addr = if inbound { dialable(&addr, port) } else { Some(addr.clone()) };
+                let _ = event_tx.send(NetEvent::Connected { peer: id, addr, inbound, dial_addr });
             }
             Internal::FromPeer(id, frame) => {
                 if peers.contains_key(&id) {
@@ -339,8 +355,8 @@ fn spawn_conn(
         if reader.read_line(&mut line).unwrap_or(0) == 0 {
             return;
         }
-        let their_node = match Frame::from_line(line.trim()) {
-            Some(Frame::Hello { net, node, .. }) if net == net_hex => node,
+        let (their_node, their_port) = match Frame::from_line(line.trim()) {
+            Some(Frame::Hello { net, node, port, .. }) if net == net_hex => (node, port),
             _ => return, // red distinta o basura → cortar
         };
         // 3) modo estable: sin timeout de lectura.
@@ -349,7 +365,14 @@ fn spawn_conn(
         // 4) registrar y esperar id asignado.
         let (assign_tx, assign_rx) = channel::<PeerId>();
         if tx
-            .send(Internal::Registered { writer, addr, inbound, node: their_node, assign: assign_tx })
+            .send(Internal::Registered {
+                writer,
+                addr,
+                inbound,
+                node: their_node,
+                port: their_port,
+                assign: assign_tx,
+            })
             .is_err()
         {
             return;

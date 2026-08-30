@@ -106,9 +106,15 @@ rami-wallet new --label yo
 ADDR=$(rami-wallet address --label yo)
 
 # 2a) demonio P2P de testnet: escucha, sincroniza y mina hacia tu dirección
+#     (recuerda los pares en peers.json y los re-marca al arrancar; --connect
+#      acepta también hostnames DNS)
 rami-node run --network testnet --listen 30301 --connect IP_DEL_PAR:30301 --miner $ADDR --mine
 
-# 2b) o una red local instantánea (regtest, dificultad 1)
+# 2b) faucet de operador (opcional): reparte monedas de TU monedero con goteo
+#     y espera por dirección; nunca pide pago ni toca el consenso
+rami-node faucet --network testnet --chain ./midato --label yo --drip 10 --cooldown 3600
+
+# 2c) o una red local instantánea (regtest, dificultad 1)
 rami-node init --chain ./midato --network regtest --miner $ADDR
 rami-node mine --chain ./midato --network regtest --address $ADDR --blocks 5
 rami-node status --chain ./midato --network regtest
@@ -154,15 +160,24 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
 
 - **v0.1:** consenso completo, minería, monedero CLI, commit/reveal, emisión,
   persistencia y verificación en una sola máquina.
-- **v0.2 (esto):** **gossip P2P** (TCP JSON-lines, `network-id` = hash del
-  génesis; sincronización y retransmisión, sin servidor central), **génesis
-  canónico fijo**, demonio `rami-node run`, y un **monedero de escritorio**
-  (`rami-gui`) que hace de nodo + minero + panel local. Binarios multiplataforma
-  publicados por CI con `SHA256SUMS`.
-- **v0.3 (siguiente):** descubrimiento de pares por DNS-seed, explorador sobre
-  instantáneas re-verificables, y un faucet **opcional** que un operador puede
-  desplegar sobre su propio nodo con fondos (nunca una excepción de consenso).
-  Mientras tanto, la vía para conseguir monedas es minar desde el monedero.
+- **v0.2:** **gossip P2P** (TCP JSON-lines, `network-id` = hash del génesis;
+  sincronización y retransmisión, sin servidor central), **génesis canónico
+  fijo**, demonio `rami-node run`, y un **monedero de escritorio** (`rami-gui`)
+  que hace de nodo + minero + panel local. Instaladores multiplataforma de un
+  archivo con icono (.dmg / setup.exe / AppImage) publicados por CI con `SHA256SUMS`.
+- **v0.3 (esto):**
+  - **Descubrimiento persistente de pares:** el nodo recuerda los pares
+    remarcables (`peers.json`, IP + puerto anunciado en el handshake) y los
+    re-marca al arrancar; el intercambio `GetPeers` solo comparte direcciones
+    remarcables. `--connect` acepta hostnames (DNS) además de IPs.
+  - **Explorador** integrado en el panel del monedero: lista de bloques y
+    detalle de cada bloque con sus transacciones (`/api/block`).
+  - **Faucet de operador** (`rami-node faucet`): reparte monedas del monedero
+    del PROPIO operador (financiado minando) con goteo y espera por dirección.
+    Es un monedero normal — **jamás** una excepción de consenso — y nunca pide pago.
+- **v0.4 (siguiente):** instantáneas de cadena re-verificables publicadas para
+  el explorador web, seeds comunitarios documentados, y endurecimiento P2P
+  (puntuación de pares, límites por IP).
 
 ## Referencia
 

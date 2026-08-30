@@ -4,13 +4,16 @@
 //!   rami-node run    --chain DIR [--network testnet] [--listen PORT]
 //!                    [--connect host:port]... [--miner HEXPUB] [--mine]
 //!   rami-node mine   --chain DIR --address HEXPUB [--blocks N]
+//!   rami-node faucet --chain DIR [--network testnet] [--port 8700] [--bind IP]
+//!                    [--keystore F] [--label L] [--drip RAMI] [--cooldown SEG]
 //!   rami-node status --chain DIR
 //!   rami-node verify --chain DIR
 //!   rami-node show   --chain DIR [N]
 //!
-//! `run` es el demonio P2P v0.2: escucha, marca pares, sincroniza y (opcional)
-//! mina en segundo plano. `mine` sigue siendo la minería local por lotes de v0.1.
-//! La red neuronal (rami_core::nn) es SOLO asesora.
+//! `run` es el demonio P2P: escucha, marca pares, sincroniza y (opcional) mina.
+//! `faucet` es el grifo de UN OPERADOR: reparte monedas de su propio monedero
+//! (financiado minando) con goteo y espera por dirección — un monedero normal,
+//! JAMÁS una excepción de consenso. La red neuronal (rami_core::nn) es SOLO asesora.
 
 use std::process::ExitCode;
 use std::thread;
@@ -189,6 +192,127 @@ fn cmd_mine(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Faucet de operador: HTTP mínimo que firma transfers desde el keystore del
+/// operador y los deja en el mempool del nodo (que corre aparte con `run`).
+/// Goteo limitado y espera por dirección, persistida en faucet_claims.json.
+fn cmd_faucet(args: &[String]) -> ExitCode {
+    use rami_node::http::{self, Request, Response};
+    use rami_wallet::{build_transfer, default_keystore_path, fmt_ram, parse_pubkey as wparse, parse_ram, Keystore};
+    use std::collections::HashMap;
+    use std::net::TcpListener;
+    use std::sync::Mutex;
+
+    let Some(dir) = arg(args, "--chain") else { return die("falta --chain DIR") };
+    let params = params_of(args);
+    let port: u16 = arg(args, "--port").and_then(|s| s.parse().ok()).unwrap_or(8700);
+    let bind = arg(args, "--bind").unwrap_or_else(|| "127.0.0.1".into());
+    let label = arg(args, "--label").unwrap_or_else(|| "default".into());
+    let keystore = arg(args, "--keystore").unwrap_or_else(default_keystore_path);
+    let drip = match parse_ram(&arg(args, "--drip").unwrap_or_else(|| "10".into())) {
+        Ok(v) => v,
+        Err(e) => return die(&e),
+    };
+    let cooldown: u64 = arg(args, "--cooldown").and_then(|s| s.parse().ok()).unwrap_or(3600);
+
+    let kp = match Keystore::load(&keystore).keypair(&label) {
+        Ok(k) => k,
+        Err(e) => return die(&format!("keystore: {e}")),
+    };
+    let me = kp.public_bytes();
+    let chain = ChainDir::new(&dir);
+    let claims_path = chain.root.join("faucet_claims.json");
+    let claims: Mutex<HashMap<String, u64>> = Mutex::new(
+        std::fs::read_to_string(&claims_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default(),
+    );
+
+    let listener = match TcpListener::bind((bind.as_str(), port)) {
+        Ok(l) => l,
+        Err(e) => return die(&format!("no se pudo escuchar en {bind}:{port}: {e}")),
+    };
+    println!("● faucet de RAMI-Chain en http://{bind}:{port}");
+    println!("  paga desde : {}", hex::encode(me));
+    println!("  goteo      : {} RAMI · espera {cooldown}s por dirección", fmt_ram(drip));
+    println!("  ⚠ reparte monedas SIN VALOR de la testnet; nunca pide pago.");
+
+    let dir2 = dir.clone();
+    http::serve(listener, move |req: Request| -> Response {
+        let chain = ChainDir::new(&dir2);
+        match (req.method.as_str(), req.path.as_str()) {
+            ("GET", "/") => {
+                let balance = chain
+                    .load_tree(params)
+                    .ok()
+                    .and_then(|t| t.head_state().ok())
+                    .map(|s| s.balance_of(&me))
+                    .unwrap_or(0);
+                Response::json(&serde_json::json!({
+                    "name": "RAMI-Chain faucet",
+                    "drip_ram": fmt_ram(drip),
+                    "cooldown_secs": cooldown,
+                    "faucet_address": hex::encode(me),
+                    "faucet_balance": fmt_ram(balance),
+                    "notice": "Monedas de prueba SIN valor monetario. Este faucet nunca pide pago."
+                }))
+            }
+            ("POST", "/claim") => {
+                let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+                let addr_s = body.get("address").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+                let to = match wparse(&addr_s) {
+                    Ok(a) => a,
+                    Err(e) => return Response::json(&serde_json::json!({"ok": false, "error": e})),
+                };
+                let now = rami_node::now_secs();
+                {
+                    let mut g = claims.lock().unwrap();
+                    if let Some(last) = g.get(&addr_s) {
+                        if now.saturating_sub(*last) < cooldown {
+                            let wait = cooldown - now.saturating_sub(*last);
+                            return Response::json(&serde_json::json!({
+                                "ok": false,
+                                "error": format!("espera {wait}s antes de volver a pedir (o mina tú mismo)")
+                            }));
+                        }
+                    }
+                    g.insert(addr_s.clone(), now);
+                    let _ = std::fs::write(&claims_path, serde_json::to_string(&*g).unwrap_or_default());
+                }
+                // nonce = estado + pendientes del faucet en el mempool
+                let (nonce, balance) = match chain.load_tree(params).and_then(|t| t.head_state()) {
+                    Ok(st) => {
+                        let pending = chain
+                            .load_mempool()
+                            .iter()
+                            .filter(|t| rami_core::tx::signer_of(t) == Some(&me))
+                            .count() as u64;
+                        (st.nonce_of(&me) + pending, st.balance_of(&me))
+                    }
+                    Err(e) => return Response::json(&serde_json::json!({"ok": false, "error": e})),
+                };
+                if balance < drip + 1 {
+                    return Response::json(&serde_json::json!({
+                        "ok": false,
+                        "error": "faucet sin fondos ahora mismo — mina tú mismo desde el monedero: es la vía principal"
+                    }));
+                }
+                let tx = build_transfer(&kp, to, drip, 1, nonce);
+                let id = hex::encode(rami_core::tx::txid(&tx));
+                match chain.append_mempool(&tx) {
+                    Ok(()) => Response::json(&serde_json::json!({
+                        "ok": true, "txid": id, "drip": fmt_ram(drip),
+                        "note": "se incluirá cuando el nodo mine el próximo bloque"
+                    })),
+                    Err(e) => Response::json(&serde_json::json!({"ok": false, "error": e})),
+                }
+            }
+            _ => Response::not_found(),
+        }
+    });
+    ExitCode::SUCCESS
+}
+
 fn cmd_status(args: &[String]) -> ExitCode {
     let Some(dir) = arg(args, "--chain") else { return die("falta --chain DIR") };
     let params = params_of(args);
@@ -257,13 +381,14 @@ fn cmd_show(args: &[String]) -> ExitCode {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let Some(cmd) = args.get(1) else {
-        eprintln!("uso: rami-node init|run|mine|status|verify|show [opciones]");
+        eprintln!("uso: rami-node init|run|mine|faucet|status|verify|show [opciones]");
         return ExitCode::FAILURE;
     };
     match cmd.as_str() {
         "init" => cmd_init(&args[2..]),
         "run" => cmd_run(&args[2..]),
         "mine" => cmd_mine(&args[2..]),
+        "faucet" => cmd_faucet(&args[2..]),
         "status" => cmd_status(&args[2..]),
         "verify" => cmd_verify(&args[2..]),
         "show" => cmd_show(&args[2..]),

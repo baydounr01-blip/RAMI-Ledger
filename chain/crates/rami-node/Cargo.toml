@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 rami-core = { path = "../rami-core" }
 rami-net = { path = "../rami-net" }
+rami-wallet = { path = "../rami-wallet" }
 serde.workspace = true
 serde_json.workspace = true
 hex.workspace = true

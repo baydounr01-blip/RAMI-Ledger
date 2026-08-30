@@ -126,7 +126,7 @@
 </header>
 
 <section id="monedero">
-  <span class="pill">DESKTOP WALLET · v0.2</span>
+  <span class="pill">DESKTOP WALLET · v0.3</span>
   <h2>A single program: your node, your mining and your wallet.</h2>
   <p class="sub">Download <code>rami-gui</code> (Linux, macOS, Windows), run it and a
   <strong>local dashboard opens in your browser</strong>. From there you do everything: <strong>mine</strong> with one
@@ -212,8 +212,9 @@
     <img src="/assets/rami-icon.svg" alt="RAMI-Chain" width="84" height="84" style="border-radius:18px">
     <div>
       <h2 style="margin:0">Download RAMI-Chain</h2>
-      <p class="sub" style="margin:6px 0 0">A single file, with an installer and icon — as it should be. Downloaded from
-      <strong>this website</strong>, without accounts or stores.</p>
+      <p class="sub" style="margin:6px 0 0">A single file, with an installer and icon — as it should be.
+      <strong>Direct download from this website</strong>: no App Store, no Microsoft Store, no accounts —
+      just like Bitcoin Core.</p>
     </div>
   </div>
   <p style="margin:18px 0 14px">
@@ -311,10 +312,11 @@ rami-node verify --chain ./midato --network regtest</pre>
       <div><b>No KYC, no purchase, no payment.</b></div>
       <div><b>No premine</b> · finite issuance (~21 M)</div>
     </div>
-    <p style="margin:14px 0 0;font-size:13px">A hosted <b>faucet</b> (handing out coins to whoever asks)
-    requires an operator to keep a funded node always on; since anyone can mine their
-    own coins instantly from the wallet, that is the recommended way. No single point of failure:
-    the network is P2P (v0.2), it does not depend on any server.</p>
+    <p style="margin:14px 0 0;font-size:13px">Since v0.3 the <b>faucet</b> software ships with the node
+    (<code>rami-node faucet</code>): any operator can hand out coins from their own funded node, with a
+    drip and a per-address cooldown — and it <b>never asks for payment</b>. Even so, the recommended way
+    is still mining from the wallet: it is instant and depends on nobody. No single point of failure:
+    the network is P2P, it does not depend on any server.</p>
   </div>
 </section>
 

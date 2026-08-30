@@ -9,8 +9,10 @@
 //! La red neuronal (`rami_core::nn`) sigue siendo SOLO asesora: nada aquí
 //! rechaza un bloque por su salida.
 
+pub mod http;
+
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
@@ -219,6 +221,33 @@ pub fn make_genesis(is_testnet: bool, params: Params, miner: AccountId) -> Block
     Block { header, txs: vec![coinbase] }
 }
 
+/// Pares conocidos persistidos (peers.json, array JSON de "host:puerto").
+/// Tope de 64 para que el archivo no crezca sin límite.
+const KNOWN_PEERS_CAP: usize = 64;
+
+fn peers_path(root: &Path) -> PathBuf {
+    root.join("peers.json")
+}
+
+fn load_known_peers(root: &Path) -> HashSet<String> {
+    std::fs::read_to_string(peers_path(root))
+        .ok()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .take(KNOWN_PEERS_CAP)
+        .collect()
+}
+
+fn persist_known_peers(root: &Path, peers: &HashSet<String>) {
+    let mut list: Vec<&String> = peers.iter().collect();
+    list.sort();
+    list.truncate(KNOWN_PEERS_CAP);
+    if let Ok(json) = serde_json::to_string_pretty(&list) {
+        let _ = std::fs::write(peers_path(root), json);
+    }
+}
+
 // ------------------------- runtime -------------------------
 
 #[derive(Clone)]
@@ -277,6 +306,93 @@ pub struct BlockView {
     pub timestamp: u64,
 }
 
+/// Transacción resumida para el explorador (todo en hex/enteros, sin floats).
+#[derive(Clone, Debug, Serialize)]
+pub struct TxView {
+    pub kind: String,
+    pub txid: String,
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub amount: Option<u64>,
+    pub fee: u64,
+    pub memo: Option<String>,
+}
+
+/// Bloque completo para el explorador del panel.
+#[derive(Clone, Debug, Serialize)]
+pub struct BlockDetail {
+    pub height: u64,
+    pub hash: String,
+    pub prev_hash: String,
+    pub merkle_root: String,
+    pub timestamp: u64,
+    pub bits: u32,
+    pub difficulty: u128,
+    pub nonce: u64,
+    pub branch_tag: String,
+    pub txs: Vec<TxView>,
+}
+
+fn tx_view(tx: &Tx) -> TxView {
+    let id = hex::encode(txid(tx));
+    match tx {
+        Tx::Coinbase { to, reward, memo, .. } => TxView {
+            kind: "coinbase".into(),
+            txid: id,
+            from: None,
+            to: Some(hex::encode(to)),
+            amount: Some(*reward),
+            fee: 0,
+            memo: String::from_utf8(memo.clone()).ok(),
+        },
+        Tx::Transfer { from, to, amount, fee, .. } => TxView {
+            kind: "transfer".into(),
+            txid: id,
+            from: Some(hex::encode(from)),
+            to: Some(hex::encode(to)),
+            amount: Some(*amount),
+            fee: *fee,
+            memo: None,
+        },
+        Tx::Stake { who, amount, fee, .. } => TxView {
+            kind: "stake".into(),
+            txid: id,
+            from: Some(hex::encode(who)),
+            to: None,
+            amount: Some(*amount),
+            fee: *fee,
+            memo: None,
+        },
+        Tx::Unstake { who, amount, fee, .. } => TxView {
+            kind: "unstake".into(),
+            txid: id,
+            from: Some(hex::encode(who)),
+            to: None,
+            amount: Some(*amount),
+            fee: *fee,
+            memo: None,
+        },
+        Tx::Commit { by, fee, .. } => TxView {
+            kind: "commit".into(),
+            txid: id,
+            from: Some(hex::encode(by)),
+            to: None,
+            amount: None,
+            fee: *fee,
+            memo: None,
+        },
+        Tx::Reveal { by, commit_txid, fee, .. } => TxView {
+            kind: "reveal".into(),
+            txid: id,
+            from: Some(hex::encode(by)),
+            to: Some(hex::encode(commit_txid)),
+            amount: None,
+            fee: *fee,
+            memo: None,
+        },
+    }
+}
+
 #[derive(Clone)]
 struct MiningJob {
     header: BlockHeader,
@@ -306,6 +422,7 @@ enum NodeCmd {
     GetAccount(AccountId, Sender<AccountView>),
     NextNonce(AccountId, Sender<u64>),
     RecentBlocks(usize, Sender<Vec<BlockView>>),
+    GetBlock(u64, Sender<Option<BlockDetail>>),
 }
 
 /// Manejador del nodo para la CLI y el monedero de escritorio.
@@ -357,6 +474,14 @@ impl NodeHandle {
         }
         rx.recv().unwrap_or_default()
     }
+    /// Detalle de un bloque de la cadena del observador, por altura.
+    pub fn block(&self, height: u64) -> Option<BlockDetail> {
+        let (r, rx) = channel();
+        if self.tx.send(NodeMsg::Cmd(NodeCmd::GetBlock(height, r))).is_err() {
+            return None;
+        }
+        rx.recv().ok().flatten()
+    }
 }
 
 struct Node {
@@ -368,7 +493,11 @@ struct Node {
     seen_tx: HashSet<TxId>,
     seen_block: HashSet<Hash>,
     peer_height: HashMap<rami_net::PeerId, u64>,
-    peer_meta: HashMap<rami_net::PeerId, (String, bool)>,
+    /// peer -> (addr del socket, entrante, dirección REMARCABLE si el par escucha)
+    peer_meta: HashMap<rami_net::PeerId, (String, bool, Option<String>)>,
+    /// Pares conocidos remarcables; se persisten en peers.json del directorio de
+    /// cadena y se re-marcan al arrancar (descubrimiento sin servidor central).
+    known_peers: HashSet<String>,
     net: Network,
     mining: Arc<MiningShared>,
     miner: Option<AccountId>,
@@ -448,6 +577,7 @@ pub fn spawn(cfg: NodeConfig) -> Result<NodeHandle, String> {
         seen_block: HashSet::new(),
         peer_height: HashMap::new(),
         peer_meta: HashMap::new(),
+        known_peers: HashSet::new(),
         net,
         mining: mining.clone(),
         miner: cfg.miner,
@@ -460,6 +590,12 @@ pub fn spawn(cfg: NodeConfig) -> Result<NodeHandle, String> {
     node.mempool = node.chain.load_mempool();
     for t in &node.mempool {
         node.seen_tx.insert(txid(t));
+    }
+    // Descubrimiento: re-marca los pares conocidos de sesiones anteriores
+    // (peers.json), además de los seeds pasados por configuración.
+    node.known_peers = load_known_peers(&node.chain.root);
+    for a in node.known_peers.clone() {
+        node.net.dial(a);
     }
     node.refresh_candidate();
     node.publish_status();
@@ -498,9 +634,15 @@ impl Node {
 
     fn on_net(&mut self, ev: NetEvent) {
         match ev {
-            NetEvent::Connected { peer, addr, inbound } => {
+            NetEvent::Connected { peer, addr, inbound, dial_addr } => {
                 self.peer_height.insert(peer, 0);
-                self.peer_meta.insert(peer, (addr, inbound));
+                // Recuerda al par si es remarcable (descubrimiento persistente).
+                if let Some(d) = &dial_addr {
+                    if self.known_peers.insert(d.clone()) {
+                        persist_known_peers(&self.chain.root, &self.known_peers);
+                    }
+                }
+                self.peer_meta.insert(peer, (addr, inbound, dial_addr));
                 let s = self.my_status_frame();
                 self.net.send(peer, s);
                 self.net.send(peer, Frame::GetPeers);
@@ -582,8 +724,14 @@ impl Node {
                 let _ = self.accept_tx(tx, Some(peer));
             }
             Frame::GetPeers => {
-                let addrs: Vec<String> =
-                    self.peer_meta.values().map(|(a, _)| a.clone()).take(32).collect();
+                // Solo se comparten direcciones REMARCABLES (IP + puerto anunciado);
+                // los puertos efímeros de los sockets entrantes no sirven a nadie.
+                let addrs: Vec<String> = self
+                    .peer_meta
+                    .values()
+                    .filter_map(|(_, _, d)| d.clone())
+                    .take(32)
+                    .collect();
                 if !addrs.is_empty() {
                     self.net.send(peer, Frame::Peers { addrs });
                 }
@@ -721,6 +869,25 @@ impl Node {
                     .collect();
                 let _ = reply.send(out);
             }
+            NodeCmd::GetBlock(height, reply) => {
+                let chain = self.tree.observer_chain();
+                let detail = chain.get(height as usize).and_then(|h| self.tree.get(h)).map(|node| {
+                    let b = &node.block;
+                    BlockDetail {
+                        height: b.header.height,
+                        hash: hex::encode(b.hash()),
+                        prev_hash: hex::encode(b.header.prev_hash),
+                        merkle_root: hex::encode(b.header.merkle_root),
+                        timestamp: b.header.timestamp,
+                        bits: b.header.bits,
+                        difficulty: difficulty_from_bits(b.header.bits),
+                        nonce: b.header.nonce,
+                        branch_tag: String::from_utf8_lossy(&b.header.branch_tag).into_owned(),
+                        txs: b.txs.iter().map(tx_view).collect(),
+                    }
+                });
+                let _ = reply.send(detail);
+            }
         }
         self.publish_status();
     }
@@ -770,8 +937,8 @@ impl Node {
         let peers: Vec<PeerView> = self
             .peer_meta
             .iter()
-            .map(|(id, (addr, inbound))| PeerView {
-                addr: addr.clone(),
+            .map(|(id, (addr, inbound, dial))| PeerView {
+                addr: dial.clone().unwrap_or_else(|| addr.clone()),
                 inbound: *inbound,
                 height: self.peer_height.get(id).copied().unwrap_or(0),
             })

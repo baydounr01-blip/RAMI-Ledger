@@ -79,6 +79,22 @@ fn two_nodes_share_genesis_and_sync() {
     assert!(bh >= 5, "B no sincronizó (altura {bh})");
     assert_eq!(b.status().peers.len(), 1, "B debería tener 1 par");
 
+    // v0.3: B debe haber persistido la dirección remarcable de A (peers.json)
+    // para re-marcarla en el próximo arranque (descubrimiento sin servidor).
+    let peers_file = db.join("peers.json");
+    let mut saved = String::new();
+    for _ in 0..50 {
+        saved = std::fs::read_to_string(&peers_file).unwrap_or_default();
+        if saved.contains(&format!("127.0.0.1:{port}")) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        saved.contains(&format!("127.0.0.1:{port}")),
+        "B no persistió el par remarcable de A en peers.json (contenido: {saved})"
+    );
+
     let _ = std::fs::remove_dir_all(&da);
     let _ = std::fs::remove_dir_all(&db);
 }

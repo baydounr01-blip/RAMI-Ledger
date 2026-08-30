@@ -197,6 +197,15 @@
     font-family:var(--sans);border:1px solid var(--border)}
   .badge.in{color:var(--green);border-color:rgba(126,240,192,.35);background:rgba(126,240,192,.06)}
   .badge.out{color:var(--blue);border-color:rgba(110,168,254,.35);background:rgba(110,168,254,.06)}
+  .badge.cb{color:var(--green);border-color:rgba(126,240,192,.35);background:rgba(126,240,192,.06)}
+  .badge.tx{color:var(--blue);border-color:rgba(110,168,254,.35);background:rgba(110,168,254,.06)}
+  .badge.stk{color:var(--warn);border-color:rgba(255,209,102,.35);background:rgba(255,209,102,.06)}
+  .badge.cr{color:#b48cfe;border-color:rgba(180,140,254,.35);background:rgba(180,140,254,.06)}
+
+  /* ---------- Explorador ---------- */
+  #expBlocksBody tr{cursor:pointer}
+  #expBlocksBody tr:hover td{background:rgba(110,168,254,.06)}
+  #expBlocksBody tr.sel td{background:rgba(110,168,254,.12)}
 
   .addr-block{
     background:#0d1220;border:1px solid var(--border);border-radius:10px;
@@ -256,6 +265,7 @@
     <button data-view="recibir"><span class="ico">↙️</span> Recibir</button>
     <button data-view="minar"><span class="ico">⛏</span> Minar</button>
     <button data-view="predicciones"><span class="ico">🔮</span> Predicciones</button>
+    <button data-view="explorador"><span class="ico">🔍</span> Explorador</button>
     <button data-view="red"><span class="ico">🌐</span> Red</button>
   </nav>
 
@@ -434,6 +444,76 @@
       </div>
     </section>
 
+    <!-- ============ EXPLORADOR ============ -->
+    <section id="v-explorador" class="hidden">
+      <h1 class="section-title">Explorador 🔍</h1>
+      <p class="section-sub">Consulta los bloques de la cadena y sus transacciones.</p>
+
+      <div class="card" style="margin-bottom:14px">
+        <div class="kv" style="justify-content:space-between;margin-bottom:10px">
+          <strong>Últimos bloques</strong>
+          <div class="kv">
+            <span class="k">Ir a altura:</span>
+            <input type="number" id="expGoHeight" min="0" step="1" placeholder="0" style="width:110px;padding:6px 10px">
+            <button class="btn small" id="expGoBtn">Ver</button>
+            <span class="muted" style="font-size:12px">se actualiza cada 5 s</span>
+          </div>
+        </div>
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr><th>Altura</th><th>Hash</th><th class="num">Txs</th><th class="num">Dificultad</th><th class="num">Hora</th></tr>
+            </thead>
+            <tbody id="expBlocksBody">
+              <tr><td colspan="5" class="muted">Cargando…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">Haz clic en un bloque para ver su detalle.</p>
+      </div>
+
+      <div class="status" id="expStatus"></div>
+
+      <div class="card hidden" id="expDetailCard" style="margin-top:14px">
+        <div class="kv" style="justify-content:space-between;margin-bottom:12px">
+          <strong id="expDetailTitle">Bloque</strong>
+        </div>
+        <div class="kv" style="margin-bottom:6px">
+          <span class="k">Hash:</span>
+          <span class="mono" id="expHash">—</span>
+          <button class="copybtn" data-copy-target="expHashFull">Copiar</button>
+        </div>
+        <div class="kv" style="margin-bottom:6px">
+          <span class="k">Bloque previo:</span>
+          <span class="mono" id="expPrev">—</span>
+          <button class="copybtn" data-copy-target="expPrevFull">Copiar</button>
+        </div>
+        <div class="kv" style="margin-bottom:12px">
+          <span class="k">Raíz de Merkle:</span>
+          <span class="mono" id="expMerkle">—</span>
+          <button class="copybtn" data-copy-target="expMerkleFull">Copiar</button>
+        </div>
+        <div class="grid tiles" style="margin-bottom:4px">
+          <div class="tile"><div class="lbl">Hora</div><div class="val" id="expTime" style="font-size:15px">—</div></div>
+          <div class="tile"><div class="lbl">Dificultad</div><div class="val" id="expDiff">—</div></div>
+          <div class="tile"><div class="lbl">Nonce</div><div class="val" id="expNonce">—</div></div>
+          <div class="tile"><div class="lbl">Rama</div><div class="val" id="expBranch" style="font-size:15px">—</div></div>
+        </div>
+        <hr class="sep">
+        <strong style="display:block;margin-bottom:10px">Transacciones</strong>
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr><th>Tipo</th><th>Txid</th><th>De → Para</th><th class="num">Importe (RAMI)</th><th class="num">Comisión</th><th>Memo</th></tr>
+            </thead>
+            <tbody id="expTxBody">
+              <tr><td colspan="6" class="muted">—</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <!-- ============ RED ============ -->
     <section id="v-red" class="hidden">
       <h1 class="section-title">Red 🌐</h1>
@@ -519,6 +599,16 @@
     if(!h || h.length <= 16) return h||"";
     return h.slice(0,8)+"…"+h.slice(-6);
   }
+  function fmtRam(v){
+    v = Number(v);
+    if(!isFinite(v)) return "—";
+    return (v/1e8).toFixed(8);
+  }
+  function fmtDateTime(ts){
+    var d = new Date(Number(ts)*1000);
+    if(isNaN(d.getTime())) return "—";
+    return d.toLocaleString("es-ES");
+  }
 
   // ---------- copiar ----------
   var copyStore = {}; // clave lógica -> texto completo
@@ -563,7 +653,7 @@
   }
 
   // ---------- navegación ----------
-  var views = ["resumen","enviar","recibir","minar","predicciones","red"];
+  var views = ["resumen","enviar","recibir","minar","predicciones","explorador","red"];
   document.getElementById("nav").addEventListener("click", function(e){
     var b = e.target.closest("button[data-view]");
     if(!b) return;
@@ -578,6 +668,7 @@
       btn.classList.toggle("active", btn.getAttribute("data-view")===v);
     });
     if(v==="resumen") pollBlocks();
+    if(v==="explorador") pollExplorer();
   }
 
   // ---------- render top bar / conexión ----------
@@ -682,6 +773,116 @@
       "</tr>";
     }).join("");
   }
+
+  // ---------- explorador ----------
+  var expSelected = null;
+
+  function kindBadge(k){
+    var cls = {coinbase:"cb", transfer:"tx", stake:"stk", unstake:"stk", commit:"cr", reveal:"cr"}[k] || "";
+    return '<span class="badge '+cls+'">'+esc(k||"?")+'</span>';
+  }
+
+  function renderExpBlocks(list){
+    var body = document.getElementById("expBlocksBody");
+    if(!list || !list.length){
+      body.innerHTML = '<tr><td colspan="5" class="muted">Sin bloques.</td></tr>';
+      return;
+    }
+    // ordenar por altura descendente (más reciente arriba)
+    var arr = list.slice().sort(function(a,b){ return (b.height||0)-(a.height||0); });
+    body.innerHTML = arr.map(function(b){
+      var sel = (expSelected!=null && Number(b.height)===expSelected) ? ' class="sel"' : '';
+      return "<tr data-height='"+Number(b.height)+"'"+sel+">"+
+        "<td>"+fmtNum(b.height)+"</td>"+
+        "<td>"+esc(shortHash(b.hash))+"</td>"+
+        "<td class='num'>"+fmtNum(b.txs)+"</td>"+
+        "<td class='num'>"+fmtNum(b.difficulty)+"</td>"+
+        "<td class='num'>"+fmtTime(b.timestamp)+"</td>"+
+      "</tr>";
+    }).join("");
+  }
+
+  function pollExplorer(){
+    jget("/api/blocks?n=25")
+      .then(function(d){ renderExpBlocks(d.blocks||[]); })
+      .catch(function(){
+        document.getElementById("expBlocksBody").innerHTML =
+          '<tr><td colspan="5" class="muted">Sin conexión con el nodo.</td></tr>';
+      });
+  }
+
+  function renderExpTxs(txs){
+    var body = document.getElementById("expTxBody");
+    if(!txs || !txs.length){
+      body.innerHTML = '<tr><td colspan="6" class="muted">Sin transacciones.</td></tr>';
+      return;
+    }
+    body.innerHTML = txs.map(function(t){
+      var route = (t.from ? esc(shortHash(t.from)) : "—")+" → "+(t.to ? esc(shortHash(t.to)) : "—");
+      return "<tr>"+
+        "<td>"+kindBadge(t.kind)+"</td>"+
+        "<td>"+esc(shortHash(t.txid))+"</td>"+
+        "<td>"+route+"</td>"+
+        "<td class='num'>"+(t.amount!=null ? fmtRam(t.amount) : "—")+"</td>"+
+        "<td class='num'>"+fmtNum(t.fee)+"</td>"+
+        "<td>"+(t.memo ? esc(t.memo) : '<span class="muted">—</span>')+"</td>"+
+      "</tr>";
+    }).join("");
+  }
+
+  function renderBlockDetail(b){
+    document.getElementById("expStatus").className = "status";
+    document.getElementById("expDetailCard").classList.remove("hidden");
+    document.getElementById("expDetailTitle").textContent = "Bloque #"+fmtNum(b.height);
+    copyStore.expHashFull   = b.hash || "";
+    copyStore.expPrevFull   = b.prev_hash || "";
+    copyStore.expMerkleFull = b.merkle_root || "";
+    document.getElementById("expHash").textContent   = b.hash ? shortHash(b.hash) : "—";
+    document.getElementById("expPrev").textContent   = b.prev_hash ? shortHash(b.prev_hash) : "—";
+    document.getElementById("expMerkle").textContent = b.merkle_root ? shortHash(b.merkle_root) : "—";
+    document.getElementById("expTime").textContent   = fmtDateTime(b.timestamp);
+    document.getElementById("expDiff").textContent   = fmtNum(b.difficulty);
+    document.getElementById("expNonce").textContent  = fmtNum(b.nonce);
+    document.getElementById("expBranch").textContent = b.branch_tag || "—";
+    renderExpTxs(b.txs||[]);
+  }
+
+  function expError(msg){
+    document.getElementById("expDetailCard").classList.add("hidden");
+    showStatus(document.getElementById("expStatus"), false, esc(msg));
+  }
+
+  function loadBlock(h){
+    expSelected = Math.floor(Number(h));
+    Array.prototype.forEach.call(document.querySelectorAll("#expBlocksBody tr[data-height]"), function(tr){
+      tr.classList.toggle("sel", Number(tr.getAttribute("data-height"))===expSelected);
+    });
+    showStatus(document.getElementById("expStatus"), true, '<span class="k">Cargando bloque…</span>');
+    jget("/api/block?height="+encodeURIComponent(expSelected))
+      .then(function(r){
+        if(r && r.ok && r.block) renderBlockDetail(r.block);
+        else expError("Error: "+((r && r.error) ? r.error : "bloque no encontrado"));
+      })
+      .catch(function(){ expError("Sin conexión con el nodo."); });
+  }
+
+  document.getElementById("expBlocksBody").addEventListener("click", function(e){
+    var tr = e.target.closest ? e.target.closest("tr[data-height]") : null;
+    if(!tr) return;
+    loadBlock(tr.getAttribute("data-height"));
+  });
+
+  document.getElementById("expGoBtn").addEventListener("click", function(){
+    var v = document.getElementById("expGoHeight").value.trim();
+    if(v==="" || !isFinite(Number(v)) || Number(v)<0){
+      expError("Indica una altura válida.");
+      return;
+    }
+    loadBlock(v);
+  });
+  document.getElementById("expGoHeight").addEventListener("keydown", function(e){
+    if(e.key==="Enter") document.getElementById("expGoBtn").click();
+  });
 
   // ---------- polling ----------
   function pollStatus(){
@@ -801,6 +1002,7 @@
   pollBlocks();
   setInterval(pollStatus, 2000);
   setInterval(function(){ if(currentView==="resumen") pollBlocks(); }, 4000);
+  setInterval(function(){ if(currentView==="explorador") pollExplorer(); }, 5000);
 })();
 </script>
 </body>
