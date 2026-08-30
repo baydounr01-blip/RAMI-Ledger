@@ -1,16 +1,23 @@
 # Firma y notarización de las descargas
 
-Para que **macOS** y **Windows** dejen abrir el monedero **sin avisos de
-seguridad** ("desarrollador no identificado" / SmartScreen), los ejecutables
-deben ir **firmados con un certificado** emitido a tu nombre. Eso es un requisito
-de Apple y de Microsoft: **no se puede simular ni desactivar** desde el código, y
-esos certificados son **tuyos** (van ligados a tu identidad y tienen coste).
+> **REGLA DE PUBLICACIÓN:** las builds **sin firmar no son para público
+> general**. Hasta que existan los certificados, la web las presenta como
+> *builds de prueba para usuarios avanzados* (que verifican SHA-256), y a los
+> usuarios no técnicos se les pide **esperar a la versión firmada**. Nunca se
+> instruye a un usuario inexperto a saltarse un aviso de seguridad.
+
+Para que **macOS** y **Windows** verifiquen la app y la dejen abrir **sin avisos
+de seguridad** (el filtro de malware de Apple —notarización— y la reputación de
+SmartScreen), los ejecutables deben ir **firmados con un certificado** emitido a
+tu nombre. Eso es un requisito de Apple y de Microsoft: **no se puede simular ni
+desactivar** desde el código, y esos certificados son **tuyos** (van ligados a
+tu identidad y tienen coste).
 
 El CI ya trae **toda la maquinaria montada**: en cuanto añadas los certificados
 como *secrets* del repositorio, cada release sale **firmada (y notarizada en
-macOS)** de forma automática. Si no hay certificados, las descargas se publican
-**sin firmar** y se pueden verificar con `SHA256SUMS.txt` (integridad
-criptográfica, aunque el SO siga mostrando su aviso la primera vez).
+macOS)** de forma automática — y en ese momento las descargas pasan a ser aptas
+para cualquier usuario. Si no hay certificados, las descargas se publican **sin
+firmar** y solo deben usarlas usuarios avanzados que verifiquen `SHA256SUMS.txt`.
 
 ## macOS — firma Developer ID + notarización
 
@@ -44,16 +51,18 @@ Un certificado **OV** funciona pero SmartScreen tarda en ganar reputación; uno
 
 El CI firmará `RAMI-Chain-Setup.exe` con `signtool` y sello de tiempo SHA-256.
 
-## Mientras no haya certificados: cómo abrir las descargas
+## Mientras no haya certificados (SOLO usuarios avanzados)
 
-- **macOS:** clic derecho sobre la app → **Abrir** → **Abrir** (una sola vez). Si no
-  aparece la opción, ve a **Ajustes del Sistema → Privacidad y seguridad** y pulsa
-  **«Abrir de todas formas»**. (El mensaje "Apple no pudo verificar…" es el aviso de
-  notarización: solo desaparece notarizando, ver arriba.)
-- **Windows:** en el aviso de SmartScreen, **Más información** → **Ejecutar de
-  todas formas**.
-- **Siempre:** verifica el hash de tu descarga contra `SHA256SUMS.txt` antes de
-  ejecutar. En Linux/macOS: `shasum -a 256 -c SHA256SUMS.txt`.
+Si no eres un usuario técnico: **espera a la versión firmada.** Si lo eres y
+decides usar una build de prueba, el orden importa:
+
+1. **Verifica SIEMPRE primero** el hash de tu descarga contra `SHA256SUMS.txt`:
+   `shasum -a 256 -c SHA256SUMS.txt` (macOS/Linux) o
+   `certutil -hashfile <archivo> SHA256` (Windows). Si no coincide, bórrala.
+2. Abre de forma consciente, con el método soportado por cada sistema —
+   macOS: clic derecho → **Abrir** (o **Ajustes → Privacidad y seguridad →
+   «Abrir de todas formas»**); Windows: **Más información → Ejecutar de todas
+   formas** — sabiendo que la verificación que haría la plataforma la asumes tú.
 
 > RAMI-Chain es una **testnet experimental sin valor monetario**. Verifica
 > siempre lo que ejecutas.

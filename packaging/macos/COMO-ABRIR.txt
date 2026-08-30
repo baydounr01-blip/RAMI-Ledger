@@ -1,45 +1,49 @@
-CÓMO ABRIR RAMI-Chain EN macOS
-================================
+RAMI-Chain en macOS — LÉEME ANTES DE ABRIR
+============================================
 
-La primera vez, macOS dirá:
-  «Apple no pudo verificar que "RAMI-Chain" no contenga software malicioso.»
+ESTADO: esta build aún NO está firmada ni notarizada por Apple, así que macOS
+mostrará el aviso «Apple no pudo verificar que no contenga software malicioso»
+y NO pasa todavía el filtro de malware de Apple.
 
-Es LO NORMAL en una app que todavía no está firmada con un certificado de Apple
-(la firma/notarización es de pago y va a nombre del proyecto). NO significa que
-sea peligrosa. Puedes comprobar su integridad con SHA256SUMS.txt del release.
+▶ SI NO ERES UN USUARIO TÉCNICO: no la instales aún. Espera a la versión
+  FIRMADA Y NOTARIZADA (sin ningún aviso). Nunca te pediremos que te saltes un
+  aviso de seguridad: esos avisos existen para protegerte.
 
-Ábrela con el método OFICIAL de Apple — elige una opción:
+▶ SOLO USUARIOS AVANZADOS — si decides abrirla, en este orden:
 
-OPCIÓN A (recomendada, sin Terminal)
-  1) Arrastra RAMI-Chain a la carpeta Aplicaciones.
-  2) En Aplicaciones, haz CLIC DERECHO sobre RAMI-Chain  ->  Abrir  ->  Abrir.
-  3) Si no aparece "Abrir": ve a
-       Ajustes del Sistema  ->  Privacidad y seguridad
-     y pulsa  "Abrir de todas formas".
+  1) VERIFICA SIEMPRE PRIMERO. Comprueba que el SHA-256 de tu descarga coincide
+     con el SHA256SUMS.txt del release oficial:
+        shasum -a 256 <archivo.dmg>
+     Si no coincide, bórrala. No abras nada que no hayas verificado.
 
-OPCIÓN B (Terminal — quita el aviso del todo en TU Mac)
-     xattr -dr com.apple.quarantine "/Applications/RAMI-Chain.app"
-  y luego abre la app con normalidad.
+  2) Abre de forma consciente (método soportado por Apple):
+     clic derecho sobre RAMI-Chain → Abrir → Abrir. Si no aparece la opción:
+     Ajustes del Sistema → Privacidad y seguridad → «Abrir de todas formas».
+     Al hacerlo, la verificación que normalmente haría Apple la asumes tú
+     (por eso el paso 1 no es opcional).
 
-Para que NO aparezca ningún aviso a NADIE, la app debe estar NOTARIZADA por
-Apple, lo que requiere una cuenta Apple Developer (de pago). El repositorio ya
-tiene el sistema montado para firmarla y notarizarla automáticamente en cuanto
-se añaden los certificados: ver SIGNING.md.
+La versión firmada y notarizada se publicará con los certificados Developer ID
+del proyecto; el sistema de publicación ya está preparado (ver SIGNING.md).
 
 RAMI-Chain es una TESTNET experimental, sin valor monetario. No es una inversión.
 
 --------------------------------------------------------------------------------
-HOW TO OPEN ON macOS (English)
+RAMI-Chain on macOS — README FIRST (English)
 
-The first time, macOS says "Apple could not verify RAMI-Chain is free of
-malware." This is expected for an app that isn't code-signed yet (signing and
-notarization are paid and issued in the project's name). It does NOT mean it is
-dangerous; verify integrity with the release's SHA256SUMS.txt.
+STATUS: this build is NOT yet signed or notarized by Apple, so macOS will show
+"Apple could not verify it is free of malware" and it does NOT yet pass Apple's
+malware check.
 
-Open it the official way:
-  A) Right-click RAMI-Chain -> Open -> Open. If "Open" is missing, go to
-     System Settings -> Privacy & Security -> "Open Anyway".
-  B) Terminal: xattr -dr com.apple.quarantine "/Applications/RAMI-Chain.app"
+▶ IF YOU ARE NOT A TECHNICAL USER: do not install it yet. Wait for the SIGNED
+  AND NOTARIZED release (no warning at all). We will never ask you to bypass a
+  security warning.
 
-Removing the warning for everyone requires Apple notarization (a paid Apple
-Developer ID). See SIGNING.md.
+▶ ADVANCED USERS ONLY — if you choose to open it, in this order:
+  1) ALWAYS VERIFY FIRST: `shasum -a 256 <file.dmg>` must match the official
+     release's SHA256SUMS.txt. If it doesn't, delete it.
+  2) Open deliberately (Apple-supported method): right-click → Open → Open, or
+     System Settings → Privacy & Security → "Open Anyway". You are taking on
+     the verification Apple would normally do (which is why step 1 is mandatory).
+
+The signed/notarized release ships once the project's Developer ID certificates
+are in place (see SIGNING.md). Experimental testnet, no monetary value.

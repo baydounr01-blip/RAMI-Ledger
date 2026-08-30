@@ -217,8 +217,18 @@
       just like Bitcoin Core.</p>
     </div>
   </div>
-  <p style="margin:18px 0 14px">
-    <a class="btn btn-primary dl-oneclick" href="#dl-todas">⬇ Download<span class="dl-os"></span></a>
+  <div class="warnbox" style="margin:18px 0 16px">
+    <b>⚠️ Malware-verification status:</b> these builds are <b>not yet signed or notarized</b>, so they
+    <b>do not yet pass Apple's or Windows' filter</b> and the system will show a warning.
+    <b>If you are not a technical user, do not install them yet</b>: wait for the signed release. We will
+    never ask you to bypass a security warning — those warnings exist to protect you.
+    <div style="margin-top:8px;font-size:13px">The <b>signed and notarized</b> release (verified by Apple
+    and by Windows, with no warning at all) will ship with the project's certificates; the release system
+    is already set up —
+    <a href="https://github.com/baydounr01-blip/rami-ledger/blob/HEAD/SIGNING.md">status and details in SIGNING.md</a>.</div>
+  </div>
+  <p style="margin:0 0 14px">
+    <a class="btn btn-primary dl-oneclick" href="#dl-todas">⬇ Download (test build)<span class="dl-os"></span></a>
     <span class="dl-version" style="color:var(--mut);font-size:13px;margin-left:8px">experimental testnet</span>
   </p>
   <div id="dl-todas" class="grid3" style="margin:8px 0 4px">
@@ -233,21 +243,18 @@
       <p style="font-size:13px;color:var(--mut)">Give it execute permission and you're done.</p>
       <a class="btn btn-primary" href="/descargas/rami-chain-linux.AppImage" download>⬇ Linux</a></div>
   </div>
-  <div class="warnbox" style="margin:16px 0 26px">
-    <b>The first time, macOS says "Apple could not verify it is free of malware" and Windows shows
-    SmartScreen.</b> This is expected for an app that doesn't yet have a <b>signing certificate</b> — it
-    doesn't mean it's dangerous; you can verify the hash with
-    <a href="/descargas/SHA256SUMS.txt">SHA256SUMS.txt</a>. Open it with each system's <b>official</b> method:
-    <div class="disc" style="grid-template-columns:1fr 1fr;margin-top:10px">
-      <div>🍎 <b>macOS:</b> right-click the app → <b>Open</b> → <b>Open</b>. If the option doesn't appear,
-      go to <b>System Settings → Privacy &amp; Security</b> and click <b>"Open Anyway"</b>.</div>
-      <div>🪟 <b>Windows:</b> on the blue prompt, click <b>More info</b> → <b>Run anyway</b>.</div>
+  <details style="margin:16px 0 26px;color:var(--mut);font-size:13.5px">
+    <summary style="cursor:pointer;color:#cfd3e6"><b>Advanced users only</b> · verifying and opening an unsigned build</summary>
+    <div style="margin-top:10px;line-height:1.6">
+      <b>1 · ALWAYS verify before opening.</b> Check that your download's SHA-256 matches
+      <a href="/descargas/SHA256SUMS.txt">SHA256SUMS.txt</a>:
+      <code>shasum -a 256 file</code> (macOS/Linux) or <code>certutil -hashfile file SHA256</code> (Windows).
+      If it doesn't match, delete it.<br>
+      <b>2 · Open only if you understand the risk.</b> macOS: right-click → Open (or System Settings →
+      Privacy &amp; Security → "Open Anyway"). Windows: More info → Run anyway. You are taking on the
+      verification the platform would normally do for you.
     </div>
-    <div style="margin-top:10px;font-size:13px">For <b>no warning at all</b>, the app must be <b>signed and
-    notarized</b> with Apple and Windows certificates (in the project's name, paid). The release system
-    does this automatically once those certificates are added —
-    <a href="https://github.com/baydounr01-blip/rami-ledger/blob/HEAD/SIGNING.md">how, in SIGNING.md</a>.</div>
-  </div>
+  </details>
   <p style="color:var(--mut);font-size:13px;margin:6px 0 26px">
     Advanced users and source code (loose binaries, <code>.tar.gz</code>/<code>.zip</code>):
     <a href="https://github.com/baydounr01-blip/rami-ledger/releases">releases on GitHub</a>.

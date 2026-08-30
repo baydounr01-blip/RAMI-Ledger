@@ -1,29 +1,47 @@
-CÓMO ABRIR RAMI-Chain EN WINDOWS
-==================================
+RAMI-Chain en Windows — LÉEME ANTES DE INSTALAR
+=================================================
 
-Al ejecutar el instalador, Windows puede mostrar una pantalla azul de
-SmartScreen: «Windows protegió tu PC». Es LO NORMAL en un programa que todavía
-no está firmado con un certificado (Authenticode). NO significa que sea
-peligroso. Puedes comprobar su integridad con SHA256SUMS.txt del release.
+ESTADO: este instalador aún NO está firmado (Authenticode), así que Windows
+mostrará la pantalla azul de SmartScreen («Windows protegió tu PC») y NO pasa
+todavía el filtro de reputación de Microsoft.
 
-Para instalarlo:
-  1) En el aviso azul, pulsa  "Más información".
-  2) Luego pulsa  "Ejecutar de todas formas".
+▶ SI NO ERES UN USUARIO TÉCNICO: no lo instales aún. Espera a la versión
+  FIRMADA (sin ningún aviso). Nunca te pediremos que te saltes un aviso de
+  seguridad: esos avisos existen para protegerte.
 
-El instalador no pide permisos de administrador y crea accesos directos con el
-icono de RAMI-Chain.
+▶ SOLO USUARIOS AVANZADOS — si decides instalarlo, en este orden:
 
-Para que NO aparezca ningún aviso a NADIE, el instalador debe estar FIRMADO con
-un certificado Authenticode (de pago). El repositorio ya tiene el sistema
-montado para firmarlo automáticamente en cuanto se añade el certificado: ver
-SIGNING.md.
+  1) VERIFICA SIEMPRE PRIMERO. Comprueba que el SHA-256 de tu descarga coincide
+     con el SHA256SUMS.txt del release oficial:
+        certutil -hashfile RAMI-Chain-...-setup.exe SHA256
+     Si no coincide, bórralo. No instales nada que no hayas verificado.
+
+  2) Instala de forma consciente: en el aviso de SmartScreen pulsa
+     «Más información» → «Ejecutar de todas formas». Al hacerlo, la verificación
+     que normalmente haría Microsoft la asumes tú (por eso el paso 1 no es
+     opcional). El instalador no pide permisos de administrador.
+
+La versión firmada se publicará con el certificado Authenticode del proyecto;
+el sistema de publicación ya está preparado (ver SIGNING.md).
 
 RAMI-Chain es una TESTNET experimental, sin valor monetario. No es una inversión.
 
 --------------------------------------------------------------------------------
-HOW TO OPEN ON WINDOWS (English)
+RAMI-Chain on Windows — README FIRST (English)
 
-Windows SmartScreen may show "Windows protected your PC". This is expected for a
-program that isn't code-signed yet. Click "More info" -> "Run anyway".
-Verify integrity with the release's SHA256SUMS.txt. Removing the warning for
-everyone requires an Authenticode certificate (paid). See SIGNING.md.
+STATUS: this installer is NOT yet code-signed (Authenticode), so Windows will
+show the SmartScreen prompt and it does NOT yet pass Microsoft's reputation
+check.
+
+▶ IF YOU ARE NOT A TECHNICAL USER: do not install it yet. Wait for the SIGNED
+  release. We will never ask you to bypass a security warning.
+
+▶ ADVANCED USERS ONLY — if you choose to install, in this order:
+  1) ALWAYS VERIFY FIRST: `certutil -hashfile <setup.exe> SHA256` must match the
+     official release's SHA256SUMS.txt. If it doesn't, delete it.
+  2) Install deliberately: SmartScreen → "More info" → "Run anyway". You are
+     taking on the verification Microsoft would normally do (which is why step 1
+     is mandatory).
+
+The signed release ships once the project's Authenticode certificate is in
+place (see SIGNING.md). Experimental testnet, no monetary value.
