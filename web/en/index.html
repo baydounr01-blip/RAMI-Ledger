@@ -233,13 +233,19 @@
       <a class="btn btn-primary" href="/descargas/rami-chain-linux.AppImage" download>⬇ Linux</a></div>
   </div>
   <div class="warnbox" style="margin:16px 0 26px">
-    <b>Does macOS or Windows warn you the first time?</b> This is normal for apps that don't yet have a signing certificate
-    (it doesn't mean it's dangerous). On <b>macOS</b>: right click → <b>Open</b> → <b>Open</b>. On
-    <b>Windows</b>: <b>More info</b> → <b>Run anyway</b>. And you can always verify the
-    hash with <a href="/descargas/SHA256SUMS.txt">SHA256SUMS.txt</a>.
-    <div style="margin-top:8px;font-size:13px">Once the project has Apple and Windows certificates,
-    these downloads will come out <b>signed and notarized</b> and there will be no warning
-    (<a href="https://github.com/baydounr01-blip/rami-ledger/blob/HEAD/SIGNING.md">details</a>).</div>
+    <b>The first time, macOS says "Apple could not verify it is free of malware" and Windows shows
+    SmartScreen.</b> This is expected for an app that doesn't yet have a <b>signing certificate</b> — it
+    doesn't mean it's dangerous; you can verify the hash with
+    <a href="/descargas/SHA256SUMS.txt">SHA256SUMS.txt</a>. Open it with each system's <b>official</b> method:
+    <div class="disc" style="grid-template-columns:1fr 1fr;margin-top:10px">
+      <div>🍎 <b>macOS:</b> right-click the app → <b>Open</b> → <b>Open</b>. If the option doesn't appear,
+      go to <b>System Settings → Privacy &amp; Security</b> and click <b>"Open Anyway"</b>.</div>
+      <div>🪟 <b>Windows:</b> on the blue prompt, click <b>More info</b> → <b>Run anyway</b>.</div>
+    </div>
+    <div style="margin-top:10px;font-size:13px">For <b>no warning at all</b>, the app must be <b>signed and
+    notarized</b> with Apple and Windows certificates (in the project's name, paid). The release system
+    does this automatically once those certificates are added —
+    <a href="https://github.com/baydounr01-blip/rami-ledger/blob/HEAD/SIGNING.md">how, in SIGNING.md</a>.</div>
   </div>
   <p style="color:var(--mut);font-size:13px;margin:6px 0 26px">
     Advanced users and source code (loose binaries, <code>.tar.gz</code>/<code>.zip</code>):

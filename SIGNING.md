@@ -46,7 +46,10 @@ El CI firmará `RAMI-Chain-Setup.exe` con `signtool` y sello de tiempo SHA-256.
 
 ## Mientras no haya certificados: cómo abrir las descargas
 
-- **macOS:** clic derecho sobre la app → **Abrir** → **Abrir** (una sola vez).
+- **macOS:** clic derecho sobre la app → **Abrir** → **Abrir** (una sola vez). Si no
+  aparece la opción, ve a **Ajustes del Sistema → Privacidad y seguridad** y pulsa
+  **«Abrir de todas formas»**. (El mensaje "Apple no pudo verificar…" es el aviso de
+  notarización: solo desaparece notarizando, ver arriba.)
 - **Windows:** en el aviso de SmartScreen, **Más información** → **Ejecutar de
   todas formas**.
 - **Siempre:** verifica el hash de tu descarga contra `SHA256SUMS.txt` antes de

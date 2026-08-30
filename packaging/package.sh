@@ -47,14 +47,16 @@ linux)
 macos)
   APP="stage/RAMI-Chain.app"
   mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+  # El ejecutable principal es un Mach-O REAL (rami-gui), no un script: es lo que
+  # exige la notarización de Apple. rami-gui sin argumentos arranca la testnet y
+  # abre el panel, así que el doble clic en Finder funciona directamente.
   cp "$REL/rami-gui" "$REL/rami-node" "$REL/rami-wallet" "$APP/Contents/MacOS/"
-  cp packaging/macos/rami-chain-launcher.sh "$APP/Contents/MacOS/rami-chain"
-  chmod +x "$APP/Contents/MacOS/rami-chain" "$APP/Contents/MacOS/rami-gui"
+  chmod +x "$APP/Contents/MacOS/rami-gui" "$APP/Contents/MacOS/rami-node" "$APP/Contents/MacOS/rami-wallet"
   sed "s/__VERSION__/${TAG#v}/g" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
   iconutil -c icns "$ICON/icon.iconset" -o "$APP/Contents/Resources/rami.icns"
 
-  # Firma de código (opcional, si hay certificado Developer ID en el entorno).
-  if [ -n "${MACOS_CERT_P12_BASE64:-}" ]; then
+  if [ -n "${MACOS_CERT_P12_BASE64:-}" ] && [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+    # Firma Developer ID + hardened runtime (requisito de notarización).
     echo "· firmando la app con Developer ID…"
     echo "$MACOS_CERT_P12_BASE64" | base64 --decode > /tmp/rami-cert.p12
     security create-keychain -p ci build.keychain
@@ -62,22 +64,30 @@ macos)
     security unlock-keychain -p ci build.keychain
     security import /tmp/rami-cert.p12 -k build.keychain -P "${MACOS_CERT_PASSWORD:-}" -T /usr/bin/codesign
     security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain >/dev/null
-    codesign --deep --force --options runtime --timestamp --sign "${MACOS_SIGN_IDENTITY}" "$APP"
+    for b in rami-node rami-wallet rami-gui; do
+      codesign --force --options runtime --timestamp --sign "${MACOS_SIGN_IDENTITY}" "$APP/Contents/MacOS/$b"
+    done
+    codesign --force --options runtime --timestamp --sign "${MACOS_SIGN_IDENTITY}" "$APP"
+    SIGNED=1
   else
-    echo "· sin certificado de Apple: la app irá SIN FIRMAR (ver SIGNING.md)"
+    # Sin certificado: firma AD-HOC. No quita el aviso de Gatekeeper (eso solo lo
+    # hace la notarización), pero deja la app válida y ejecutable (evita el error
+    # "está dañada" en Apple Silicon). Ver SIGNING.md.
+    echo "· sin certificado de Apple: firma ad-hoc (no notarizada; ver SIGNING.md)"
+    codesign --force --deep --sign - "$APP" || true
+    SIGNED=0
   fi
 
   DMG="dist/RAMI-Chain-$TAG-macos-${ARCH:-universal}.dmg"
   mkdir -p stage/dmg; cp -R "$APP" stage/dmg/; ln -s /Applications stage/dmg/Applications
   hdiutil create -volname "RAMI-Chain" -srcfolder stage/dmg -ov -format UDZO "$DMG"
 
-  # Notarización (opcional, requiere credenciales de Apple).
-  if [ -n "${APPLE_ID:-}" ] && [ -n "${MACOS_CERT_P12_BASE64:-}" ]; then
+  if [ "$SIGNED" = "1" ] && [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ] && [ -n "${APPLE_APP_PASSWORD:-}" ]; then
     echo "· notarizando el DMG con Apple…"
     xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "${APPLE_TEAM_ID}" --password "${APPLE_APP_PASSWORD}" --wait
     xcrun stapler staple "$DMG"
   else
-    echo "· sin credenciales de notarización: el DMG no queda notarizado (ver SIGNING.md)"
+    echo "· DMG NO notarizado (faltan credenciales de Apple; ver SIGNING.md)"
   fi
 
   rm -rf stage/dmg

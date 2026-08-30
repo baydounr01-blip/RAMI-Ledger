@@ -233,13 +233,19 @@
       <a class="btn btn-primary" href="/descargas/rami-chain-linux.AppImage" download>⬇ Linux</a></div>
   </div>
   <div class="warnbox" style="margin:16px 0 26px">
-    <b>¿macOS o Windows te avisa la primera vez?</b> Es normal en apps aún sin certificado de firma
-    (no significa que sea peligrosa). En <b>macOS</b>: clic derecho → <b>Abrir</b> → <b>Abrir</b>. En
-    <b>Windows</b>: <b>Más información</b> → <b>Ejecutar de todas formas</b>. Y siempre puedes verificar el
-    hash con <a href="/descargas/SHA256SUMS.txt">SHA256SUMS.txt</a>.
-    <div style="margin-top:8px;font-size:13px">Cuando el proyecto tenga certificados de Apple y de Windows,
-    estas descargas saldrán <b>firmadas y notarizadas</b> y no habrá ningún aviso
-    (<a href="https://github.com/baydounr01-blip/rami-ledger/blob/HEAD/SIGNING.md">detalles</a>).</div>
+    <b>La primera vez, macOS dice «Apple no pudo verificar que no contiene software malicioso» y Windows
+    muestra SmartScreen.</b> Es lo esperado en una app aún <b>sin certificado de firma</b> — no significa
+    que sea peligrosa; puedes comprobar el hash con <a href="/descargas/SHA256SUMS.txt">SHA256SUMS.txt</a>.
+    Ábrela con el método <b>oficial</b> de cada sistema:
+    <div class="disc" style="grid-template-columns:1fr 1fr;margin-top:10px">
+      <div>🍎 <b>macOS:</b> clic derecho en la app → <b>Abrir</b> → <b>Abrir</b>. Si no aparece la opción,
+      ve a <b>Ajustes del Sistema → Privacidad y seguridad</b> y pulsa <b>«Abrir de todas formas»</b>.</div>
+      <div>🪟 <b>Windows:</b> en el aviso azul, pulsa <b>Más información</b> → <b>Ejecutar de todas formas</b>.</div>
+    </div>
+    <div style="margin-top:10px;font-size:13px">Para que <b>no aparezca ningún aviso</b>, la app debe ir
+    <b>firmada y notarizada</b> con certificados de Apple y de Windows (a nombre del proyecto, de pago). El
+    sistema de publicación ya lo hace automáticamente en cuanto se añaden esos certificados —
+    <a href="https://github.com/baydounr01-blip/rami-ledger/blob/HEAD/SIGNING.md">cómo, en SIGNING.md</a>.</div>
   </div>
   <p style="color:var(--mut);font-size:13px;margin:6px 0 26px">
     Avanzados y código fuente (binarios sueltos, <code>.tar.gz</code>/<code>.zip</code>):
