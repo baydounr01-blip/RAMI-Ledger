@@ -36,9 +36,13 @@ fn keystore_of(args: &[String]) -> Keystore {
     let path = arg(args, "--keystore").unwrap_or_else(default_keystore_path);
     Keystore::load(path)
 }
+/// Contraseña: de `--password`, o de la variable de entorno RAMI_WALLET_PASSWORD.
+fn password_of(args: &[String]) -> Option<String> {
+    arg(args, "--password").or_else(|| std::env::var("RAMI_WALLET_PASSWORD").ok())
+}
 fn keypair_from(args: &[String]) -> Result<KeyPair, String> {
     let label = arg(args, "--label").unwrap_or_else(|| "default".into());
-    keystore_of(args).keypair(&label)
+    keystore_of(args).keypair(&label, password_of(args).as_deref())
 }
 fn params_of(args: &[String]) -> Params {
     match arg(args, "--network").as_deref() {
@@ -68,27 +72,60 @@ fn submit(chain: &ChainDir, tx: &Tx) -> ExitCode {
 
 fn cmd_new(args: &[String]) -> ExitCode {
     let label = arg(args, "--label").unwrap_or_else(|| "default".into());
+    let pw = password_of(args);
+    // Por defecto, CIFRADO. Solo se guarda en claro con --plaintext explícito.
+    if pw.is_none() && !has(args, "--plaintext") {
+        return die("da una contraseña con --password (o RAMI_WALLET_PASSWORD). El monedero se cifra por defecto; usa --plaintext solo si sabes lo que haces.");
+    }
     let mut ks = keystore_of(args);
-    match ks.create(&label) {
+    match ks.create(&label, pw.as_deref()) {
         Ok(kp) => {
             println!("✓ clave '{label}' creada en {}", ks.path.display());
             println!("  dirección (pubkey) : {}", hex::encode(kp.public_bytes()));
             println!("  etiqueta corta     : {}", address_from_pubkey(&kp.public_bytes()));
-            println!("  ⚠ TESTNET: clave en texto plano, sin valor monetario.");
+            if ks.is_encrypted() {
+                println!("  🔒 cifrado con tu contraseña (PBKDF2 + ChaCha20-Poly1305).");
+                println!("  ⚠ si olvidas la contraseña, NO hay recuperación posible.");
+            } else {
+                println!("  ⚠ TESTNET: clave en TEXTO PLANO (--plaintext). Cífrala con: rami-wallet passwd --password ...");
+            }
             ExitCode::SUCCESS
         }
         Err(e) => die(&e),
     }
 }
 
-fn cmd_address(args: &[String]) -> ExitCode {
-    match keypair_from(args) {
-        Ok(kp) => {
-            println!("{}", hex::encode(kp.public_bytes()));
-            eprintln!("(etiqueta corta: {})", address_from_pubkey(&kp.public_bytes()));
+fn cmd_passwd(args: &[String]) -> ExitCode {
+    let Some(pw) = password_of(args) else {
+        return die("da la nueva contraseña con --password (o RAMI_WALLET_PASSWORD)");
+    };
+    let mut ks = keystore_of(args);
+    if ks.is_encrypted() {
+        return die("el monedero ya está cifrado (cambiar contraseña llegará en una versión futura)");
+    }
+    match ks.set_password(&pw) {
+        Ok(()) => {
+            println!("🔒 monedero cifrado en {} ({} clave/s).", ks.path.display(), ks.labels().len());
             ExitCode::SUCCESS
         }
         Err(e) => die(&e),
+    }
+}
+
+fn has(args: &[String], flag: &str) -> bool {
+    args.iter().any(|a| a == flag)
+}
+
+fn cmd_address(args: &[String]) -> ExitCode {
+    // La dirección (pubkey) se lee SIN contraseña, aunque el monedero esté cifrado.
+    let label = arg(args, "--label").unwrap_or_else(|| "default".into());
+    match keystore_of(args).public_key(&label) {
+        Some(pk) => {
+            println!("{}", hex::encode(pk));
+            eprintln!("(etiqueta corta: {})", address_from_pubkey(&pk));
+            ExitCode::SUCCESS
+        }
+        None => die(&format!("no hay clave '{label}' (crea una con: rami-wallet new)")),
     }
 }
 
@@ -99,10 +136,13 @@ fn cmd_balance(args: &[String]) -> ExitCode {
             Ok(p) => p,
             Err(e) => return die(&e),
         },
-        None => match keypair_from(args) {
-            Ok(kp) => kp.public_bytes(),
-            Err(e) => return die(&e),
-        },
+        None => {
+            let label = arg(args, "--label").unwrap_or_else(|| "default".into());
+            match keystore_of(args).public_key(&label) {
+                Some(pk) => pk,
+                None => return die(&format!("no hay clave '{label}'")),
+            }
+        }
     };
     let chain = ChainDir::new(&dir);
     let tree = match chain.load_tree(params_of(args)) {
@@ -223,6 +263,7 @@ fn main() -> ExitCode {
     };
     match cmd.as_str() {
         "new" => cmd_new(&args[2..]),
+        "passwd" => cmd_passwd(&args[2..]),
         "address" => cmd_address(&args[2..]),
         "balance" => cmd_balance(&args[2..]),
         "send" => cmd_send(&args[2..]),

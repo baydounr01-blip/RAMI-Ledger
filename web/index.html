@@ -126,13 +126,15 @@
 </header>
 
 <section id="monedero">
-  <span class="pill">MONEDERO DE ESCRITORIO · v0.3</span>
+  <span class="pill">MONEDERO DE ESCRITORIO · v0.4</span>
   <h2>Un solo programa: tu nodo, tu minería y tu monedero.</h2>
   <p class="sub">Descarga <code>rami-gui</code> (Linux, macOS, Windows), ejecútalo y se abre un
   <strong>panel local en tu navegador</strong>. Desde ahí lo haces todo: <strong>minar</strong> con un
   clic (la recompensa va a tu monedero), <strong>enviar</strong> y <strong>recibir</strong>,
-  <strong>apostar (staking)</strong> y anclar <strong>predicciones</strong> (commit-reveal). Sin
-  configurar nada. La CLI (<code>rami-node</code>, <code>rami-wallet</code>) sigue ahí para quien la quiera.</p>
+  <strong>apostar (staking)</strong> y anclar <strong>predicciones</strong> (commit-reveal). Desde v0.4 el
+  monedero se <strong>cifra con tu contraseña</strong> (PBKDF2 + ChaCha20-Poly1305) y te <strong>avisa
+  cuando hay una actualización</strong>. La CLI (<code>rami-node</code>, <code>rami-wallet</code>) sigue
+  ahí para quien la quiera.</p>
   <div class="grid3">
     <div class="card"><div class="tag">UN CLIC</div><h3>Minar desde el monedero</h3>
       <p>Pulsa «Empezar a minar» y tu CPU asegura la red. La dificultad se ajusta sola (LWMA) hacia

@@ -126,13 +126,14 @@
 </header>
 
 <section id="monedero">
-  <span class="pill">DESKTOP WALLET · v0.3</span>
+  <span class="pill">DESKTOP WALLET · v0.4</span>
   <h2>A single program: your node, your mining and your wallet.</h2>
   <p class="sub">Download <code>rami-gui</code> (Linux, macOS, Windows), run it and a
   <strong>local dashboard opens in your browser</strong>. From there you do everything: <strong>mine</strong> with one
   click (the reward goes to your wallet), <strong>send</strong> and <strong>receive</strong>,
-  <strong>stake</strong> and anchor <strong>predictions</strong> (commit-reveal). No
-  configuration needed. The CLI (<code>rami-node</code>, <code>rami-wallet</code>) is still there for anyone who wants it.</p>
+  <strong>stake</strong> and anchor <strong>predictions</strong> (commit-reveal). Since v0.4 the wallet is
+  <strong>encrypted with your password</strong> (PBKDF2 + ChaCha20-Poly1305) and <strong>notifies you when
+  an update is available</strong>. The CLI (<code>rami-node</code>, <code>rami-wallet</code>) is still there for anyone who wants it.</p>
   <div class="grid3">
     <div class="card"><div class="tag">ONE CLICK</div><h3>Mine from the wallet</h3>
       <p>Press "Start mining" and your CPU secures the network. Difficulty adjusts itself (LWMA) toward

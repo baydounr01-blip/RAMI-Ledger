@@ -33,10 +33,31 @@ use serde_json::{json, Value};
 
 const DASHBOARD: &str = include_str!("dashboard.html");
 
+/// Estado del monedero en memoria. `pubkey` se conoce aunque esté bloqueado
+/// (para minar y ver saldo); `kp` solo está presente cuando se puede FIRMAR.
+struct WalletState {
+    pubkey: Option<[u8; 32]>,
+    kp: Option<KeyPair>,
+    encrypted: bool,
+}
+
+impl WalletState {
+    fn state(&self) -> &'static str {
+        match (self.pubkey.is_some(), self.encrypted, self.kp.is_some()) {
+            (false, _, _) => "none",       // no hay monedero: hay que crear contraseña
+            (true, false, _) => "plain",   // legado en texto plano (usable, sin cifrar)
+            (true, true, true) => "unlocked",
+            (true, true, false) => "locked",
+        }
+    }
+}
+
 struct Gui {
     node: NodeHandle,
-    kp: KeyPair,
     chain_dir: PathBuf,
+    ks_path: String,
+    label: String,
+    wallet: std::sync::Mutex<WalletState>,
 }
 
 fn arg(args: &[String], flag: &str) -> Option<String> {
@@ -67,24 +88,98 @@ fn fee_of(b: &Value) -> u64 {
     b.get("fee").and_then(|v| v.as_u64()).unwrap_or(1)
 }
 
+fn password_field(b: &Value) -> String {
+    b.get("password").and_then(|v| v.as_str()).unwrap_or("").to_string()
+}
+
 fn route(g: &Gui, req: Request) -> Response {
-    let pubkey = g.kp.public_bytes();
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/") | ("GET", "/index.html") => Response::html(DASHBOARD),
 
         ("GET", "/api/status") => {
+            let w = g.wallet.lock().unwrap();
             let s = g.node.status();
-            let acc = g.node.account(pubkey);
             let mut v = serde_json::to_value(&s).unwrap_or_else(|_| json!({}));
             v["version"] = json!(env!("CARGO_PKG_VERSION"));
-            v["wallet"] = json!({
-                "address": hex::encode(pubkey),
-                "short": address_from_pubkey(&pubkey),
-                "balance": fmt_ram(acc.balance),
-                "staked": fmt_ram(acc.staked),
-                "nonce": acc.nonce,
-            });
+            let mut wallet = json!({ "state": w.state(), "encrypted": w.encrypted });
+            if let Some(pk) = w.pubkey {
+                let acc = g.node.account(pk);
+                wallet["address"] = json!(hex::encode(pk));
+                wallet["short"] = json!(address_from_pubkey(&pk));
+                wallet["balance"] = json!(fmt_ram(acc.balance));
+                wallet["staked"] = json!(fmt_ram(acc.staked));
+                wallet["nonce"] = json!(acc.nonce);
+            }
+            v["wallet"] = wallet;
             Response::json(&v)
+        }
+
+        // ---- gestión de contraseña / bloqueo ----
+        ("POST", "/api/setup") => {
+            let pw = password_field(&body_json(&req));
+            if pw.chars().count() < 8 {
+                return err("la contraseña debe tener al menos 8 caracteres");
+            }
+            let mut w = g.wallet.lock().unwrap();
+            if w.pubkey.is_some() {
+                return err("ya existe un monedero en esta máquina");
+            }
+            let mut ks = Keystore::load(&g.ks_path);
+            match ks.create(&g.label, Some(&pw)) {
+                Ok(kp) => {
+                    let pk = kp.public_bytes();
+                    g.node.set_miner(pk);
+                    w.pubkey = Some(pk);
+                    w.kp = Some(kp);
+                    w.encrypted = true;
+                    Response::json(&json!({"ok": true, "state": "unlocked", "address": hex::encode(pk)}))
+                }
+                Err(e) => err(e),
+            }
+        }
+
+        ("POST", "/api/unlock") => {
+            let pw = password_field(&body_json(&req));
+            let mut w = g.wallet.lock().unwrap();
+            if !w.encrypted {
+                return err("el monedero no está cifrado");
+            }
+            match Keystore::load(&g.ks_path).keypair(&g.label, Some(&pw)) {
+                Ok(kp) => {
+                    w.kp = Some(kp);
+                    Response::json(&json!({"ok": true, "state": "unlocked"}))
+                }
+                Err(_) => err("contraseña incorrecta"),
+            }
+        }
+
+        ("POST", "/api/lock") => {
+            let mut w = g.wallet.lock().unwrap();
+            if w.encrypted {
+                w.kp = None;
+            }
+            Response::json(&json!({"ok": true, "state": w.state()}))
+        }
+
+        ("POST", "/api/encrypt") => {
+            let pw = password_field(&body_json(&req));
+            if pw.chars().count() < 8 {
+                return err("la contraseña debe tener al menos 8 caracteres");
+            }
+            let mut w = g.wallet.lock().unwrap();
+            if w.encrypted {
+                return err("el monedero ya está cifrado");
+            }
+            if w.pubkey.is_none() {
+                return err("no hay ningún monedero que cifrar");
+            }
+            match Keystore::load(&g.ks_path).set_password(&pw) {
+                Ok(()) => {
+                    w.encrypted = true; // el kp sigue en memoria => queda desbloqueado
+                    Response::json(&json!({"ok": true, "state": "unlocked"}))
+                }
+                Err(e) => err(e),
+            }
         }
 
         ("GET", "/api/blocks") => {
@@ -118,8 +213,10 @@ fn route(g: &Gui, req: Request) -> Response {
                 Ok(a) => a,
                 Err(e) => return err(e),
             };
-            let nonce = g.node.next_nonce(pubkey);
-            let tx = build_transfer(&g.kp, to, amount, fee_of(&b), nonce);
+            let w = g.wallet.lock().unwrap();
+            let Some(kp) = w.kp.as_ref() else { return err("monedero bloqueado: desbloquéalo con tu contraseña") };
+            let nonce = g.node.next_nonce(kp.public_bytes());
+            let tx = build_transfer(kp, to, amount, fee_of(&b), nonce);
             match g.node.submit_tx(tx) {
                 Ok(id) => Response::json(&json!({"ok": true, "txid": id})),
                 Err(e) => err(e),
@@ -133,8 +230,10 @@ fn route(g: &Gui, req: Request) -> Response {
                 Ok(a) => a,
                 Err(e) => return err(e),
             };
-            let nonce = g.node.next_nonce(pubkey);
-            let tx = build_stake(&g.kp, amount, fee_of(&b), nonce, unstake);
+            let w = g.wallet.lock().unwrap();
+            let Some(kp) = w.kp.as_ref() else { return err("monedero bloqueado: desbloquéalo con tu contraseña") };
+            let nonce = g.node.next_nonce(kp.public_bytes());
+            let tx = build_stake(kp, amount, fee_of(&b), nonce, unstake);
             match g.node.submit_tx(tx) {
                 Ok(id) => Response::json(&json!({"ok": true, "txid": id})),
                 Err(e) => err(e),
@@ -148,8 +247,10 @@ fn route(g: &Gui, req: Request) -> Response {
                 Ok(v) => v,
                 Err(_) => return err("el payload no es JSON válido"),
             };
-            let nonce = g.node.next_nonce(pubkey);
-            let (tx, secret) = match build_commit(&g.kp, &payload, fee_of(&b), nonce) {
+            let w = g.wallet.lock().unwrap();
+            let Some(kp) = w.kp.as_ref() else { return err("monedero bloqueado: desbloquéalo con tu contraseña") };
+            let nonce = g.node.next_nonce(kp.public_bytes());
+            let (tx, secret) = match build_commit(kp, &payload, fee_of(&b), nonce) {
                 Ok(v) => v,
                 Err(e) => return err(e),
             };
@@ -175,8 +276,10 @@ fn route(g: &Gui, req: Request) -> Response {
                 }
                 None => return err("commit txid inválido"),
             };
-            let nonce = g.node.next_nonce(pubkey);
-            let tx = build_reveal(&g.kp, commit_txid, &payload, secret, fee_of(&b), nonce);
+            let w = g.wallet.lock().unwrap();
+            let Some(kp) = w.kp.as_ref() else { return err("monedero bloqueado: desbloquéalo con tu contraseña") };
+            let nonce = g.node.next_nonce(kp.public_bytes());
+            let tx = build_reveal(kp, commit_txid, &payload, secret, fee_of(&b), nonce);
             match g.node.submit_tx(tx) {
                 Ok(id) => Response::json(&json!({"ok": true, "txid": id})),
                 Err(e) => err(e),
@@ -222,26 +325,29 @@ fn main() -> ExitCode {
     let seeds = args_all(&args, "--connect");
     let label = arg(&args, "--label").unwrap_or_else(|| "default".into());
 
-    // Monedero: crea la clave por defecto si no existe (listo para usar).
+    // Monedero: NO se crea solo. Si no existe, el panel pedirá una contraseña
+    // (estado "none"). Si está cifrado, arranca BLOQUEADO. La pubkey se conoce
+    // sin contraseña para poder minar y ver saldo.
     let keystore_path = arg(&args, "--keystore").unwrap_or_else(default_keystore_path);
-    let mut ks = Keystore::load(&keystore_path);
-    let kp = match ks.get_or_create(&label) {
-        Ok(k) => k,
-        Err(e) => {
-            eprintln!("✗ monedero: {e}");
-            return ExitCode::FAILURE;
-        }
+    let ks = Keystore::load(&keystore_path);
+    let encrypted = ks.is_encrypted();
+    let pubkey = ks.public_key(&label);
+    let kp = if !encrypted {
+        pubkey.and_then(|_| ks.keypair(&label, None).ok()) // legado en claro => desbloqueado
+    } else {
+        None // cifrado => bloqueado hasta que el usuario desbloquee
     };
-    let pubkey = kp.public_bytes();
+    let wallet = WalletState { pubkey, kp, encrypted };
+    let wstate = wallet.state();
 
-    // Nodo: mina hacia ESTE monedero (minería apagada hasta que el usuario la active).
+    // Nodo: mina hacia el monedero si ya hay pubkey; si no, se fija tras el setup.
     let node = match spawn(NodeConfig {
         chain_dir: chain_dir.clone(),
         params,
         is_testnet,
         listen: Some(p2p_port),
         seeds: seeds.clone(),
-        miner: Some(pubkey),
+        miner: pubkey,
         mining: false,
     }) {
         Ok(h) => h,
@@ -262,7 +368,11 @@ fn main() -> ExitCode {
     let s = node.status();
     println!("● RAMI-Chain — monedero de escritorio ({net_name})");
     println!("  panel      : {url}");
-    println!("  dirección  : {}", hex::encode(pubkey));
+    match pubkey {
+        Some(pk) => println!("  dirección  : {}", hex::encode(pk)),
+        None => println!("  monedero   : sin crear — el panel pedirá una contraseña"),
+    }
+    println!("  monedero   : estado «{wstate}»");
     println!("  network-id : {}", s.network_id);
     println!("  P2P        : 0.0.0.0:{}", s.listen_port);
     if !seeds.is_empty() {
@@ -276,7 +386,13 @@ fn main() -> ExitCode {
         open_browser(&url);
     }
 
-    let gui = Arc::new(Gui { node, kp, chain_dir });
+    let gui = Arc::new(Gui {
+        node,
+        chain_dir,
+        ks_path: keystore_path,
+        label,
+        wallet: std::sync::Mutex::new(wallet),
+    });
     http::serve(listener, move |req| route(&gui, req));
     ExitCode::SUCCESS
 }

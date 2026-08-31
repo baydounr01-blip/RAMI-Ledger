@@ -185,6 +185,35 @@
   .status .k{color:var(--muted);font-family:var(--sans)}
   .status .txid{color:var(--green)}
 
+  /* ---------- Overlay de contraseña ---------- */
+  .overlay{position:fixed;inset:0;z-index:50;display:none;
+    align-items:center;justify-content:center;padding:20px;
+    background:rgba(5,8,15,.82);backdrop-filter:blur(4px)}
+  .overlay.show{display:flex}
+  .overlay .box{background:var(--panel);border:1px solid var(--border);
+    border-radius:16px;padding:26px;max-width:420px;width:100%}
+  .overlay h3{margin:0 0 6px;font-size:18px}
+  .overlay p.sub{color:var(--muted);font-size:13px;margin:0 0 16px}
+  .overlay input[type=password]{width:100%;background:#0d1220;border:1px solid var(--border);
+    color:var(--text);border-radius:9px;padding:10px 12px;font-size:14px;font-family:var(--mono);outline:none}
+  .overlay input[type=password]:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(110,168,254,.15)}
+  .overlay .warn-line{color:var(--warn);font-size:12.5px;margin-top:12px}
+  .overlay .err-line{color:var(--danger);font-size:13px;margin-top:10px;min-height:16px}
+
+  /* ---------- Banners de estado ---------- */
+  .upd{background:rgba(126,240,192,.10);border-bottom:1px solid rgba(126,240,192,.35);
+    padding:10px 20px;font-size:13px;color:var(--text);display:none;align-items:center;gap:12px}
+  .upd.show{display:flex}
+  .upd a{font-weight:600}
+  .upd .x{margin-left:auto;cursor:pointer;color:var(--muted);border:none;background:none;font-size:18px;line-height:1}
+  .plainwarn{background:rgba(255,209,102,.08);border-bottom:1px solid rgba(255,209,102,.3);
+    padding:9px 20px;font-size:12.5px;color:var(--warn);display:none;align-items:center;gap:10px}
+  .plainwarn.show{display:flex}
+  .lockbtn{background:transparent;border:1px solid var(--border);color:var(--muted);
+    border-radius:8px;padding:5px 11px;font-size:12.5px;cursor:pointer;font-family:inherit}
+  .lockbtn:hover{color:var(--text);border-color:var(--blue)}
+  .lockbtn.hidden{display:none}
+
   /* ---------- Tables ---------- */
   .tbl-wrap{overflow-x:auto}
   table{width:100%;border-collapse:collapse;font-size:13px}
@@ -254,7 +283,20 @@
     <span id="syncTxt">conectando…</span>
   </div>
   <div class="spacer"></div>
+  <button class="lockbtn hidden" id="lockBtn">🔒 Bloquear</button>
   <span class="ver">v<span id="verTxt">—</span></span>
+</div>
+
+<!-- aviso de actualización disponible -->
+<div class="upd" id="updateBanner">
+  <span>🎉 <strong>Actualización disponible:</strong> <span id="updVer"></span></span>
+  <a id="updLink" href="https://github.com/baydounr01-blip/rami-ledger/releases" target="_blank" rel="noopener">Descargar</a>
+  <button class="x" id="updClose" title="cerrar" aria-label="cerrar">×</button>
+</div>
+<!-- aviso: monedero sin cifrar (estado plain) -->
+<div class="plainwarn" id="plainBanner">
+  <span>⚠️ Tu monedero no está cifrado.</span>
+  <button class="btn small" id="encryptBtn">Ponerle contraseña</button>
 </div>
 
 <!-- ================= SHELL ================= -->
@@ -264,6 +306,7 @@
     <button data-view="enviar"><span class="ico">↗️</span> Enviar</button>
     <button data-view="recibir"><span class="ico">↙️</span> Recibir</button>
     <button data-view="minar"><span class="ico">⛏</span> Minar</button>
+    <button data-view="staking"><span class="ico">🔒</span> Apostar</button>
     <button data-view="predicciones"><span class="ico">🔮</span> Predicciones</button>
     <button data-view="explorador"><span class="ico">🔍</span> Explorador</button>
     <button data-view="red"><span class="ico">🌐</span> Red</button>
@@ -398,6 +441,39 @@
           se emiten por minería y staking.
         </p>
       </div>
+    </section>
+
+    <!-- ============ STAKING ============ -->
+    <section id="v-staking" class="hidden">
+      <h1 class="section-title">Apostar (staking) 🔒</h1>
+      <p class="section-sub">Bloquea RAMI para apoyar la red. Puedes retirarlo cuando quieras.</p>
+      <div class="grid two" style="max-width:720px;margin-bottom:14px">
+        <div class="big-card blue"><div class="lbl">🔒 Apostado</div>
+          <div class="val"><span id="stkStaked">—</span><span class="unit">RAMI</span></div></div>
+        <div class="big-card green"><div class="lbl">💰 Disponible</div>
+          <div class="val"><span id="stkBalance">—</span><span class="unit">RAMI</span></div></div>
+      </div>
+      <div class="grid two" style="max-width:720px">
+        <div class="card">
+          <strong>Apostar</strong>
+          <label class="field" style="margin-top:12px"><span class="cap">Importe (RAMI)</span>
+            <input type="text" id="stakeAmount" placeholder="50" inputmode="decimal"></label>
+          <label class="field"><span class="cap">Comisión (ram)</span>
+            <input type="number" id="stakeFee" value="1" min="0" step="1"></label>
+          <button class="btn" id="stakeBtn">Apostar</button>
+          <div class="status" id="stakeStatus"></div>
+        </div>
+        <div class="card">
+          <strong>Retirar (unstake)</strong>
+          <label class="field" style="margin-top:12px"><span class="cap">Importe (RAMI)</span>
+            <input type="text" id="unstakeAmount" placeholder="50" inputmode="decimal"></label>
+          <label class="field"><span class="cap">Comisión (ram)</span>
+            <input type="number" id="unstakeFee" value="1" min="0" step="1"></label>
+          <button class="btn ghost" id="unstakeBtn">Retirar</button>
+          <div class="status" id="unstakeStatus"></div>
+        </div>
+      </div>
+      <p class="note" style="max-width:720px">Se incluirá cuando se mine el próximo bloque. El staking forma parte de la emisión sin premine; en esta testnet no tiene valor monetario.</p>
     </section>
 
     <!-- ============ PREDICCIONES ============ -->
@@ -556,6 +632,31 @@
   </main>
 </div>
 
+<!-- ================= OVERLAY DE CONTRASEÑA ================= -->
+<div class="overlay" id="overlay">
+  <div class="box">
+    <div id="ovSetup">
+      <h3>Crea una contraseña</h3>
+      <p class="sub">Cifra tu monedero de RAMI-Chain en esta máquina. Se usa para firmar tus transacciones.</p>
+      <label class="field"><span class="cap">Contraseña (mínimo 8 caracteres)</span>
+        <input type="password" id="ovPw1" autocomplete="new-password"></label>
+      <label class="field"><span class="cap">Repite la contraseña</span>
+        <input type="password" id="ovPw2" autocomplete="new-password"></label>
+      <button class="btn" id="ovSetupBtn">Crear monedero</button>
+      <div class="err-line" id="ovSetupErr"></div>
+      <div class="warn-line">⚠ Si olvidas esta contraseña no hay forma de recuperar el monedero. (Testnet: no hay fondos con valor, pero conviene la costumbre.)</div>
+    </div>
+    <div id="ovUnlock" style="display:none">
+      <h3>Monedero bloqueado 🔒</h3>
+      <p class="sub">Introduce tu contraseña para desbloquear y poder firmar.</p>
+      <label class="field"><span class="cap">Contraseña</span>
+        <input type="password" id="ovPwU" autocomplete="current-password"></label>
+      <button class="btn" id="ovUnlockBtn">Desbloquear</button>
+      <div class="err-line" id="ovUnlockErr"></div>
+    </div>
+  </div>
+</div>
+
 <script>
 "use strict";
 (function(){
@@ -653,7 +754,7 @@
   }
 
   // ---------- navegación ----------
-  var views = ["resumen","enviar","recibir","minar","predicciones","explorador","red"];
+  var views = ["resumen","enviar","recibir","minar","staking","predicciones","explorador","red"];
   document.getElementById("nav").addEventListener("click", function(e){
     var b = e.target.closest("button[data-view]");
     if(!b) return;
@@ -738,7 +839,31 @@
     document.getElementById("netPeerCount").textContent = (s.peers||[]).length;
     renderPeers(s.peers||[]);
 
+    // Staking
+    document.getElementById("stkStaked").textContent  = w.staked  != null ? w.staked  : "—";
+    document.getElementById("stkBalance").textContent = w.balance != null ? w.balance : "—";
+
+    // Estado del monedero (overlay / bloqueo / aviso sin cifrar)
+    renderWallet(w);
+
     setConnection(true);
+  }
+
+  // ---------- estado del monedero: overlay y bloqueo ----------
+  function showOverlay(mode){
+    document.getElementById("overlay").classList.add("show");
+    document.getElementById("ovSetup").style.display  = (mode==="setup")  ? "block" : "none";
+    document.getElementById("ovUnlock").style.display = (mode==="unlock") ? "block" : "none";
+  }
+  function hideOverlay(){ document.getElementById("overlay").classList.remove("show"); }
+
+  function renderWallet(w){
+    var st = w.state || "none";
+    document.getElementById("lockBtn").classList.toggle("hidden", !(st==="unlocked" && w.encrypted));
+    document.getElementById("plainBanner").classList.toggle("show", st==="plain");
+    if(st==="none")        showOverlay("setup");
+    else if(st==="locked") showOverlay("unlock");
+    else                   hideOverlay();
   }
 
   function renderPeers(peers){
@@ -1004,12 +1129,121 @@
       .then(function(){ btn.disabled = false; });
   });
 
+  // Apostar / Retirar
+  function stakeAction(path, amtId, feeId, stId, btnEl){
+    var amount = document.getElementById(amtId).value.trim();
+    var fee = document.getElementById(feeId).value.trim();
+    var st = document.getElementById(stId);
+    if(!amount){ showStatus(st, false, "Indica el importe."); return; }
+    btnEl.disabled = true;
+    showStatus(st, true, '<span class="k">Enviando…</span>');
+    jpost(path, {amount:amount, fee:Number(fee)||0})
+      .then(function(r){
+        if(r.ok) showStatus(st, true, "Hecho. "+txidLine(r.txid));
+        else showStatus(st, false, "Error: "+esc(r.error||"desconocido"));
+      })
+      .catch(function(){ showStatus(st, false, "Sin conexión con el nodo."); })
+      .then(function(){ btnEl.disabled = false; pollStatus(); });
+  }
+  document.getElementById("stakeBtn").addEventListener("click", function(){
+    stakeAction("/api/stake","stakeAmount","stakeFee","stakeStatus",this);
+  });
+  document.getElementById("unstakeBtn").addEventListener("click", function(){
+    stakeAction("/api/unstake","unstakeAmount","unstakeFee","unstakeStatus",this);
+  });
+
+  // Crear contraseña (setup)
+  document.getElementById("ovSetupBtn").addEventListener("click", function(){
+    var p1 = document.getElementById("ovPw1").value;
+    var p2 = document.getElementById("ovPw2").value;
+    var er = document.getElementById("ovSetupErr");
+    if(p1.length < 8){ er.textContent = "La contraseña debe tener al menos 8 caracteres."; return; }
+    if(p1 !== p2){ er.textContent = "Las contraseñas no coinciden."; return; }
+    er.textContent = ""; var btn = this; btn.disabled = true;
+    jpost("/api/setup", {password:p1})
+      .then(function(r){
+        if(r.ok){ document.getElementById("ovPw1").value=""; document.getElementById("ovPw2").value=""; hideOverlay(); pollStatus(); }
+        else er.textContent = r.error || "no se pudo crear el monedero";
+      })
+      .catch(function(){ er.textContent = "Sin conexión con el nodo."; })
+      .then(function(){ btn.disabled = false; });
+  });
+
+  // Desbloquear (unlock)
+  document.getElementById("ovUnlockBtn").addEventListener("click", function(){
+    var p = document.getElementById("ovPwU").value;
+    var er = document.getElementById("ovUnlockErr");
+    var btn = this; btn.disabled = true;
+    jpost("/api/unlock", {password:p})
+      .then(function(r){
+        if(r.ok){ document.getElementById("ovPwU").value=""; hideOverlay(); pollStatus(); }
+        else er.textContent = r.error || "contraseña incorrecta";
+      })
+      .catch(function(){ er.textContent = "Sin conexión con el nodo."; })
+      .then(function(){ btn.disabled = false; });
+  });
+  document.getElementById("ovPwU").addEventListener("keydown", function(e){
+    if(e.key==="Enter") document.getElementById("ovUnlockBtn").click();
+  });
+  document.getElementById("ovPw2").addEventListener("keydown", function(e){
+    if(e.key==="Enter") document.getElementById("ovSetupBtn").click();
+  });
+
+  // Bloquear
+  document.getElementById("lockBtn").addEventListener("click", function(){
+    jpost("/api/lock", {}).then(function(){ pollStatus(); }).catch(function(){});
+  });
+
+  // Cifrar un monedero en texto plano (estado "plain")
+  document.getElementById("encryptBtn").addEventListener("click", function(){
+    var p = prompt("Contraseña para cifrar tu monedero (mínimo 8 caracteres):");
+    if(p == null) return;
+    if(p.length < 8){ alert("La contraseña debe tener al menos 8 caracteres."); return; }
+    jpost("/api/encrypt", {password:p})
+      .then(function(r){ if(r.ok) pollStatus(); else alert(r.error || "no se pudo cifrar"); })
+      .catch(function(){ alert("Sin conexión con el nodo."); });
+  });
+
+  // ---------- aviso de actualización disponible ----------
+  var updDismissed = "";
+  function isNewer(a, b){
+    var pa = String(a).split(".").map(Number), pb = String(b).split(".").map(Number);
+    for(var i=0;i<Math.max(pa.length,pb.length);i++){
+      var x = pa[i]||0, y = pb[i]||0;
+      if(x>y) return true; if(x<y) return false;
+    }
+    return false;
+  }
+  function checkUpdate(){
+    var cur = state.status && state.status.version;
+    if(!cur) return;
+    fetch("https://api.github.com/repos/baydounr01-blip/RAMI-Ledger/releases/latest",
+          {headers:{"Accept":"application/vnd.github+json"}})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(d){
+        if(!d || !d.tag_name) return;
+        var latest = String(d.tag_name).replace(/^v/,"");
+        if(isNewer(latest, cur) && updDismissed !== latest){
+          document.getElementById("updVer").textContent = "v"+latest;
+          if(d.html_url) document.getElementById("updLink").href = d.html_url;
+          document.getElementById("updateBanner").classList.add("show");
+        }
+      })
+      .catch(function(){ /* offline: sin aviso */ });
+  }
+  document.getElementById("updClose").addEventListener("click", function(){
+    updDismissed = (document.getElementById("updVer").textContent||"").replace(/^v/,"");
+    document.getElementById("updateBanner").classList.remove("show");
+  });
+
   // ---------- arranque ----------
   pollStatus();
   pollBlocks();
   setInterval(pollStatus, 2000);
   setInterval(function(){ if(currentView==="resumen") pollBlocks(); }, 4000);
   setInterval(function(){ if(currentView==="explorador") pollExplorer(); }, 5000);
+  setTimeout(checkUpdate, 2500);
+  setInterval(checkUpdate, 600000);
 })();
 </script>
 </body>

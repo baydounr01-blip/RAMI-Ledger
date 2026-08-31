@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/rami-core", "crates/rami-net", "crates/rami-node", "crates/rami-wallet", "crates/rami-gui"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "MIT"
 authors = ["Rami Baydoun Nabhan"]
@@ -15,6 +15,10 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 hex = "0.4"
+# Cifrado del keystore (v0.4): KDF y AEAD auditados de RustCrypto — nunca
+# criptografía casera para guardar claves.
+chacha20poly1305 = "0.10"
+pbkdf2 = "0.12"
 
 [profile.release]
 opt-level = 3

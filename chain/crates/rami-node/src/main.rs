@@ -214,9 +214,10 @@ fn cmd_faucet(args: &[String]) -> ExitCode {
     };
     let cooldown: u64 = arg(args, "--cooldown").and_then(|s| s.parse().ok()).unwrap_or(3600);
 
-    let kp = match Keystore::load(&keystore).keypair(&label) {
+    let pw = arg(args, "--password").or_else(|| std::env::var("RAMI_WALLET_PASSWORD").ok());
+    let kp = match Keystore::load(&keystore).keypair(&label, pw.as_deref()) {
         Ok(k) => k,
-        Err(e) => return die(&format!("keystore: {e}")),
+        Err(e) => return die(&format!("keystore: {e} (usa --password o RAMI_WALLET_PASSWORD)")),
     };
     let me = kp.public_bytes();
     let chain = ChainDir::new(&dir);

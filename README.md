@@ -101,9 +101,10 @@ cd chain && cargo build --release        # o descarga el binario de las releases
 ## En la terminal (usuarios avanzados)
 
 ```bash
-# 1) monedero
-rami-wallet new --label yo
-ADDR=$(rami-wallet address --label yo)
+# 1) monedero (CIFRADO por defecto; la contraseña también puede ir en
+#    RAMI_WALLET_PASSWORD). La dirección se lee sin contraseña, para minar.
+rami-wallet new --label yo --password TU_CONTRASEÑA
+ADDR=$(rami-wallet address --label yo)   # sin contraseña
 
 # 2a) demonio P2P de testnet: escucha, sincroniza y mina hacia tu dirección
 #     (recuerda los pares en peers.json y los re-marca al arrancar; --connect
@@ -119,7 +120,9 @@ rami-node init --chain ./midato --network regtest --miner $ADDR
 rami-node mine --chain ./midato --network regtest --address $ADDR --blocks 5
 rami-node status --chain ./midato --network regtest
 
-# 3) enviar, apostar, anclar una predicción y verificar (regtest)
+# 3) enviar, apostar, anclar una predicción y verificar (regtest). Firmar exige
+#    la contraseña (--password o RAMI_WALLET_PASSWORD); consultar saldo no.
+export RAMI_WALLET_PASSWORD=TU_CONTRASEÑA
 rami-wallet send   --chain ./midato --network regtest --to <PUBKEY> --amount 10 --label yo
 rami-wallet stake  --chain ./midato --network regtest --amount 50 --label yo
 rami-wallet commit --chain ./midato --network regtest --payload '{"pair":"BTC","dir":"LONG"}' --label yo
@@ -181,9 +184,19 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
     comparten `mempool.jsonl`; si el nodo lo reescribe justo al encolarse un
     goteo, ese goteo puede perderse y bastará re-pedirlo — el IPC dedicado
     faucet↔nodo llega en v0.4.
-- **v0.4 (siguiente):** instantáneas de cadena re-verificables publicadas para
-  el explorador web, seeds comunitarios documentados, y endurecimiento P2P
-  (puntuación de pares, límites por IP).
+- **v0.4 (esto):**
+  - **Monedero cifrado con contraseña por defecto** (`rami-wallet`): formato v2
+    con **PBKDF2-HMAC-SHA256 (600k) + ChaCha20-Poly1305** (RustCrypto, nunca
+    criptografía casera). La clave pública se guarda en claro para **minar y ver
+    saldo con el monedero bloqueado**; el secreto solo se descifra al firmar. Los
+    almacenes v1 en texto plano se migran con `rami-wallet passwd`.
+  - **Apartado Staking** en el panel (apostar / retirar / saldo apostado) y
+    estados de monedero en la GUI (crear contraseña / desbloquear / bloquear).
+  - **Aviso de "actualización disponible"** en el panel: compara la versión en
+    ejecución con el último release publicado y avisa si hay una nueva.
+- **v0.5 (siguiente):** instantáneas de cadena re-verificables para el explorador
+  web, seeds comunitarios, endurecimiento P2P (puntuación de pares, límites por
+  IP) y IPC dedicado faucet↔nodo.
 
 ## Referencia
 
