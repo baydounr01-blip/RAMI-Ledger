@@ -194,6 +194,17 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
     estados de monedero en la GUI (crear contraseña / desbloquear / bloquear).
   - **Aviso de "actualización disponible"** en el panel: compara la versión en
     ejecución con el último release publicado y avisa si hay una nueva.
+- **v0.4.1 (esto):**
+  - **Auto-actualizador desde la propia app.** El aviso ya no solo enlaza a la
+    descarga: con **«Actualizar ahora»** el monedero descarga el instalador
+    oficial del release, **verifica su SHA-256** contra `SHA256SUMS.txt` **antes
+    de tocar nada** y solo entonces lo aplica. Nunca ejecuta ni sobrescribe nada
+    cuyo hash no coincida. En Linux (AppImage) sustituye su propio ejecutable de
+    forma atómica (basta reiniciar); en macOS/Windows guarda el instalador
+    **verificado** y lo abre para que el instalador firmado del sistema termine
+    (y siga pasando el filtro de Gatekeeper/SmartScreen — no nos saltamos ningún
+    aviso de seguridad). Endpoints locales `GET /api/update` y
+    `POST /api/update/apply`.
 - **v0.5 (siguiente):** instantáneas de cadena re-verificables para el explorador
   web, seeds comunitarios, endurecimiento P2P (puntuación de pares, límites por
   IP) y IPC dedicado faucet↔nodo.

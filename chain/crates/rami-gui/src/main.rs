@@ -296,6 +296,27 @@ fn route(g: &Gui, req: Request) -> Response {
             Response::json(&json!({"ok": true}))
         }
 
+        // ---- auto-actualizador ----
+        // Comprueba el Release oficial (sin tocar nada) y dice si hay versión
+        // nueva y con qué instalador se aplicaría.
+        ("GET", "/api/update") => match rami_node::update::check(env!("CARGO_PKG_VERSION")) {
+            Ok(info) => {
+                let mut v = serde_json::to_value(&info).unwrap_or_else(|_| json!({}));
+                v["ok"] = json!(true);
+                Response::json(&v)
+            }
+            Err(e) => err(e),
+        },
+
+        // Descarga el instalador oficial, VERIFICA su SHA-256 y lo aplica.
+        // Nunca ejecuta ni sobrescribe nada cuyo hash no coincida.
+        ("POST", "/api/update/apply") => {
+            let r = rami_node::update::apply(env!("CARGO_PKG_VERSION"));
+            let mut v = serde_json::to_value(&r).unwrap_or_else(|_| json!({}));
+            v["ok"] = json!(r.ok);
+            Response::json(&v)
+        }
+
         _ => Response::not_found(),
     }
 }

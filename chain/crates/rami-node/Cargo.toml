@@ -20,3 +20,10 @@ serde.workspace = true
 serde_json.workspace = true
 hex.workspace = true
 rand_core.workspace = true
+# Auto-actualizador: descarga el instalador oficial y verifica su SHA-256.
+sha2.workspace = true
+ureq.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
+hex.workspace = true

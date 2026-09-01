@@ -10,6 +10,7 @@
 //! rechaza un bloque por su salida.
 
 pub mod http;
+pub mod update;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

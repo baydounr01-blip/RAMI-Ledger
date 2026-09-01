@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/rami-core", "crates/rami-net", "crates/rami-node", "crates/rami-wallet", "crates/rami-gui"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 license = "MIT"
 authors = ["Rami Baydoun Nabhan"]
@@ -19,6 +19,8 @@ hex = "0.4"
 # criptografía casera para guardar claves.
 chacha20poly1305 = "0.10"
 pbkdf2 = "0.12"
+# Cliente HTTPS para el auto-actualizador (TLS con rustls, sin OpenSSL del sistema).
+ureq = "2"
 
 [profile.release]
 opt-level = 3

@@ -205,6 +205,7 @@
     padding:10px 20px;font-size:13px;color:var(--text);display:none;align-items:center;gap:12px}
   .upd.show{display:flex}
   .upd a{font-weight:600}
+  .upd .updmsg{font-size:12px;color:var(--muted)}
   .upd .x{margin-left:auto;cursor:pointer;color:var(--muted);border:none;background:none;font-size:18px;line-height:1}
   .plainwarn{background:rgba(255,209,102,.08);border-bottom:1px solid rgba(255,209,102,.3);
     padding:9px 20px;font-size:12.5px;color:var(--warn);display:none;align-items:center;gap:10px}
@@ -287,10 +288,12 @@
   <span class="ver">v<span id="verTxt">—</span></span>
 </div>
 
-<!-- aviso de actualización disponible -->
+<!-- aviso de actualización disponible (con instalación desde la propia app) -->
 <div class="upd" id="updateBanner">
   <span>🎉 <strong>Actualización disponible:</strong> <span id="updVer"></span></span>
-  <a id="updLink" href="https://github.com/baydounr01-blip/rami-ledger/releases" target="_blank" rel="noopener">Descargar</a>
+  <button class="btn small" id="updApplyBtn">⬇️ Actualizar ahora</button>
+  <a id="updLink" href="https://github.com/baydounr01-blip/rami-ledger/releases" target="_blank" rel="noopener">o descargar a mano</a>
+  <span class="updmsg" id="updMsg"></span>
   <button class="x" id="updClose" title="cerrar" aria-label="cerrar">×</button>
 </div>
 <!-- aviso: monedero sin cifrar (estado plain) -->
@@ -1204,33 +1207,58 @@
       .catch(function(){ alert("Sin conexión con el nodo."); });
   });
 
-  // ---------- aviso de actualización disponible ----------
+  // ---------- aviso + auto-actualización ----------
+  // El backend (nodo) comprueba el Release oficial, descarga el instalador y
+  // VERIFICA su SHA-256 antes de aplicar. El panel solo pide y muestra estado.
   var updDismissed = "";
-  function isNewer(a, b){
-    var pa = String(a).split(".").map(Number), pb = String(b).split(".").map(Number);
-    for(var i=0;i<Math.max(pa.length,pb.length);i++){
-      var x = pa[i]||0, y = pb[i]||0;
-      if(x>y) return true; if(x<y) return false;
-    }
-    return false;
-  }
+  var updApplying = false;
   function checkUpdate(){
-    var cur = state.status && state.status.version;
-    if(!cur) return;
-    fetch("https://api.github.com/repos/baydounr01-blip/RAMI-Ledger/releases/latest",
-          {headers:{"Accept":"application/vnd.github+json"}})
-      .then(function(r){ return r.ok ? r.json() : null; })
+    if(updApplying) return;
+    jget("/api/update")
       .then(function(d){
-        if(!d || !d.tag_name) return;
-        var latest = String(d.tag_name).replace(/^v/,"");
-        if(isNewer(latest, cur) && updDismissed !== latest){
-          document.getElementById("updVer").textContent = "v"+latest;
-          if(d.html_url) document.getElementById("updLink").href = d.html_url;
-          document.getElementById("updateBanner").classList.add("show");
+        if(!d || !d.ok || !d.newer) return;
+        var latest = d.latest || "";
+        if(updDismissed === latest) return;
+        document.getElementById("updVer").textContent = "v"+latest;
+        if(d.html_url) document.getElementById("updLink").href = d.html_url;
+        var applyBtn = document.getElementById("updApplyBtn");
+        var msg = document.getElementById("updMsg");
+        // Solo ofrecemos "Actualizar ahora" si hay instalador verificable para
+        // este sistema; si no, dejamos la descarga manual.
+        if(d.asset_name && d.sha256){
+          applyBtn.style.display = "";
+          msg.textContent = "";
+        }else{
+          applyBtn.style.display = "none";
+          msg.textContent = d.note || "descarga manual disponible";
+        }
+        document.getElementById("updateBanner").classList.add("show");
+      })
+      .catch(function(){ /* sin conexión con el nodo: sin aviso */ });
+  }
+  document.getElementById("updApplyBtn").addEventListener("click", function(){
+    if(updApplying) return;
+    if(!confirm("Se descargará el instalador oficial, se comprobará su firma SHA-256 y se aplicará la actualización. ¿Continuar?")) return;
+    updApplying = true;
+    var btn = this, msg = document.getElementById("updMsg");
+    btn.disabled = true; btn.textContent = "Descargando y verificando…";
+    msg.textContent = "";
+    jpost("/api/update/apply", {})
+      .then(function(r){
+        if(r && r.ok){
+          btn.style.display = "none";
+          msg.textContent = "✓ " + (r.message || "Actualización aplicada.");
+        }else{
+          btn.disabled = false; btn.textContent = "⬇️ Actualizar ahora";
+          msg.textContent = "✗ " + ((r && r.message) || (r && r.error) || "no se pudo actualizar");
         }
       })
-      .catch(function(){ /* offline: sin aviso */ });
-  }
+      .catch(function(){
+        btn.disabled = false; btn.textContent = "⬇️ Actualizar ahora";
+        msg.textContent = "✗ sin conexión con el nodo";
+      })
+      .then(function(){ updApplying = false; });
+  });
   document.getElementById("updClose").addEventListener("click", function(){
     updDismissed = (document.getElementById("updVer").textContent||"").replace(/^v/,"");
     document.getElementById("updateBanner").classList.remove("show");
