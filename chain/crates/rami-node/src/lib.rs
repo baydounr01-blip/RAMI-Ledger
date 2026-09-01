@@ -451,14 +451,17 @@ impl NodeHandle {
         self.tx
             .send(NodeMsg::Cmd(NodeCmd::SubmitTx(Box::new(tx), r)))
             .map_err(|_| "nodo caído".to_string())?;
-        rx.recv().map_err(|_| "sin respuesta del nodo".to_string())?
+        // Con timeout: un nodo muy ocupado no debe congelar el panel para
+        // siempre (la petición sigue encolada y se procesará igualmente).
+        rx.recv_timeout(Duration::from_secs(10))
+            .map_err(|_| "el nodo está ocupado; reintenta en unos segundos".to_string())?
     }
     pub fn account(&self, a: AccountId) -> AccountView {
         let (r, rx) = channel();
         if self.tx.send(NodeMsg::Cmd(NodeCmd::GetAccount(a, r))).is_err() {
             return AccountView::default();
         }
-        rx.recv().unwrap_or_default()
+        rx.recv_timeout(Duration::from_secs(3)).unwrap_or_default()
     }
     /// Siguiente nonce utilizable = nonce en cadena + tx pendientes de ese firmante.
     pub fn next_nonce(&self, a: AccountId) -> u64 {
@@ -466,14 +469,14 @@ impl NodeHandle {
         if self.tx.send(NodeMsg::Cmd(NodeCmd::NextNonce(a, r))).is_err() {
             return 0;
         }
-        rx.recv().unwrap_or(0)
+        rx.recv_timeout(Duration::from_secs(3)).unwrap_or(0)
     }
     pub fn recent_blocks(&self, n: usize) -> Vec<BlockView> {
         let (r, rx) = channel();
         if self.tx.send(NodeMsg::Cmd(NodeCmd::RecentBlocks(n, r))).is_err() {
             return Vec::new();
         }
-        rx.recv().unwrap_or_default()
+        rx.recv_timeout(Duration::from_secs(3)).unwrap_or_default()
     }
     /// Detalle de un bloque de la cadena del observador, por altura.
     pub fn block(&self, height: u64) -> Option<BlockDetail> {
@@ -481,7 +484,7 @@ impl NodeHandle {
         if self.tx.send(NodeMsg::Cmd(NodeCmd::GetBlock(height, r))).is_err() {
             return None;
         }
-        rx.recv().ok().flatten()
+        rx.recv_timeout(Duration::from_secs(3)).ok().flatten()
     }
 }
 

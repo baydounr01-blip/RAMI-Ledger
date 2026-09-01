@@ -131,7 +131,14 @@ impl Network {
         // Escucha (si procede): se enlaza AQUÍ para conocer el puerto efímero real.
         let mut listen_port = 0u16;
         if let Some(port) = cfg.listen {
-            match TcpListener::bind(("0.0.0.0", port)) {
+            // Si el puerto pedido está ocupado (otra instancia, la CLI, otro
+            // programa), reintenta en efímero: mejor aceptar entrantes en un
+            // puerto cualquiera (se anuncia el real) que quedar solo-salientes.
+            let bound = TcpListener::bind(("0.0.0.0", port)).or_else(|e| {
+                eprintln!("[net] no se pudo escuchar en :{port}: {e}; probando puerto efímero");
+                TcpListener::bind(("0.0.0.0", 0))
+            });
+            match bound {
                 Ok(listener) => {
                     listen_port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
                     let ltx = tx.clone();
@@ -147,7 +154,7 @@ impl Network {
                         }
                     });
                 }
-                Err(e) => eprintln!("[net] no se pudo escuchar en :{port}: {e}"),
+                Err(e) => eprintln!("[net] sin puerto de escucha (solo salientes): {e}"),
             }
         }
 

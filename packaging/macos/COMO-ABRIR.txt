@@ -25,6 +25,13 @@ y NO pasa todavía el filtro de malware de Apple.
 La versión firmada y notarizada se publicará con los certificados Developer ID
 del proyecto; el sistema de publicación ya está preparado (ver SIGNING.md).
 
+¿LA APP «NO RESPONDE» AL VOLVER A ABRIRLA?
+El monedero vive en tu navegador (panel local). Si cierras la pestaña, la app
+sigue corriendo en segundo plano y macOS no la relanza al hacer clic de nuevo.
+  • Para volver al panel: abre http://127.0.0.1:8645 en tu navegador.
+  • Para cerrarla del todo: usa el botón «⏻ Salir» del panel (arriba a la
+    derecha). Después, el icono vuelve a abrirla con normalidad.
+
 RAMI-Chain es una TESTNET experimental, sin valor monetario. No es una inversión.
 
 --------------------------------------------------------------------------------
@@ -44,6 +51,13 @@ malware check.
   2) Open deliberately (Apple-supported method): right-click → Open → Open, or
      System Settings → Privacy & Security → "Open Anyway". You are taking on
      the verification Apple would normally do (which is why step 1 is mandatory).
+
+APP "NOT RESPONDING" WHEN YOU REOPEN IT?
+The wallet lives in your browser (local dashboard). If you close the tab, the
+app keeps running in the background and macOS won't relaunch it on click.
+  • To get back to the dashboard: open http://127.0.0.1:8645 in your browser.
+  • To quit completely: use the "⏻ Salir" (Quit) button in the dashboard's top
+    bar. After that, the icon opens the app normally again.
 
 The signed/notarized release ships once the project's Developer ID certificates
 are in place (see SIGNING.md). Experimental testnet, no monetary value.

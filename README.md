@@ -205,6 +205,59 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
     (y siga pasando el filtro de Gatekeeper/SmartScreen — no nos saltamos ningún
     aviso de seguridad). Endpoints locales `GET /api/update` y
     `POST /api/update/apply`.
+- **v0.4.2 (esto):** arranque robusto («la app no responde» arreglado de raíz) y
+  actualización anclada a la web.
+  - **Instancia única, como Bitcoin Core:** si ya hay un monedero abierto en la
+    máquina, el segundo lanzamiento abre el navegador hacia ese panel en vez de
+    morir en silencio. Si el puerto del panel lo ocupa otro programa, se prueban
+    los siguientes automáticamente.
+  - **macOS: cada clic en el icono responde.** El `.app` marca `LSUIElement`
+    (la interfaz es el navegador: sin exigencia de event loop, se acabó el
+    «no responde» de Forzar salida) y el binario entra en modo lanzadera al
+    abrirse desde el Finder: el proceso del clic delega en un hijo
+    independiente y sale, así que relanzar la app siempre ejecuta código —
+    si el monedero ya corre, reabre su panel en el navegador.
+  - **Abrir el navegador ya no es fe ciega:** en Linux se prueban `$BROWSER`,
+    `xdg-open` y varias alternativas comprobando el resultado (un entorno sin
+    `xdg-utils` dejaba el panel vivo pero invisible).
+  - **P2P sin puerto no es P2P cojo:** si el 30301 está ocupado, se escucha en
+    un puerto efímero (anunciado a los pares) en vez de quedar solo-salientes.
+  - **Windows autosuficiente:** el binario se enlaza con CRT estático — en un
+    PC sin el runtime de Visual C++ la app ni siquiera arrancaba, sin mensaje.
+  - **La cadena ya no se «brickea»:** un cierre forzado o un apagón a mitad de
+    escritura dejaba `chain.jsonl` con la última línea truncada y la app no
+    volvía a abrir nunca. Ahora el arranque se recupera solo (ignora la línea
+    interrumpida y los bloques que no re-admiten; la red re-provee lo perdido) y
+    nunca modifica el archivo.
+  - **El panel abre AL INSTANTE:** el nodo revalida la cadena en segundo plano
+    mientras el panel muestra «cargando la cadena…» (antes, con una cadena
+    grande, la app parecía colgada minutos). Las llamadas del panel al nodo
+    llevan timeout: un nodo ocupado ya no congela la interfaz.
+  - **Errores de arranque VISIBLES:** en macOS/Windows la app se lanza sin
+    consola, así que cualquier fallo fatal ahora se muestra como página en el
+    navegador en lugar de desaparecer sin explicación. En Windows ya no se abre
+    ventana de consola (`windows_subsystem = "windows"`).
+  - **Botón «⏻ Salir» en el panel** (`POST /api/quit`): cierra nodo y app del
+    todo. En macOS la app no tiene ventana propia; sin esto quedaba corriendo
+    invisible y el siguiente clic en el icono parecía no responder.
+  - **Keystore ilegible = intocable:** si el archivo del monedero existe pero no
+    se puede leer, JAMÁS se sobrescribe con uno nuevo (CLI y panel lo rechazan y
+    lo explican). Antes, un keystore corrupto podía acabar reemplazado.
+  - **Windows sin `HOME`:** la cadena y las claves van siempre a `USERPROFILE`
+    (antes podían caer al directorio de trabajo, distinto según cómo lanzaras la
+    app — el monedero «desaparecía»).
+  - **Panel local blindado frente a webs maliciosas:** se exige `Host` local
+    (anti DNS-rebinding) y `Content-Type: application/json` en todo POST (un
+    formulario cross-origin ya no puede dar órdenes al nodo).
+  - **Actualizar desde la app en macOS/Windows cierra el monedero** tras abrir
+    el instalador verificado (con la app viva, el instalador no podía reemplazar
+    el ejecutable en uso).
+  - **Actualización conectada a la página web (quantbot.army):** la web publica
+    en `descargas/latest.json` un espejo del release (mismos archivos y hashes,
+    servidos desde su propio dominio); si la API de GitHub no responde, el
+    auto-actualizador usa ese espejo, y el enlace manual del aviso lleva a la
+    web. La web además muestra un aviso cuando se publica una versión más nueva
+    que la que sirven sus descargas.
 - **v0.5 (siguiente):** instantáneas de cadena re-verificables para el explorador
   web, seeds comunitarios, endurecimiento P2P (puntuación de pares, límites por
   IP) y IPC dedicado faucet↔nodo.

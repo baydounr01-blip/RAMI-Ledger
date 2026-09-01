@@ -27,17 +27,31 @@ map_suffix=(
   "SHA256SUMS.txt:SHA256SUMS.txt"
 )
 
+# $URL la pone Netlify: dominio canónico del sitio (para URLs absolutas en el
+# espejo latest.json que consulta el auto-actualizador del monedero).
+SITE="${URL:-}"
+assets="[]"
+
 for pair in "${map_suffix[@]}"; do
   suffix="${pair%%:*}"
   dest="${pair##*:}"
   url="$(printf '%s' "$json" | jq -r --arg s "$suffix" '.assets[] | select(.name | endswith($s)) | .browser_download_url' | head -1)"
+  name="$(printf '%s' "$json" | jq -r --arg s "$suffix" '.assets[] | select(.name | endswith($s)) | .name' | head -1)"
   if [ -z "$url" ] || [ "$url" = "null" ]; then
     echo "  !! no se encontró un asset que termine en ${suffix}" >&2
     exit 1
   fi
   echo "  ↓ ${dest}"
   curl -fsSL "${AUTH[@]}" -o "${OUT}/${dest}" "$url"
+  # Entrada del espejo: nombre ORIGINAL del asset (para que el monedero pueda
+  # casarlo con SHA256SUMS.txt) + URL servida desde ESTE dominio.
+  assets="$(jq -cn --argjson a "$assets" --arg n "$name" --arg u "${SITE}/descargas/${dest}" \
+    '$a + [{name:$n, browser_download_url:$u}]')"
 done
 
 printf '{"version":"%s"}\n' "$tag" > "${OUT}/version.json"
-echo "✓ descargas listas en ${OUT} (release ${tag})"
+# Espejo del release con la MISMA forma que la API de GitHub (subconjunto):
+# el auto-actualizador del monedero lo parsea igual que el release oficial.
+jq -n --arg tag "$tag" --arg site "$SITE" --argjson assets "$assets" \
+  '{tag_name:$tag, html_url:($site + "/#descargas"), assets:$assets}' > "${OUT}/latest.json"
+echo "✓ descargas listas en ${OUT} (release ${tag}; espejo latest.json para el auto-actualizador)"

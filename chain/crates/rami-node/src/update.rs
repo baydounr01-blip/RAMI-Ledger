@@ -30,8 +30,25 @@ const DEFAULT_RELEASE_URL: &str =
 /// pocos MB; esto acota un servidor malicioso o un archivo corrupto enorme.
 const MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
 
+/// Página web oficial del proyecto (sin barra final). La web publica en
+/// `/descargas/latest.json` un espejo del release (mismos nombres de archivo,
+/// servidos desde el propio dominio de la web), así que el monedero queda
+/// «anclado» a la página: si la API de GitHub no responde, se usa la web.
+/// Se puede sobrescribir con `RAMI_WEB_URL`.
+const DEFAULT_WEB_URL: &str = "https://quantbot.army";
+
 fn release_url() -> String {
     std::env::var("RAMI_UPDATE_RELEASE_URL").unwrap_or_else(|_| DEFAULT_RELEASE_URL.to_string())
+}
+
+fn web_base() -> Option<String> {
+    let v = std::env::var("RAMI_WEB_URL").unwrap_or_else(|_| DEFAULT_WEB_URL.to_string());
+    let v = v.trim().trim_end_matches('/').to_string();
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
 }
 
 /// Información de la comprobación de actualización (lo que ve el panel).
@@ -177,7 +194,18 @@ pub fn check(current: &str) -> Result<UpdateInfo, String> {
         ..Default::default()
     };
 
-    let text = http_get_text(&release_url())?;
+    // Fuente primaria: el release oficial (API de GitHub). Si no responde y la
+    // web del proyecto está configurada, se usa su espejo /descargas/latest.json
+    // (misma forma de JSON, mismos hashes) — la actualización queda conectada a
+    // la página web.
+    let text = match http_get_text(&release_url()) {
+        Ok(t) => t,
+        Err(e) => match web_base() {
+            Some(w) => http_get_text(&format!("{w}/descargas/latest.json"))
+                .map_err(|e2| format!("{e}; espejo web: {e2}"))?,
+            None => return Err(e),
+        },
+    };
     let v: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("respuesta no es JSON: {e}"))?;
     let tag = v.get("tag_name").and_then(|t| t.as_str()).ok_or("el Release no tiene tag")?;
@@ -319,29 +347,33 @@ fn apply_linux(bytes: &[u8]) -> Result<ApplyResult, String> {
     })
 }
 
-/// macOS/Windows: guarda el instalador verificado y lo abre; el instalador del
-/// sistema (firmado) completa la instalación.
+/// macOS/Windows: guarda el instalador verificado, lo abre y CIERRA esta app
+/// tras unos segundos — con la app vieja viva, el instalador no puede
+/// reemplazar el ejecutable en uso y la versión nueva no podría abrir el panel.
 fn apply_open(bytes: &[u8], asset_name: &str, os: &str) -> Result<ApplyResult, String> {
     let path = save_dir().join(asset_name);
     std::fs::write(&path, bytes).map_err(|e| format!("no pude guardar el instalador: {e}"))?;
-    #[cfg(unix)]
-    if os == "macOS" {
-        // El .dmg no necesita permisos de ejecución; `open` lo monta.
-    }
     let spawned = if cfg!(target_os = "macos") {
+        // El .dmg no necesita permisos de ejecución; `open` lo monta.
         Command::new("open").arg(&path).spawn()
     } else {
         // Windows: ejecuta el instalador .exe (verificado).
         Command::new(&path).spawn()
     };
     spawned.map_err(|e| format!("descargado y verificado, pero no pude abrir el instalador: {e}"))?;
+    // Salida limpia diferida: da tiempo a que la respuesta HTTP llegue al panel.
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_millis(2500));
+        std::process::exit(0);
+    });
     Ok(ApplyResult {
         ok: true,
         stage: "downloaded".into(),
-        needs_restart: false,
+        needs_restart: true,
         message: format!(
-            "Instalador verificado y abierto ({os}). Sigue los pasos del instalador para terminar; \
-             guardado en {}",
+            "Instalador verificado y abierto ({os}). Este monedero se cerrará ahora para que el \
+             instalador pueda reemplazarlo; sigue sus pasos y vuelve a abrir la app. \
+             (Instalador guardado en {})",
             path.display()
         ),
     })

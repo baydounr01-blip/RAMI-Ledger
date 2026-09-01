@@ -13,5 +13,9 @@
   <key>LSMinimumSystemVersion</key><string>10.13</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSApplicationCategoryType</key><string>public.app-category.finance</string>
+  <!-- La interfaz es el panel en el navegador: sin ventana ni Dock propios.
+       Sin esto, macOS exige un event loop que un binario de consola no tiene y
+       marca la app como «no responde» (icono botando, Forzar salida). -->
+  <key>LSUIElement</key><true/>
 </dict>
 </plist>

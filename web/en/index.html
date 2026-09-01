@@ -104,6 +104,15 @@
   </div>
 </nav>
 
+<!-- New-release notice: shown only when the latest published release is newer
+     than the one this page's downloads currently serve. -->
+<div id="relBanner" style="display:none;background:rgba(126,240,192,.10);border-bottom:1px solid rgba(126,240,192,.35);padding:10px 20px;font-size:14px;text-align:center">
+  🎉 <strong>New version <span id="relBannerVer"></span> released.</strong>
+  This page's downloads update within minutes —
+  <a id="relBannerLink" href="https://github.com/baydounr01-blip/RAMI-Ledger/releases/latest" rel="noopener">or grab it now from the release</a>.
+  If you already have the wallet installed, it will notify you and update from within the app.
+</div>
+
 <header class="hero">
   <div class="kick">Branched Block Universe · Rust · Open source</div>
   <h1>A chain where the past, the present<br>and the future <em>coexist</em>.</h1>
@@ -214,7 +223,7 @@
   <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
     <img src="/assets/rami-icon.svg" alt="RAMI-Chain" width="84" height="84" style="border-radius:18px">
     <div>
-      <h2 style="margin:0">Download RAMI-Chain</h2>
+      <h2 style="margin:0">Download RAMI-Chain <span id="relNow" style="font-size:14px;font-weight:600;color:#7ef0c0;vertical-align:middle"></span></h2>
       <p class="sub" style="margin:6px 0 0">A single file, with an installer and icon — as it should be.
       <strong>Direct download from this website</strong>: no App Store, no Microsoft Store, no accounts —
       just like Bitcoin Core.</p>
@@ -404,6 +413,34 @@ $ rami-node show --chain ./midato --network regtest 10<br>
       e.textContent = 'RAMI-Chain ' + v.version + ' · testnet';
     });
   }).catch(function () {});
+})();
+</script>
+<script>
+// Served version vs. latest release: version chip + new-release notice.
+(function(){
+  function newer(a,b){var pa=String(a).split(".").map(Number),pb=String(b).split(".").map(Number);
+    for(var i=0;i<Math.max(pa.length,pb.length);i++){var x=pa[i]||0,y=pb[i]||0;if(x>y)return true;if(x<y)return false;}
+    return false;}
+  var built=null;
+  fetch("/descargas/version.json").then(function(r){return r.ok?r.json():null}).catch(function(){return null})
+  .then(function(v){
+    if(v&&v.version) built=String(v.version).replace(/^v/,"");
+    var chip=document.getElementById("relNow");
+    if(chip&&built) chip.textContent="v"+built;
+    return fetch("https://api.github.com/repos/baydounr01-blip/RAMI-Ledger/releases/latest",{headers:{"Accept":"application/vnd.github+json"}});
+  })
+  .then(function(r){return r&&r.ok?r.json():null})
+  .then(function(d){
+    if(!d||!d.tag_name) return;
+    var latest=String(d.tag_name).replace(/^v/,"");
+    var chip=document.getElementById("relNow");
+    if(chip&&!built) chip.textContent="v"+latest;
+    if(built&&newer(latest,built)){
+      document.getElementById("relBannerVer").textContent="v"+latest;
+      if(d.html_url) document.getElementById("relBannerLink").href=d.html_url;
+      document.getElementById("relBanner").style.display="block";
+    }
+  }).catch(function(){});
 })();
 </script>
 </body>

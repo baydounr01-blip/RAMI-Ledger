@@ -24,10 +24,18 @@ use rami_core::crypto::KeyPair;
 use rami_core::state::COIN;
 use rami_core::tx::{commit_hash, signing_message, AccountId, Tx};
 
+/// Carpeta home REAL del usuario. En Windows `HOME` no suele existir
+/// (`USERPROFILE` sí); caer al directorio de trabajo actual haría que cadena y
+/// claves «cambiaran de sitio» según desde dónde se lance la app.
+pub fn home_dir() -> String {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".into())
+}
+
 /// Ruta por defecto del almacén de claves.
 pub fn default_keystore_path() -> String {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    format!("{home}/.rami/wallet.json")
+    format!("{}/.rami/wallet.json", home_dir())
 }
 
 /// Iteraciones PBKDF2 (OWASP 2023 para HMAC-SHA256).
@@ -90,6 +98,18 @@ impl Keystore {
             Store::Plain(m) => !m.is_empty(),
             Store::Encrypted(f) => !f.entries.is_empty(),
         }
+    }
+
+    /// ¿Hay un ARCHIVO de keystore en disco (legible o no)?
+    pub fn on_disk(&self) -> bool {
+        self.path.exists()
+    }
+
+    /// Peligro: el archivo existe en disco pero no se pudo leer ninguna clave
+    /// (JSON corrupto, truncado o sin permisos). En ese estado NUNCA hay que
+    /// escribir encima — podríamos destruir las claves del usuario.
+    pub fn corrupt_on_disk(&self) -> bool {
+        !self.exists() && self.on_disk()
     }
 
     pub fn is_encrypted(&self) -> bool {
@@ -172,6 +192,13 @@ impl Keystore {
         if self.contains(label) {
             return Err(format!("ya existe una clave '{label}'"));
         }
+        if self.corrupt_on_disk() {
+            return Err(format!(
+                "el keystore {} existe pero no se pudo leer: NO voy a sobrescribirlo. \
+                 Haz una copia de seguridad y renómbralo antes de crear claves nuevas",
+                self.path.display()
+            ));
+        }
         let kp = KeyPair::generate();
         match password {
             Some(pw) => {
@@ -231,6 +258,12 @@ impl Keystore {
 
     /// Migra un almacén v1 (texto plano) a v2 (cifrado) con la contraseña dada.
     pub fn set_password(&mut self, password: &str) -> Result<(), String> {
+        if self.corrupt_on_disk() {
+            return Err(format!(
+                "el keystore {} existe pero no se pudo leer: NO voy a sobrescribirlo",
+                self.path.display()
+            ));
+        }
         let plain = match &self.store {
             Store::Plain(m) => m.clone(),
             Store::Encrypted(_) => return Err("el monedero ya está cifrado".into()),
@@ -490,6 +523,22 @@ mod tests {
         let ks2 = Keystore::load(&p);
         assert!(ks2.is_encrypted());
         assert_eq!(ks2.keypair("yo", Some("nueva")).unwrap().secret_bytes(), kp.secret_bytes());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn never_overwrite_unreadable_keystore() {
+        let p = tmp_ks("corrupt");
+        // Un archivo que EXISTE pero no parsea (apagón a mitad de escritura,
+        // disco dañado…): jamás debe sobrescribirse con un monedero nuevo.
+        std::fs::write(&p, "{ esto no es json valido").unwrap();
+        let mut ks = Keystore::load(&p);
+        assert!(ks.corrupt_on_disk());
+        assert!(ks.create("yo", Some("contrasena")).is_err());
+        assert!(ks.create("yo", None).is_err());
+        assert!(ks.set_password("contrasena").is_err());
+        // El archivo sigue intacto, byte a byte.
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "{ esto no es json valido");
         let _ = std::fs::remove_file(&p);
     }
 }

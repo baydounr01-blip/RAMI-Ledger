@@ -285,6 +285,7 @@
   </div>
   <div class="spacer"></div>
   <button class="lockbtn hidden" id="lockBtn">🔒 Bloquear</button>
+  <button class="lockbtn" id="quitBtn" title="Cerrar el monedero y el nodo">⏻ Salir</button>
   <span class="ver">v<span id="verTxt">—</span></span>
 </div>
 
@@ -292,7 +293,7 @@
 <div class="upd" id="updateBanner">
   <span>🎉 <strong>Actualización disponible:</strong> <span id="updVer"></span></span>
   <button class="btn small" id="updApplyBtn">⬇️ Actualizar ahora</button>
-  <a id="updLink" href="https://github.com/baydounr01-blip/rami-ledger/releases" target="_blank" rel="noopener">o descargar a mano</a>
+  <a id="updLink" href="https://quantbot.army/#descargas" target="_blank" rel="noopener">o descargar desde la web</a>
   <span class="updmsg" id="updMsg"></span>
   <button class="x" id="updClose" title="cerrar" aria-label="cerrar">×</button>
 </div>
@@ -657,6 +658,14 @@
       <button class="btn" id="ovUnlockBtn">Desbloquear</button>
       <div class="err-line" id="ovUnlockErr"></div>
     </div>
+    <div id="ovCorrupt" style="display:none">
+      <h3>⚠ El archivo del monedero no se pudo leer</h3>
+      <p class="sub">Existe un keystore en esta máquina pero está dañado o es ilegible.
+      <b>No se va a sobrescribir</b>: tus claves podrían seguir dentro.</p>
+      <p class="sub">Haz una copia de seguridad del archivo, intenta restaurarlo, y si de verdad
+      quieres empezar de cero, renómbralo a mano y vuelve a abrir la app. El nodo sigue
+      funcionando (puedes explorar la cadena), pero el monedero queda deshabilitado por seguridad.</p>
+    </div>
   </div>
 </div>
 
@@ -797,9 +806,21 @@
 
   // ---------- render status ----------
   function renderStatus(s){
+    document.getElementById("verTxt").textContent = s.version || "—";
+    // El nodo aún está cargando la cadena (el panel abre al instante).
+    if(s.starting){
+      document.getElementById("syncDot").className = "dot syncing";
+      document.getElementById("syncTxt").textContent = "cargando la cadena…";
+      if(s.wallet) renderWallet(s.wallet);
+      return;
+    }
+    if(s.failed){
+      document.getElementById("syncDot").className = "dot off";
+      document.getElementById("syncTxt").textContent = "el nodo no pudo arrancar: " + s.failed;
+      return;
+    }
     state.status = s;
     document.getElementById("netName").textContent = s.network || "testnet";
-    document.getElementById("verTxt").textContent = s.version || "—";
 
     // Resumen
     var w = s.wallet || {};
@@ -855,8 +876,9 @@
   // ---------- estado del monedero: overlay y bloqueo ----------
   function showOverlay(mode){
     document.getElementById("overlay").classList.add("show");
-    document.getElementById("ovSetup").style.display  = (mode==="setup")  ? "block" : "none";
-    document.getElementById("ovUnlock").style.display = (mode==="unlock") ? "block" : "none";
+    document.getElementById("ovSetup").style.display   = (mode==="setup")   ? "block" : "none";
+    document.getElementById("ovUnlock").style.display  = (mode==="unlock")  ? "block" : "none";
+    document.getElementById("ovCorrupt").style.display = (mode==="corrupt") ? "block" : "none";
   }
   function hideOverlay(){ document.getElementById("overlay").classList.remove("show"); }
 
@@ -864,9 +886,10 @@
     var st = w.state || "none";
     document.getElementById("lockBtn").classList.toggle("hidden", !(st==="unlocked" && w.encrypted));
     document.getElementById("plainBanner").classList.toggle("show", st==="plain");
-    if(st==="none")        showOverlay("setup");
-    else if(st==="locked") showOverlay("unlock");
-    else                   hideOverlay();
+    if(w.corrupt && st==="none") showOverlay("corrupt"); // JAMÁS ofrecer crear encima
+    else if(st==="none")         showOverlay("setup");
+    else if(st==="locked")       showOverlay("unlock");
+    else                         hideOverlay();
   }
 
   function renderPeers(peers){
@@ -1197,6 +1220,19 @@
     jpost("/api/lock", {}).then(function(){ pollStatus(); }).catch(function(){});
   });
 
+  // Salir: cierra el nodo y la app del todo. Importante en macOS: la app no
+  // tiene ventana propia, así que cerrar solo la pestaña la dejaba corriendo
+  // invisible y el siguiente clic en el icono parecía «no responder».
+  document.getElementById("quitBtn").addEventListener("click", function(){
+    if(!confirm("¿Cerrar el monedero? El nodo y la minería se detendrán.")) return;
+    jpost("/api/quit", {}).catch(function(){});
+    document.body.innerHTML = '<div style="display:flex;min-height:90vh;align-items:center;'+
+      'justify-content:center;font-family:inherit;color:inherit"><div style="text-align:center">'+
+      '<h2>Monedero cerrado ✅</h2><p>Puedes cerrar esta pestaña. Para volver, abre de nuevo la aplicación.</p>'+
+      '</div></div>';
+    setTimeout(function(){ try{ window.close(); }catch(e){} }, 800);
+  });
+
   // Cifrar un monedero en texto plano (estado "plain")
   document.getElementById("encryptBtn").addEventListener("click", function(){
     var p = prompt("Contraseña para cifrar tu monedero (mínimo 8 caracteres):");
@@ -1220,7 +1256,8 @@
         var latest = d.latest || "";
         if(updDismissed === latest) return;
         document.getElementById("updVer").textContent = "v"+latest;
-        if(d.html_url) document.getElementById("updLink").href = d.html_url;
+        // El enlace manual apunta SIEMPRE a la página web oficial (descarga
+        // directa verificable), no a GitHub.
         var applyBtn = document.getElementById("updApplyBtn");
         var msg = document.getElementById("updMsg");
         // Solo ofrecemos "Actualizar ahora" si hay instalador verificable para
