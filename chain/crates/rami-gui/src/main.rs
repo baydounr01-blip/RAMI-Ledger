@@ -572,14 +572,15 @@ fn main() -> ExitCode {
                                         return ExitCode::SUCCESS;
                                     }
                                     Ok(Some(st)) => {
-                                        dlog(&format!("el hijo murió al arrancar ({st})"));
-                                        return fail_visible(
-                                            "el monedero se cerró inesperadamente al arrancar",
-                                            &format!(
-                                                "Código de salida: {st}.\nEnvíanos el registro: {}",
-                                                log_path().display()
-                                            ),
-                                        );
+                                        // El hijo murió. ESTE proceso ya está aprobado
+                                        // por el usuario y corriendo: en vez de rendirse,
+                                        // continúa él mismo en primer plano — si el fallo
+                                        // era real (p. ej. un puerto), se repetirá aquí y
+                                        // fail_visible lo mostrará con detalle.
+                                        dlog(&format!(
+                                            "el hijo murió al arrancar ({st}); continúo en primer plano"
+                                        ));
+                                        break;
                                     }
                                     _ => {}
                                 }

@@ -73,10 +73,20 @@ macos)
     # Sin certificado: firma AD-HOC. No quita el aviso de Gatekeeper (eso solo lo
     # hace la notarización), pero deja la app válida y ejecutable (evita el error
     # "está dañada" en Apple Silicon). Ver SIGNING.md.
+    # Por binario y SIN tragarse errores: en Apple Silicon un arm64 con firma
+    # inválida es matado por el kernel al arrancar («la app no abre», sin
+    # mensaje) — si codesign falla, el build DEBE fallar.
     echo "· sin certificado de Apple: firma ad-hoc (no notarizada; ver SIGNING.md)"
-    codesign --force --deep --sign - "$APP" || true
+    for b in rami-node rami-wallet rami-gui; do
+      codesign --force --sign - "$APP/Contents/MacOS/$b"
+    done
+    codesign --force --sign - "$APP"
     SIGNED=0
   fi
+
+  # La firma del bundle debe quedar VÁLIDA sí o sí (ad-hoc o Developer ID).
+  codesign --verify --deep --strict "$APP"
+  echo "· firma del bundle verificada"
 
   DMG="dist/RAMI-Chain-$TAG-macos-${ARCH:-universal}.dmg"
   mkdir -p stage/dmg; cp -R "$APP" stage/dmg/; ln -s /Applications stage/dmg/Applications
