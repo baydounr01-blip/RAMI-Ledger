@@ -258,6 +258,22 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
     auto-actualizador usa ese espejo, y el enlace manual del aviso lleva a la
     web. La web además muestra un aviso cuando se publica una versión más nueva
     que la que sirven sus descargas.
+- **v0.4.3 (esto):** un fallo de arranque ya no puede ser invisible.
+  - **Caja negra** (`~/.rami/gui-launch.log`): cada paso del arranque y todo
+    error o panic quedan registrados en disco. Si tras un fallo el archivo ni
+    existe, el sistema nunca llegó a ejecutar el binario (p. ej. `.dmg` del
+    chip equivocado) — eso también es diagnóstico.
+  - **Diálogo NATIVO de macOS** (osascript) ante cualquier error fatal, además
+    de la página en el navegador: visible incluso si el navegador no abre.
+  - **La lanzadera VERIFICA el arranque:** tras delegar en el hijo comprueba
+    que el panel llega a estar accesible; si el hijo muere o no abre el panel
+    en 12 s, lo dice con diálogo + página de error y el código de salida. Si ni
+    siquiera puede relanzarse, continúa en primer plano en vez de morir.
+  - **Panic ≠ colgado:** un panic al cargar la cadena pasa el panel a estado
+    de error visible (antes se quedaba en «cargando…» para siempre).
+  - Web y LÉEME: guía del chip (M1–M4 = Apple Silicon, Intel = Intel — con el
+    `.dmg` equivocado la app no abre), arrastrar a Aplicaciones antes de abrir,
+    y cómo ver el error en directo desde Terminal.
 - **v0.5 (siguiente):** instantáneas de cadena re-verificables para el explorador
   web, seeds comunitarios, endurecimiento P2P (puntuación de pares, límites por
   IP) y IPC dedicado faucet↔nodo.

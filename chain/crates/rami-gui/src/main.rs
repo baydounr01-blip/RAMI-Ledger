@@ -364,6 +364,7 @@ fn route(g: &Gui, req: Request) -> Response {
         // ventana propia, así que sin esto quedaba corriendo invisible y el
         // siguiente clic en el icono «no respondía».
         ("POST", "/api/quit") => {
+            dlog("salida solicitada desde el panel («Salir»)");
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_millis(400));
                 std::process::exit(0);
@@ -435,6 +436,45 @@ fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
+/// Caja negra del arranque (~/.rami/gui-launch.log): en macOS/Windows la app
+/// corre sin consola, así que este archivo es la única evidencia si algo falla
+/// antes de que exista el panel. Si tras un fallo el archivo NI EXISTE, el
+/// sistema no llegó a ejecutar el binario (arquitectura equivocada/Gatekeeper).
+fn log_path() -> PathBuf {
+    PathBuf::from(format!("{}/.rami/gui-launch.log", rami_wallet::home_dir()))
+}
+
+fn dlog(msg: &str) {
+    let line = format!("[{} pid {}] {msg}\n", rami_node::now_secs(), std::process::id());
+    eprint!("{line}");
+    let p = log_path();
+    if let Some(parent) = p.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    // Rotación simple para que nunca crezca sin límite.
+    if std::fs::metadata(&p).map(|m| m.len() > 512 * 1024).unwrap_or(false) {
+        let _ = std::fs::remove_file(&p);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
+        use std::io::Write as _;
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+/// Diálogo NATIVO de macOS (osascript): visible aunque el navegador no se abra.
+#[cfg(target_os = "macos")]
+fn native_dialog(title: &str, msg: &str) {
+    let q = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!(
+        "display dialog \"{}\" with title \"{}\" buttons {{\"OK\"}} default button 1 with icon caution",
+        q(msg),
+        q(title)
+    );
+    let _ = Command::new("osascript").args(["-e", &script]).spawn();
+}
+#[cfg(not(target_os = "macos"))]
+fn native_dialog(_title: &str, _msg: &str) {}
+
 /// Error fatal VISIBLE: en macOS/Windows la app se lanza sin consola, así que
 /// un eprintln+exit es invisible («la app no responde»). Escribimos una página
 /// de error y la abrimos en el navegador para que el usuario sepa qué pasó.
@@ -444,8 +484,18 @@ fn fail_visible(title: &str, detail: &str) -> ExitCode {
 }
 
 /// Escribe y abre la página de error sin terminar el proceso (para hilos).
+/// Triple visibilidad: registro en disco + diálogo nativo (macOS) + página en
+/// el navegador — un fallo de arranque nunca más puede ser invisible.
 fn fail_page(title: &str, detail: &str) {
-    eprintln!("✗ {title}\n  {detail}");
+    dlog(&format!("ERROR FATAL: {title}: {}", detail.replace('\n', " | ")));
+    let mut short = detail.chars().take(280).collect::<String>();
+    if short.len() < detail.len() {
+        short.push('…');
+    }
+    native_dialog(
+        "RAMI-Chain no pudo arrancar",
+        &format!("{title}\n\n{short}\n\nRegistro: ~/.rami/gui-launch.log"),
+    );
     let html = format!(
         "<!doctype html><html lang=\"es\"><meta charset=\"utf-8\">\
          <title>RAMI-Chain — error al arrancar</title>\
@@ -470,34 +520,85 @@ fn fail_page(title: &str, detail: &str) {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    // Caja negra: cualquier panic de cualquier hilo queda registrado en disco.
+    std::panic::set_hook(Box::new(|info| {
+        dlog(&format!("PANIC: {info}"));
+    }));
+
     // Modo LANZADERA en macOS (doble clic en el .app => sin terminal): el
-    // proceso del clic delega el trabajo en un hijo independiente y sale al
-    // instante. Así cada clic en el icono vuelve a ejecutar código — si el
-    // monedero ya está abierto, el hijo detecta el panel vivo y reabre el
-    // navegador. Sin esto, LaunchServices no relanza una app ya corriendo y el
-    // clic «no hacía nada»; además el proceso persistente aparecía como
-    // «no responde» al no tener event loop. Desde una terminal (stdin es TTY)
-    // se ejecuta en primer plano, como siempre.
+    // proceso del clic delega el trabajo en un hijo independiente y VERIFICA
+    // que el panel de verdad llega a estar accesible; si el hijo muere o no
+    // abre el panel, lo dice con un diálogo nativo + página de error (nunca en
+    // silencio). Si ni siquiera puede relanzarse, sigue en primer plano.
+    // Así cada clic en el icono vuelve a ejecutar código — si el monedero ya
+    // está abierto, reabre su panel. Desde una terminal (stdin es TTY) se
+    // ejecuta en primer plano, como siempre.
     #[cfg(target_os = "macos")]
     {
         use std::io::IsTerminal;
         if !has(&args, "--foreground") && !std::io::stdin().is_terminal() {
-            let exe = match std::env::current_exe() {
-                Ok(p) => p,
-                Err(e) => return fail_visible("no encuentro mi propio ejecutable", &e.to_string()),
-            };
-            let mut child_args = args.clone();
-            child_args.push("--foreground".into());
-            return match Command::new(&exe)
-                .args(&child_args)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-            {
-                Ok(_) => ExitCode::SUCCESS,
-                Err(e) => fail_visible("no se pudo lanzar el monedero", &e.to_string()),
-            };
+            dlog(&format!("lanzadera v{} args={args:?}", env!("CARGO_PKG_VERSION")));
+            let port0: u16 = arg(&args, "--port").and_then(|s| s.parse().ok()).unwrap_or(8645);
+            match std::env::current_exe() {
+                Err(e) => dlog(&format!("current_exe falló ({e}); sigo en primer plano")),
+                Ok(exe) => {
+                    let mut child_args = args.clone();
+                    child_args.push("--foreground".into());
+                    match Command::new(&exe)
+                        .args(&child_args)
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                    {
+                        Err(e) => dlog(&format!("no pude relanzarme ({e}); sigo en primer plano")),
+                        Ok(mut child) => {
+                            let deadline =
+                                std::time::Instant::now() + std::time::Duration::from_secs(12);
+                            loop {
+                                std::thread::sleep(std::time::Duration::from_millis(300));
+                                for p in port0..port0.saturating_add(10) {
+                                    if http::probe_local(p)
+                                        .map_or(false, |b| b.contains("network_id") || b.contains("starting"))
+                                    {
+                                        dlog(&format!("panel accesible en 127.0.0.1:{p}; lanzadera fuera"));
+                                        return ExitCode::SUCCESS;
+                                    }
+                                }
+                                match child.try_wait() {
+                                    Ok(Some(st)) if st.success() => {
+                                        // Salió bien sin panel propio (p. ej. redirigió a otro).
+                                        dlog("el hijo terminó bien; lanzadera fuera");
+                                        return ExitCode::SUCCESS;
+                                    }
+                                    Ok(Some(st)) => {
+                                        dlog(&format!("el hijo murió al arrancar ({st})"));
+                                        return fail_visible(
+                                            "el monedero se cerró inesperadamente al arrancar",
+                                            &format!(
+                                                "Código de salida: {st}.\nEnvíanos el registro: {}",
+                                                log_path().display()
+                                            ),
+                                        );
+                                    }
+                                    _ => {}
+                                }
+                                if std::time::Instant::now() >= deadline {
+                                    dlog("el hijo no abrió el panel en 12 s");
+                                    return fail_visible(
+                                        "el monedero no llegó a abrir su panel",
+                                        &format!(
+                                            "Puede seguir arrancando en segundo plano: prueba \
+                                             http://127.0.0.1:{port0} en tu navegador.\nRegistro: {}",
+                                            log_path().display()
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -546,8 +647,9 @@ fn main() -> ExitCode {
             }
             Err(_) => {
                 if let Some(body) = http::probe_local(p) {
-                    if body.contains("network_id") {
+                    if body.contains("network_id") || body.contains("starting") {
                         let url = format!("http://127.0.0.1:{p}");
+                        dlog(&format!("ya hay un monedero abierto; reabriendo su panel {url}"));
                         println!("● Ya hay un monedero RAMI-Chain abierto — abriendo su panel: {url}");
                         if !has(&args, "--no-open") {
                             open_browser(&url);
@@ -571,6 +673,7 @@ fn main() -> ExitCode {
         );
     };
     let url = format!("http://127.0.0.1:{dash_port}");
+    dlog(&format!("v{} panel escuchando en {url} ({net_name})", env!("CARGO_PKG_VERSION")));
 
     println!("● RAMI-Chain — monedero de escritorio ({net_name})");
     println!("  panel      : {url}");
@@ -606,17 +709,23 @@ fn main() -> ExitCode {
         let gui = gui.clone();
         let seeds = seeds.clone();
         std::thread::spawn(move || {
-            match spawn(NodeConfig {
-                chain_dir: chain_dir.clone(),
-                params,
-                is_testnet,
-                listen: Some(p2p_port),
-                seeds,
-                miner: pubkey,
-                mining: false,
-            }) {
-                Ok(h) => {
+            // catch_unwind: un panic aquí dejaría el panel en «cargando…» para
+            // siempre; mejor convertirlo en estado Failed visible.
+            let spawned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                spawn(NodeConfig {
+                    chain_dir: chain_dir.clone(),
+                    params,
+                    is_testnet,
+                    listen: Some(p2p_port),
+                    seeds,
+                    miner: pubkey,
+                    mining: false,
+                })
+            }));
+            match spawned {
+                Ok(Ok(h)) => {
                     let s = h.status();
+                    dlog(&format!("nodo listo: altura {}, P2P :{}", s.height, s.listen_port));
                     println!("  network-id : {}", s.network_id);
                     println!("  P2P        : 0.0.0.0:{}", s.listen_port);
                     // Si el usuario creó el monedero MIENTRAS cargaba el nodo,
@@ -626,14 +735,21 @@ fn main() -> ExitCode {
                     }
                     *gui.node.write().unwrap_or_else(|e| e.into_inner()) = NodeSlot::Ready(h);
                 }
-                Err(e) => {
-                    eprintln!("✗ el nodo no pudo arrancar: {e}");
+                Ok(Err(e)) => {
                     *gui.node.write().unwrap_or_else(|e| e.into_inner()) =
                         NodeSlot::Failed(e.clone());
-                    // Error visible también fuera del panel (página en el navegador).
-                    let _ = fail_page(
+                    // Error visible también fuera del panel.
+                    fail_page(
                         "el nodo no pudo arrancar",
                         &format!("{e}\n\nDirectorio de cadena: {}", chain_dir.display()),
+                    );
+                }
+                Err(_) => {
+                    *gui.node.write().unwrap_or_else(|e| e.into_inner()) =
+                        NodeSlot::Failed("error interno (panic) al cargar la cadena".into());
+                    fail_page(
+                        "error interno al cargar la cadena",
+                        &format!("Mira el registro: {}", log_path().display()),
                     );
                 }
             }

@@ -25,6 +25,19 @@ y NO pasa todavía el filtro de malware de Apple.
 La versión firmada y notarizada se publicará con los certificados Developer ID
 del proyecto; el sistema de publicación ya está preparado (ver SIGNING.md).
 
+¿LA APP NO ABRE (ni siquiera la primera vez)?
+1) Comprueba el CHIP: menú  → «Acerca de este Mac». Chip Apple M1/M2/M3/M4 =
+   descarga «Apple Silicon»; Intel = descarga «Intel». Con el .dmg equivocado
+   la app no puede abrir.
+2) Arrastra la app a APLICACIONES antes de abrirla (no la ejecutes desde la
+   ventana del .dmg).
+3) Mira si existe el archivo ~/.rami/gui-launch.log (Finder → Ir → Ir a la
+   carpeta… → escribe ~/.rami). Si NO existe, macOS nunca llegó a ejecutar la
+   app (chip equivocado o bloqueo del sistema). Si existe, dentro está el
+   motivo del fallo — envíanoslo para ayudarte.
+4) Desde Terminal puedes ver el error en directo:
+   /Applications/RAMI-Chain.app/Contents/MacOS/rami-gui
+
 ¿LA APP «NO RESPONDE» AL VOLVER A ABRIRLA?
 El monedero vive en tu navegador (panel local). Si cierras la pestaña, la app
 sigue corriendo en segundo plano y macOS no la relanza al hacer clic de nuevo.
