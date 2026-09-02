@@ -111,13 +111,23 @@ windows)
   cp packaging/windows/installer.nsi "$ICON/rami.ico" stage/win/
   cp packaging/windows/COMO-ABRIR.txt stage/win/
   cp README.md NOTICE.md stage/win/ 2>/dev/null || true
-  # choco instala NSIS pero no siempre lo deja en el PATH de git-bash.
-  MAKENSIS="makensis"
-  if ! command -v makensis >/dev/null 2>&1; then
-    for c in "/c/Program Files (x86)/NSIS/makensis.exe" "/c/Program Files/NSIS/makensis.exe"; do
-      [ -x "$c" ] && MAKENSIS="$c" && break
+  # choco instala NSIS pero no siempre lo deja en el PATH de git-bash, y la
+  # ubicación cambia entre versiones (NSIS 3.10+ lo pone en Bin\; choco puede
+  # dejarlo bajo ProgramData). Búsqueda real en vez de rutas fijas.
+  MAKENSIS="$(command -v makensis 2>/dev/null || true)"
+  if [ -z "$MAKENSIS" ]; then
+    for root in "/c/Program Files (x86)/NSIS" "/c/Program Files/NSIS" \
+                "/c/ProgramData/chocolatey/lib/nsis" "/c/ProgramData/chocolatey/bin"; do
+      [ -d "$root" ] || continue
+      f="$(find "$root" -iname 'makensis.exe' 2>/dev/null | head -1)"
+      [ -n "$f" ] && MAKENSIS="$f" && break
     done
   fi
+  if [ -z "$MAKENSIS" ]; then
+    echo "✗ makensis no encontrado (¿falló 'choco install nsis'?)" >&2
+    exit 1
+  fi
+  echo "· makensis: $MAKENSIS"
   ( cd stage/win && "$MAKENSIS" "-DVERSION=${TAG#v}" installer.nsi )
   SETUP="dist/RAMI-Chain-$TAG-setup.exe"
   mv "stage/win/RAMI-Chain-Setup.exe" "$SETUP"
