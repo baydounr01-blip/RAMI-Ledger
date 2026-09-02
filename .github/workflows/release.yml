@@ -27,7 +27,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Herramientas de icono
-        run: sudo apt-get update && sudo apt-get install -y librsvg2-bin imagemagick
+        # Con timeout y reintentos: un espejo de apt colgado dejó un release
+        # atascado más de 10 minutos en este paso.
+        run: |
+          for i in 1 2 3; do
+            timeout 240 sudo apt-get update \
+              && timeout 240 sudo apt-get install -y librsvg2-bin imagemagick \
+              && exit 0
+            echo "apt falló o se colgó (intento $i); reintento en 15 s…"
+            sleep 15
+          done
+          exit 1
       - name: Rasterizar SVG -> ico/iconset/png
         run: bash packaging/make-icons.sh
       - uses: actions/upload-artifact@v4
