@@ -274,6 +274,13 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
   - Web y LÉEME: guía del chip (M1–M4 = Apple Silicon, Intel = Intel — con el
     `.dmg` equivocado la app no abre), arrastrar a Aplicaciones antes de abrir,
     y cómo ver el error en directo desde Terminal.
+- **v0.4.4 (esto):** la actualización deja de ser invisible cuando estás al día.
+  - **Sección «Actualizar» permanente en el panel** (y la versión de la barra
+    superior es clicable): versión instalada, última publicada, botón «Buscar
+    actualizaciones» que muestra el resultado (o el error de conexión) y, si
+    hay versión nueva, «Actualizar ahora». Antes solo existía el aviso
+    automático, que por diseño no aparece si ya tienes la última versión — y
+    parecía que «no había opción de actualizar».
 - **v0.5 (siguiente):** instantáneas de cadena re-verificables para el explorador
   web, seeds comunitarios, endurecimiento P2P (puntuación de pares, límites por
   IP) y IPC dedicado faucet↔nodo.

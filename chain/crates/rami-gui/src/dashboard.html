@@ -286,7 +286,7 @@
   <div class="spacer"></div>
   <button class="lockbtn hidden" id="lockBtn">🔒 Bloquear</button>
   <button class="lockbtn" id="quitBtn" title="Cerrar el monedero y el nodo">⏻ Salir</button>
-  <span class="ver">v<span id="verTxt">—</span></span>
+  <span class="ver" id="verLink" style="cursor:pointer" title="Buscar actualizaciones">v<span id="verTxt">—</span> ⬆️</span>
 </div>
 
 <!-- aviso de actualización disponible (con instalación desde la propia app) -->
@@ -314,6 +314,7 @@
     <button data-view="predicciones"><span class="ico">🔮</span> Predicciones</button>
     <button data-view="explorador"><span class="ico">🔍</span> Explorador</button>
     <button data-view="red"><span class="ico">🌐</span> Red</button>
+    <button data-view="actualizar"><span class="ico">⬆️</span> Actualizar</button>
   </nav>
 
   <main>
@@ -478,6 +479,29 @@
         </div>
       </div>
       <p class="note" style="max-width:720px">Se incluirá cuando se mine el próximo bloque. El staking forma parte de la emisión sin premine; en esta testnet no tiene valor monetario.</p>
+    </section>
+
+    <!-- ============ ACTUALIZAR ============ -->
+    <section id="v-actualizar" class="hidden">
+      <h1 class="section-title">Actualizar ⬆️</h1>
+      <p class="section-sub">El monedero comprueba el release oficial y, si hay una versión nueva, se actualiza desde aquí:
+      descarga el instalador, <b>verifica su SHA-256</b> y lo aplica. Nunca se ejecuta nada cuyo hash no coincida.</p>
+      <div class="grid two" style="max-width:720px;margin-bottom:14px">
+        <div class="big-card blue"><div class="lbl">📦 Versión instalada</div>
+          <div class="val"><span id="updCur">—</span></div></div>
+        <div class="big-card green"><div class="lbl">🌐 Última publicada</div>
+          <div class="val"><span id="updLatest">—</span></div></div>
+      </div>
+      <div class="card" style="max-width:720px">
+        <div id="updState" style="font-size:15px;margin-bottom:12px">Sin comprobar todavía.</div>
+        <button class="btn ghost" id="updCheckBtn">🔄 Buscar actualizaciones</button>
+        <button class="btn" id="updApplyBtn2" style="display:none">⬇️ Actualizar ahora</button>
+        <div class="status" id="updStatus2"></div>
+        <p class="note" id="updDetail" style="margin-top:12px"></p>
+        <p class="note">Descarga manual desde la web oficial:
+          <a href="https://quantbot.army/#descargas" target="_blank" rel="noopener">quantbot.army/#descargas</a>.
+          La comprobación automática se repite cada 10 minutos y avisa arriba si aparece una versión nueva.</p>
+      </div>
     </section>
 
     <!-- ============ PREDICCIONES ============ -->
@@ -766,7 +790,7 @@
   }
 
   // ---------- navegación ----------
-  var views = ["resumen","enviar","recibir","minar","staking","predicciones","explorador","red"];
+  var views = ["resumen","enviar","recibir","minar","staking","predicciones","explorador","red","actualizar"];
   document.getElementById("nav").addEventListener("click", function(e){
     var b = e.target.closest("button[data-view]");
     if(!b) return;
@@ -782,6 +806,7 @@
     });
     if(v==="resumen") pollBlocks();
     if(v==="explorador") pollExplorer();
+    if(v==="actualizar") checkUpdate(true);
   }
 
   // ---------- render top bar / conexión ----------
@@ -1243,41 +1268,62 @@
       .catch(function(){ alert("Sin conexión con el nodo."); });
   });
 
-  // ---------- aviso + auto-actualización ----------
+  // ---------- actualización: aviso automático + sección «Actualizar» ----------
   // El backend (nodo) comprueba el Release oficial, descarga el instalador y
   // VERIFICA su SHA-256 antes de aplicar. El panel solo pide y muestra estado.
+  // La sección «Actualizar» está SIEMPRE disponible (aunque estés al día):
+  // versión instalada, última publicada, «Buscar actualizaciones» y, si hay
+  // versión nueva, «Actualizar ahora». El aviso de arriba es automático.
   var updDismissed = "";
   var updApplying = false;
-  function checkUpdate(){
+  function txt(id, s){ document.getElementById(id).textContent = s; }
+  function renderUpdate(d, errMsg){
+    var cur = (state.status && state.status.version) || (d && d.current) || "—";
+    txt("updCur", "v"+cur);
+    var apply2 = document.getElementById("updApplyBtn2");
+    if(errMsg){
+      txt("updLatest", "—");
+      txt("updState", "✗ No se pudo comprobar: " + errMsg);
+      txt("updDetail", "Revisa tu conexión a internet. También puedes descargar a mano desde la web.");
+      apply2.style.display = "none";
+      return;
+    }
+    txt("updLatest", "v"+(d.latest||"—"));
+    var canApply = !!(d.newer && d.asset_name && d.sha256);
+    apply2.style.display = canApply ? "" : "none";
+    if(d.newer){
+      txt("updState", "🎉 Hay una versión nueva: v"+d.latest+
+        (canApply ? ". Puedes actualizar desde aquí." : ". "+(d.note||"Descárgala desde la web.")));
+    } else {
+      txt("updState", "✅ Estás al día: v"+d.latest+" es la última versión publicada.");
+    }
+    txt("updDetail", d.asset_name
+      ? ("Instalador para tu sistema ("+d.platform+"): "+d.asset_name+
+         (d.sha256 ? " · SHA-256 "+d.sha256.slice(0,16)+"…" : " · sin hash publicado"))
+      : (d.note||""));
+    // Aviso automático de arriba: solo con versión nueva y si no se descartó.
+    if(d.newer && updDismissed !== d.latest){
+      txt("updVer", "v"+d.latest);
+      var applyBtn = document.getElementById("updApplyBtn"), msg = document.getElementById("updMsg");
+      if(canApply){ applyBtn.style.display = ""; msg.textContent = ""; }
+      else { applyBtn.style.display = "none"; msg.textContent = d.note || "descarga manual disponible"; }
+      document.getElementById("updateBanner").classList.add("show");
+    }
+  }
+  function checkUpdate(manual){
     if(updApplying) return;
+    if(manual) txt("updState", "Comprobando…");
     jget("/api/update")
       .then(function(d){
-        if(!d || !d.ok || !d.newer) return;
-        var latest = d.latest || "";
-        if(updDismissed === latest) return;
-        document.getElementById("updVer").textContent = "v"+latest;
-        // El enlace manual apunta SIEMPRE a la página web oficial (descarga
-        // directa verificable), no a GitHub.
-        var applyBtn = document.getElementById("updApplyBtn");
-        var msg = document.getElementById("updMsg");
-        // Solo ofrecemos "Actualizar ahora" si hay instalador verificable para
-        // este sistema; si no, dejamos la descarga manual.
-        if(d.asset_name && d.sha256){
-          applyBtn.style.display = "";
-          msg.textContent = "";
-        }else{
-          applyBtn.style.display = "none";
-          msg.textContent = d.note || "descarga manual disponible";
-        }
-        document.getElementById("updateBanner").classList.add("show");
+        if(!d || !d.ok){ renderUpdate(null, (d && d.error) || "respuesta inválida"); return; }
+        renderUpdate(d);
       })
-      .catch(function(){ /* sin conexión con el nodo: sin aviso */ });
+      .catch(function(){ renderUpdate(null, "sin conexión con el nodo"); });
   }
-  document.getElementById("updApplyBtn").addEventListener("click", function(){
+  function applyUpdate(btn, msg){
     if(updApplying) return;
-    if(!confirm("Se descargará el instalador oficial, se comprobará su firma SHA-256 y se aplicará la actualización. ¿Continuar?")) return;
+    if(!confirm("Se descargará el instalador oficial, se comprobará su SHA-256 y se aplicará la actualización. ¿Continuar?")) return;
     updApplying = true;
-    var btn = this, msg = document.getElementById("updMsg");
     btn.disabled = true; btn.textContent = "Descargando y verificando…";
     msg.textContent = "";
     jpost("/api/update/apply", {})
@@ -1295,7 +1341,15 @@
         msg.textContent = "✗ sin conexión con el nodo";
       })
       .then(function(){ updApplying = false; });
+  }
+  document.getElementById("updApplyBtn").addEventListener("click", function(){
+    applyUpdate(this, document.getElementById("updMsg"));
   });
+  document.getElementById("updApplyBtn2").addEventListener("click", function(){
+    applyUpdate(this, document.getElementById("updStatus2"));
+  });
+  document.getElementById("updCheckBtn").addEventListener("click", function(){ checkUpdate(true); });
+  document.getElementById("verLink").addEventListener("click", function(){ setView("actualizar"); });
   document.getElementById("updClose").addEventListener("click", function(){
     updDismissed = (document.getElementById("updVer").textContent||"").replace(/^v/,"");
     document.getElementById("updateBanner").classList.remove("show");

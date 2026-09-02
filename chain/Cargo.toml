@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/rami-core", "crates/rami-net", "crates/rami-node", "crates/rami-wallet", "crates/rami-gui"]
 
 [workspace.package]
-version = "0.4.3"
+version = "0.4.4"
 edition = "2021"
 license = "MIT"
 authors = ["Rami Baydoun Nabhan"]
@@ -19,8 +19,13 @@ hex = "0.4"
 # criptografía casera para guardar claves.
 chacha20poly1305 = "0.10"
 pbkdf2 = "0.12"
-# Cliente HTTPS para el auto-actualizador (TLS con rustls, sin OpenSSL del sistema).
-ureq = "2"
+# Cliente HTTPS para el auto-actualizador (TLS con rustls, sin OpenSSL del
+# sistema). `native-certs`: confía en el almacén de certificados del SISTEMA
+# (como el navegador) — con las raíces empaquetadas, cualquier red corporativa
+# o antivirus que inspeccione TLS rompía la comprobación de actualizaciones
+# aunque el navegador funcionara. La integridad de la descarga sigue anclada al
+# SHA-256 publicado en el release.
+ureq = { version = "2", features = ["native-certs"] }
 
 [profile.release]
 opt-level = 3

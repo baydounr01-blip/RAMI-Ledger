@@ -133,9 +133,87 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
 
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(15))
+        .timeout_connect(Duration::from_secs(8))
         .timeout(Duration::from_secs(120))
         .build()
+}
+
+/// Página «releases/latest» de GitHub (SIN pasar por la API): responde 302 con
+/// `Location: …/releases/tag/vX.Y.Z`. No cuenta para el límite de la API
+/// (60 peticiones/hora por IP sin autenticar — fácil de agotar detrás de un
+/// NAT compartido), y los nombres de los instaladores son deterministas.
+/// Sobrescribible con `RAMI_UPDATE_LATEST_URL` (pruebas).
+const DEFAULT_LATEST_URL: &str = "https://github.com/baydounr01-blip/RAMI-Ledger/releases/latest";
+
+fn latest_url() -> String {
+    std::env::var("RAMI_UPDATE_LATEST_URL").unwrap_or_else(|_| DEFAULT_LATEST_URL.to_string())
+}
+
+fn latest_via_redirect() -> Result<serde_json::Value, String> {
+    let agent = ureq::AgentBuilder::new()
+        .redirects(0)
+        .timeout_connect(Duration::from_secs(8))
+        .timeout(Duration::from_secs(30))
+        .build();
+    let resp = match agent.get(&latest_url()).set("User-Agent", "RAMI-Chain-Wallet").call() {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, r)) if (300..400).contains(&code) => r,
+        Err(e) => return Err(format!("no se pudo conectar: {e}")),
+    };
+    let loc = resp.header("Location").ok_or("sin redirección a la última versión")?.to_string();
+    let (prefix, tag) = loc.rsplit_once("/releases/tag/").ok_or("redirección inesperada")?;
+    let tag = tag.trim_end_matches('/').to_string();
+    if tag.is_empty() {
+        return Err("etiqueta vacía en la redirección".into());
+    }
+    let names = [
+        format!("RAMI-Chain-{tag}-x86_64.AppImage"),
+        format!("RAMI-Chain-{tag}-macos-arm64.dmg"),
+        format!("RAMI-Chain-{tag}-macos-x64.dmg"),
+        format!("RAMI-Chain-{tag}-setup.exe"),
+        "SHA256SUMS.txt".to_string(),
+    ];
+    let assets: Vec<serde_json::Value> = names
+        .iter()
+        .map(|n| {
+            serde_json::json!({
+                "name": n,
+                "browser_download_url": format!("{prefix}/releases/download/{tag}/{n}"),
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({ "tag_name": tag, "html_url": loc, "assets": assets }))
+}
+
+/// Descripción del último release, probando fuentes en orden hasta que una
+/// responda: (1) API de GitHub (canónica); (2) redirección de github.com (sin
+/// límite de API); (3) espejo de la web del proyecto (`descargas/latest.json`,
+/// misma forma de JSON, mismos hashes). Así la actualización queda anclada a
+/// la página web y no depende de una sola vía.
+fn fetch_release_json() -> Result<serde_json::Value, String> {
+    let mut errs: Vec<String> = Vec::new();
+    match http_get_text(&release_url()) {
+        Ok(t) => match serde_json::from_str::<serde_json::Value>(&t) {
+            Ok(v) if v.get("tag_name").is_some() => return Ok(v),
+            Ok(_) => errs.push("API: respuesta sin tag_name".into()),
+            Err(e) => errs.push(format!("API: no es JSON: {e}")),
+        },
+        Err(e) => errs.push(format!("API: {e}")),
+    }
+    match latest_via_redirect() {
+        Ok(v) => return Ok(v),
+        Err(e) => errs.push(format!("redirección: {e}")),
+    }
+    if let Some(w) = web_base() {
+        match http_get_text(&format!("{w}/descargas/latest.json")) {
+            Ok(t) => match serde_json::from_str::<serde_json::Value>(&t) {
+                Ok(v) if v.get("tag_name").is_some() => return Ok(v),
+                _ => errs.push("espejo web: JSON inválido".into()),
+            },
+            Err(e) => errs.push(format!("espejo web: {e}")),
+        }
+    }
+    Err(errs.join(" | "))
 }
 
 fn http_get_text(url: &str) -> Result<String, String> {
@@ -194,20 +272,7 @@ pub fn check(current: &str) -> Result<UpdateInfo, String> {
         ..Default::default()
     };
 
-    // Fuente primaria: el release oficial (API de GitHub). Si no responde y la
-    // web del proyecto está configurada, se usa su espejo /descargas/latest.json
-    // (misma forma de JSON, mismos hashes) — la actualización queda conectada a
-    // la página web.
-    let text = match http_get_text(&release_url()) {
-        Ok(t) => t,
-        Err(e) => match web_base() {
-            Some(w) => http_get_text(&format!("{w}/descargas/latest.json"))
-                .map_err(|e2| format!("{e}; espejo web: {e2}"))?,
-            None => return Err(e),
-        },
-    };
-    let v: serde_json::Value =
-        serde_json::from_str(&text).map_err(|e| format!("respuesta no es JSON: {e}"))?;
+    let v = fetch_release_json()?;
     let tag = v.get("tag_name").and_then(|t| t.as_str()).ok_or("el Release no tiene tag")?;
     info.latest = norm(tag);
     info.html_url = v.get("html_url").and_then(|t| t.as_str()).unwrap_or("").to_string();

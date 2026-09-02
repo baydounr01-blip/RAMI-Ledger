@@ -68,18 +68,28 @@ fn start_server(good_hash: bool) -> String {
                     }
                 }
                 let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                let port = stream.local_addr().map(|a| a.port()).unwrap_or(0);
+                // Emula también github.com/…/releases/latest (302 → tag) y las
+                // URLs de descarga deterministas …/releases/download/<tag>/<name>.
+                let mut status = "200 OK";
+                let mut extra = String::new();
                 let (ctype, body): (&str, Vec<u8>) = if path.ends_with("/release") {
                     ("application/json", release.into_bytes())
-                } else if path.ends_with("/sums") {
+                } else if path.ends_with("/latest") {
+                    status = "302 Found";
+                    extra = format!("Location: http://127.0.0.1:{port}/o/r/releases/tag/v9.9.9\r\n");
+                    ("text/plain", Vec::new())
+                } else if path.ends_with("/sums") || path.ends_with("SHA256SUMS.txt") {
                     ("text/plain", sums.into_bytes())
-                } else if path.ends_with("/asset") {
+                } else if path.ends_with("/asset") || path.ends_with(".AppImage") {
                     ("application/octet-stream", ASSET.to_vec())
                 } else {
+                    status = "404 Not Found";
                     ("text/plain", b"not found".to_vec())
                 };
                 let mut s = stream;
                 let head = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 {status}\r\n{extra}Content-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     body.len()
                 );
                 let _ = s.write_all(head.as_bytes());
@@ -125,8 +135,23 @@ fn check_and_apply_verify_sha256() {
     assert!(r.message.contains("coincide"), "mensaje debe explicar el fallo de hash: {}", r.message);
     assert_eq!(std::fs::read(&target).unwrap(), b"binario VIEJO", "el destino NO debe cambiar");
 
+    // ---- 4) API caída: se usa la redirección «releases/latest» (sin API) ----
+    std::env::set_var("RAMI_UPDATE_RELEASE_URL", "http://127.0.0.1:9/inalcanzable");
+    std::env::set_var("RAMI_UPDATE_LATEST_URL", format!("{base}/latest"));
+    std::env::set_var("RAMI_WEB_URL", ""); // sin espejo web: la redirección debe bastar
+    let info = rami_node::update::check("0.4.0").expect("la redirección debe bastar");
+    assert_eq!(info.latest, "9.9.9");
+    assert!(info.newer);
+    assert_eq!(info.asset_name, "RAMI-Chain-v9.9.9-x86_64.AppImage");
+    assert_eq!(info.sha256, sha_hex(ASSET), "el hash sale del SHA256SUMS.txt del tag");
+    std::fs::write(&target, b"binario VIEJO").unwrap();
+    let r = rami_node::update::apply("0.4.0");
+    assert!(r.ok, "apply vía redirección: {}", r.message);
+    assert_eq!(std::fs::read(&target).unwrap(), ASSET);
+
     // Limpieza y evitar fugas de entorno a otros tests del binario.
-    std::env::remove_var("APPIMAGE");
-    std::env::remove_var("RAMI_UPDATE_RELEASE_URL");
+    for k in ["APPIMAGE", "RAMI_UPDATE_RELEASE_URL", "RAMI_UPDATE_LATEST_URL", "RAMI_WEB_URL"] {
+        std::env::remove_var(k);
+    }
     let _ = std::fs::remove_dir_all(&tmp);
 }
