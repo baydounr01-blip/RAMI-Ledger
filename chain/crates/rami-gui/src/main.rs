@@ -537,6 +537,92 @@ fn open_browser(url: &str) {
     eprintln!("⚠ no pude abrir el navegador; abre a mano: {url}");
 }
 
+/// macOS: bucle de eventos Cocoa mínimo para que la app se comporte como una
+/// app de verdad. Sin él, macOS no recibe respuesta a sus eventos (el clic en
+/// el icono, «reabrir») y muestra «La aplicación RAMI-Chain no responde»
+/// aunque el nodo funcione. Se usa el runtime de Objective‑C por FFI, sin
+/// dependencias: `[NSApplication sharedApplication]`, un delegado con
+/// `applicationShouldHandleReopen:` que abre el panel en el navegador, y
+/// `[NSApp run]` en el hilo principal (el servidor del panel va en otro hilo).
+#[cfg(target_os = "macos")]
+mod cocoa {
+    use std::ffi::{c_char, c_void, CStr};
+    use std::sync::OnceLock;
+
+    type Id = *mut c_void;
+    type Sel = *mut c_void;
+
+    #[link(name = "objc", kind = "dylib")]
+    extern "C" {
+        fn objc_getClass(name: *const c_char) -> Id;
+        fn sel_registerName(name: *const c_char) -> Sel;
+        fn objc_msgSend();
+        fn objc_allocateClassPair(superclass: Id, name: *const c_char, extra: usize) -> Id;
+        fn objc_registerClassPair(cls: Id);
+        fn class_addMethod(cls: Id, name: Sel, imp: *const c_void, types: *const c_char) -> bool;
+    }
+    // Enlazar los frameworks hace que las clases (NSApplication…) existan.
+    #[link(name = "AppKit", kind = "framework")]
+    extern "C" {}
+    #[link(name = "Foundation", kind = "framework")]
+    extern "C" {}
+
+    static PANEL_URL: OnceLock<String> = OnceLock::new();
+
+    unsafe fn sel(s: &CStr) -> Sel {
+        sel_registerName(s.as_ptr())
+    }
+    // objc_msgSend se llama SIEMPRE con la firma exacta del método: en arm64 de
+    // Apple los argumentos variádicos van por la pila y romperían la llamada.
+    unsafe fn msg0(receiver: Id, s: Sel) -> Id {
+        let f: extern "C" fn(Id, Sel) -> Id = std::mem::transmute(objc_msgSend as *const c_void);
+        f(receiver, s)
+    }
+    unsafe fn msg1(receiver: Id, s: Sel, a: Id) -> Id {
+        let f: extern "C" fn(Id, Sel, Id) -> Id = std::mem::transmute(objc_msgSend as *const c_void);
+        f(receiver, s, a)
+    }
+
+    /// `- (BOOL)applicationShouldHandleReopen:(NSApplication*)app hasVisibleWindows:(BOOL)v`
+    /// Clic en el icono con la app ya abierta => reabrir el panel en el navegador.
+    extern "C" fn reopen(_this: Id, _sel: Sel, _app: Id, _visible: bool) -> bool {
+        if let Some(u) = PANEL_URL.get() {
+            super::dlog("reabrir: abriendo el panel en el navegador");
+            super::open_browser(u);
+        }
+        false
+    }
+
+    /// No vuelve: ejecuta el bucle de eventos en el hilo actual (debe ser el principal).
+    pub fn run_app_loop(url: String) {
+        let _ = PANEL_URL.set(url);
+        unsafe {
+            let app = msg0(objc_getClass(c"NSApplication".as_ptr()), sel(c"sharedApplication"));
+            if app.is_null() {
+                super::dlog("cocoa: NSApplication no disponible; sigo sin bucle de eventos");
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(3600));
+                }
+            }
+            let sup = objc_getClass(c"NSObject".as_ptr());
+            let cls = objc_allocateClassPair(sup, c"RamiChainAppDelegate".as_ptr(), 0);
+            if !cls.is_null() {
+                class_addMethod(
+                    cls,
+                    sel(c"applicationShouldHandleReopen:hasVisibleWindows:"),
+                    reopen as *const c_void,
+                    c"B@:@B".as_ptr(),
+                );
+                objc_registerClassPair(cls);
+                let delegate = msg0(msg0(cls, sel(c"alloc")), sel(c"init"));
+                msg1(app, sel(c"setDelegate:"), delegate);
+            }
+            super::dlog("cocoa: bucle de eventos en marcha");
+            msg0(app, sel(c"run"));
+        }
+    }
+}
+
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
@@ -630,83 +716,10 @@ fn main() -> ExitCode {
         dlog(&format!("PANIC: {info}"));
     }));
 
-    // Modo LANZADERA en macOS (doble clic en el .app => sin terminal): el
-    // proceso del clic delega el trabajo en un hijo independiente y VERIFICA
-    // que el panel de verdad llega a estar accesible; si el hijo muere o no
-    // abre el panel, lo dice con un diálogo nativo + página de error (nunca en
-    // silencio). Si ni siquiera puede relanzarse, sigue en primer plano.
-    // Así cada clic en el icono vuelve a ejecutar código — si el monedero ya
-    // está abierto, reabre su panel. Desde una terminal (stdin es TTY) se
-    // ejecuta en primer plano, como siempre.
-    #[cfg(target_os = "macos")]
-    {
-        use std::io::IsTerminal;
-        if !has(&args, "--foreground") && !std::io::stdin().is_terminal() {
-            dlog(&format!("lanzadera v{} args={args:?}", env!("CARGO_PKG_VERSION")));
-            let port0: u16 = arg(&args, "--port").and_then(|s| s.parse().ok()).unwrap_or(8645);
-            match std::env::current_exe() {
-                Err(e) => dlog(&format!("current_exe falló ({e}); sigo en primer plano")),
-                Ok(exe) => {
-                    let mut child_args = args.clone();
-                    child_args.push("--foreground".into());
-                    match Command::new(&exe)
-                        .args(&child_args)
-                        .stdin(std::process::Stdio::null())
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .spawn()
-                    {
-                        Err(e) => dlog(&format!("no pude relanzarme ({e}); sigo en primer plano")),
-                        Ok(mut child) => {
-                            let deadline =
-                                std::time::Instant::now() + std::time::Duration::from_secs(12);
-                            loop {
-                                std::thread::sleep(std::time::Duration::from_millis(300));
-                                for p in port0..port0.saturating_add(10) {
-                                    if http::probe_local(p)
-                                        .map_or(false, |b| b.contains("network_id") || b.contains("starting"))
-                                    {
-                                        dlog(&format!("panel accesible en 127.0.0.1:{p}; lanzadera fuera"));
-                                        return ExitCode::SUCCESS;
-                                    }
-                                }
-                                match child.try_wait() {
-                                    Ok(Some(st)) if st.success() => {
-                                        // Salió bien sin panel propio (p. ej. redirigió a otro).
-                                        dlog("el hijo terminó bien; lanzadera fuera");
-                                        return ExitCode::SUCCESS;
-                                    }
-                                    Ok(Some(st)) => {
-                                        // El hijo murió. ESTE proceso ya está aprobado
-                                        // por el usuario y corriendo: en vez de rendirse,
-                                        // continúa él mismo en primer plano — si el fallo
-                                        // era real (p. ej. un puerto), se repetirá aquí y
-                                        // fail_visible lo mostrará con detalle.
-                                        dlog(&format!(
-                                            "el hijo murió al arrancar ({st}); continúo en primer plano"
-                                        ));
-                                        break;
-                                    }
-                                    _ => {}
-                                }
-                                if std::time::Instant::now() >= deadline {
-                                    dlog("el hijo no abrió el panel en 12 s");
-                                    return fail_visible(
-                                        "el monedero no llegó a abrir su panel",
-                                        &format!(
-                                            "Puede seguir arrancando en segundo plano: prueba \
-                                             http://127.0.0.1:{port0} en tu navegador.\nRegistro: {}",
-                                            log_path().display()
-                                        ),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // macOS: la app corre como una app de verdad — con bucle de eventos Cocoa en
+    // el hilo principal (ver `cocoa` y el final de main). Sin él, macOS mostraba
+    // «La aplicación RAMI-Chain no responde» al hacer clic en el icono, aunque el
+    // nodo funcionara. `--foreground` se acepta por compatibilidad (v0.4.2–0.5.0).
 
     let is_testnet = arg(&args, "--network").as_deref() != Some("regtest"); // testnet por defecto
     let params = if is_testnet { Params::testnet() } else { Params::regtest() };
@@ -864,6 +877,22 @@ fn main() -> ExitCode {
 
     if !has(&args, "--no-open") {
         open_browser(&url);
+    }
+
+    // macOS lanzada desde el Finder (sin terminal): el panel se sirve en un
+    // hilo y el hilo principal ejecuta el bucle de eventos Cocoa, para que
+    // macOS nunca marque la app como «no responde» y el clic en el icono
+    // reabra el panel. Desde una terminal (stdin es TTY) se sirve en primer
+    // plano, como siempre.
+    #[cfg(target_os = "macos")]
+    {
+        use std::io::IsTerminal;
+        if !std::io::stdin().is_terminal() {
+            let gui2 = gui.clone();
+            std::thread::spawn(move || http::serve(listener, move |req| route(&gui2, req)));
+            cocoa::run_app_loop(url.clone());
+            return ExitCode::SUCCESS;
+        }
     }
     http::serve(listener, move |req| route(&gui, req));
     ExitCode::SUCCESS

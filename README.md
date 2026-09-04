@@ -314,6 +314,15 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
     en beneficios exige una entidad autorizada (fase 2 de la hoja de ruta:
     plataforma ECSP/valores tokenizados con KYB/KYC y auditor) — ver la
     sección «Hoja de ruta del metaverso».
+- **v0.5.1 (esto): macOS — la app deja de «no responder».** macOS mostraba
+  «La aplicación RAMI-Chain no responde» al hacer clic en el icono con la app
+  ya abierta: el proceso (un binario de consola) nunca atendía los eventos del
+  sistema, aunque el nodo funcionara. Ahora, lanzada desde el Finder, la app
+  corre un **bucle de eventos Cocoa real** en el hilo principal (runtime de
+  Objective‑C vía FFI, sin dependencias) con un delegado que, al reabrir la
+  app (clic en el icono), **abre el panel en el navegador**. El servidor del
+  panel pasa a un hilo. Desde una terminal se comporta como siempre. Se retira
+  la lanzadera de v0.4.2 (ya innecesaria).
 - **v0.5.x (siguiente):** instantáneas de cadena re-verificables para el explorador
   web, seeds comunitarios, endurecimiento P2P (puntuación de pares, límites por
   IP) y IPC dedicado faucet↔nodo.

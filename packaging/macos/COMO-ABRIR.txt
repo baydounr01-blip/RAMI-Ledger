@@ -38,12 +38,15 @@ del proyecto; el sistema de publicación ya está preparado (ver SIGNING.md).
 4) Desde Terminal puedes ver el error en directo:
    /Applications/RAMI-Chain.app/Contents/MacOS/rami-gui
 
-¿LA APP «NO RESPONDE» AL VOLVER A ABRIRLA?
-El monedero vive en tu navegador (panel local). Si cierras la pestaña, la app
-sigue corriendo en segundo plano y macOS no la relanza al hacer clic de nuevo.
-  • Para volver al panel: abre http://127.0.0.1:8645 en tu navegador.
-  • Para cerrarla del todo: usa el botón «⏻ Salir» del panel (arriba a la
-    derecha). Después, el icono vuelve a abrirla con normalidad.
+CÓMO SE USA LA APP
+El monedero vive en tu navegador (panel local en http://127.0.0.1:8645).
+  • Doble clic en la app: arranca el nodo y abre el panel.
+  • Si el panel ya está abierto y vuelves a hacer clic en el icono, se vuelve
+    a abrir el panel en el navegador (desde v0.5.1; antes macOS podía decir
+    «no responde» — el nodo funcionaba, pero la app no atendía al clic).
+  • Para cerrarla del todo: botón «⏻ Salir» del panel (arriba a la derecha).
+  • Si algún día ves «no responde»: abre http://127.0.0.1:8645 — el nodo sigue
+    funcionando — y actualiza a la última versión desde la pestaña Actualizar.
 
 RAMI-Chain es una TESTNET experimental, sin valor monetario. No es una inversión.
 
