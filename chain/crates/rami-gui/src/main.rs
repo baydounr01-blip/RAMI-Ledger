@@ -24,11 +24,12 @@ use std::sync::Arc;
 
 use rami_core::crypto::{address_from_pubkey, KeyPair};
 use rami_core::params::Params;
-use rami_core::tx::txid;
+use rami_core::tx::{txid, Tx};
 
 use rami_node::{spawn, NodeConfig, NodeHandle};
 use rami_wallet::{
-    build_commit, build_reveal, build_stake, build_transfer, default_keystore_path, fmt_ram,
+    build_claim_parcel, build_commit, build_harvest, build_list_lease, build_mint_asset, build_rent,
+    build_reveal, build_stake, build_transfer, build_transfer_asset, default_keystore_path, fmt_ram,
     load_reveal, parse_pubkey, parse_ram, save_reveal, Keystore,
 };
 
@@ -116,6 +117,41 @@ fn fee_of(b: &Value) -> u64 {
 
 fn password_field(b: &Value) -> String {
     b.get("password").and_then(|v| v.as_str()).unwrap_or("").to_string()
+}
+
+/// Firma con el monedero (desbloqueado) y envía al nodo: camino común de todas
+/// las acciones de la ciudad.
+fn signed_submit(g: &Gui, build: impl FnOnce(&KeyPair, u64) -> Tx) -> Response {
+    let w = g.wallet.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(kp) = w.kp.as_ref() else { return err("monedero bloqueado: desbloquéalo con tu contraseña") };
+    let node = match g.node_ready() {
+        Ok(n) => n,
+        Err(r) => return r,
+    };
+    let nonce = node.next_nonce(kp.public_bytes());
+    let tx = build(kp, nonce);
+    match node.submit_tx(tx) {
+        Ok(id) => Response::json(&json!({"ok": true, "txid": id})),
+        Err(e) => err(e),
+    }
+}
+
+fn coord(b: &Value, key: &str) -> Result<u16, String> {
+    let v = b.get(key).and_then(|v| v.as_u64()).ok_or_else(|| format!("falta {key}"))?;
+    if v >= rami_core::tx::CITY_SIZE as u64 {
+        return Err("coordenada fuera de la ciudad".into());
+    }
+    Ok(v as u16)
+}
+
+fn asset_id(b: &Value) -> Result<[u8; 32], String> {
+    let s = b.get("asset").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let v = hex::decode(s).map_err(|_| "id de activo no es hex".to_string())?;
+    v.try_into().map_err(|_| "id de activo inválido".to_string())
+}
+
+fn str_field<'a>(b: &'a Value, key: &str) -> &'a str {
+    b.get(key).and_then(|v| v.as_str()).unwrap_or("").trim()
 }
 
 fn route(g: &Gui, req: Request) -> Response {
@@ -347,6 +383,75 @@ fn route(g: &Gui, req: Request) -> Response {
                 Ok(id) => Response::json(&json!({"ok": true, "txid": id})),
                 Err(e) => err(e),
             }
+        }
+
+        // ---- Ciudad RAMI (metaverso, fase 0) ----
+        ("GET", "/api/city") => {
+            let node = match g.node_ready() { Ok(n) => n, Err(r) => return r };
+            let me = g.wallet.lock().unwrap_or_else(|e| e.into_inner()).pubkey.map(hex::encode);
+            let mut v = serde_json::to_value(node.city()).unwrap_or_else(|_| json!({}));
+            v["ok"] = json!(true);
+            v["me"] = json!(me);
+            Response::json(&v)
+        }
+        ("POST", "/api/city/claim") => {
+            let b = body_json(&req);
+            let (x, y) = match (coord(&b, "x"), coord(&b, "y")) { (Ok(x), Ok(y)) => (x, y), (Err(e), _) | (_, Err(e)) => return err(e) };
+            let name = str_field(&b, "name").to_string();
+            if name.is_empty() || name.len() > rami_core::tx::MAX_NAME_BYTES {
+                return err("nombre vacío o demasiado largo (máx. 32 bytes)");
+            }
+            let kind = b.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
+            if kind > rami_core::tx::MAX_PARCEL_KIND as u64 {
+                return err("tipo de parcela desconocido");
+            }
+            let fee = fee_of(&b);
+            signed_submit(g, move |kp, nonce| build_claim_parcel(kp, x, y, &name, kind as u8, fee, nonce))
+        }
+        ("POST", "/api/city/mint") => {
+            let b = body_json(&req);
+            let (x, y) = match (coord(&b, "x"), coord(&b, "y")) { (Ok(x), Ok(y)) => (x, y), (Err(e), _) | (_, Err(e)) => return err(e) };
+            let meta = str_field(&b, "meta").to_string();
+            if meta.len() > rami_core::tx::MAX_META_BYTES {
+                return err("metadatos demasiado largos (máx. 64 bytes)");
+            }
+            let kind = b.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
+            if kind > rami_core::tx::MAX_ASSET_KIND as u64 {
+                return err("tipo de activo desconocido");
+            }
+            let fee = fee_of(&b);
+            signed_submit(g, move |kp, nonce| build_mint_asset(kp, x, y, kind as u8, &meta, fee, nonce))
+        }
+        ("POST", "/api/city/transfer") => {
+            let b = body_json(&req);
+            let asset = match asset_id(&b) { Ok(a) => a, Err(e) => return err(e) };
+            let to = match parse_pubkey(str_field(&b, "to")) { Ok(a) => a, Err(e) => return err(e) };
+            let fee = fee_of(&b);
+            signed_submit(g, move |kp, nonce| build_transfer_asset(kp, asset, to, fee, nonce))
+        }
+        ("POST", "/api/city/list") => {
+            let b = body_json(&req);
+            let asset = match asset_id(&b) { Ok(a) => a, Err(e) => return err(e) };
+            let price = match parse_ram(str_field(&b, "price")) { Ok(a) => a, Err(e) => return err(e) };
+            let term = b.get("term").and_then(|v| v.as_u64()).unwrap_or(0);
+            if term == 0 || term > rami_core::tx::MAX_LEASE_TERM {
+                return err("plazo (en bloques) fuera de rango");
+            }
+            let fee = fee_of(&b);
+            signed_submit(g, move |kp, nonce| build_list_lease(kp, asset, price, term, fee, nonce))
+        }
+        ("POST", "/api/city/rent") => {
+            let b = body_json(&req);
+            let asset = match asset_id(&b) { Ok(a) => a, Err(e) => return err(e) };
+            let fee = fee_of(&b);
+            signed_submit(g, move |kp, nonce| build_rent(kp, asset, fee, nonce))
+        }
+        ("POST", "/api/city/harvest") => {
+            let b = body_json(&req);
+            let (x, y) = match (coord(&b, "x"), coord(&b, "y")) { (Ok(x), Ok(y)) => (x, y), (Err(e), _) | (_, Err(e)) => return err(e) };
+            let total = match parse_ram(str_field(&b, "total")) { Ok(a) => a, Err(e) => return err(e) };
+            let fee = fee_of(&b);
+            signed_submit(g, move |kp, nonce| build_harvest(kp, x, y, total, fee, nonce))
         }
 
         ("POST", "/api/peer") => {

@@ -378,7 +378,13 @@ pub fn sign_into(kp: &KeyPair, mut tx: Tx) -> Tx {
         | Tx::Stake { sig: s, .. }
         | Tx::Unstake { sig: s, .. }
         | Tx::Commit { sig: s, .. }
-        | Tx::Reveal { sig: s, .. } => *s = sig,
+        | Tx::Reveal { sig: s, .. }
+        | Tx::ClaimParcel { sig: s, .. }
+        | Tx::MintAsset { sig: s, .. }
+        | Tx::TransferAsset { sig: s, .. }
+        | Tx::ListLease { sig: s, .. }
+        | Tx::Rent { sig: s, .. }
+        | Tx::Harvest { sig: s, .. } => *s = sig,
         Tx::Coinbase { .. } => {}
     }
     tx
@@ -424,6 +430,26 @@ pub fn build_reveal(
         kp,
         Tx::Reveal { by: kp.public_bytes(), commit_txid, payload: payload_bytes, secret, fee, nonce, sig: [0u8; 64] },
     )
+}
+
+// ---------- Ciudad RAMI (metaverso, fase 0) ----------
+pub fn build_claim_parcel(kp: &KeyPair, x: u16, y: u16, name: &str, kind: u8, fee: u64, nonce: u64) -> Tx {
+    sign_into(kp, Tx::ClaimParcel { who: kp.public_bytes(), x, y, name: name.as_bytes().to_vec(), kind, fee, nonce, sig: [0u8; 64] })
+}
+pub fn build_mint_asset(kp: &KeyPair, x: u16, y: u16, kind: u8, meta: &str, fee: u64, nonce: u64) -> Tx {
+    sign_into(kp, Tx::MintAsset { who: kp.public_bytes(), x, y, kind, meta: meta.as_bytes().to_vec(), fee, nonce, sig: [0u8; 64] })
+}
+pub fn build_transfer_asset(kp: &KeyPair, asset: [u8; 32], to: AccountId, fee: u64, nonce: u64) -> Tx {
+    sign_into(kp, Tx::TransferAsset { from: kp.public_bytes(), asset, to, fee, nonce, sig: [0u8; 64] })
+}
+pub fn build_list_lease(kp: &KeyPair, asset: [u8; 32], price: u64, term: u64, fee: u64, nonce: u64) -> Tx {
+    sign_into(kp, Tx::ListLease { who: kp.public_bytes(), asset, price, term, fee, nonce, sig: [0u8; 64] })
+}
+pub fn build_rent(kp: &KeyPair, asset: [u8; 32], fee: u64, nonce: u64) -> Tx {
+    sign_into(kp, Tx::Rent { who: kp.public_bytes(), asset, fee, nonce, sig: [0u8; 64] })
+}
+pub fn build_harvest(kp: &KeyPair, x: u16, y: u16, total: u64, fee: u64, nonce: u64) -> Tx {
+    sign_into(kp, Tx::Harvest { who: kp.public_bytes(), x, y, total, fee, nonce, sig: [0u8; 64] })
 }
 
 /// Almacén local de reveals (payload+secreto) por txid de commit. Nunca se

@@ -7,12 +7,13 @@
 //!
 //! La red neuronal y el desempate de Collatz NO intervienen aquí.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::block::Block;
-use crate::tx::{merkle_root_txids, txid, verify_tx, AccountId, Amount, Tx, TxId};
+use crate::tx::{fee_of, merkle_root_txids, txid, verify_tx, AccountId, Amount, Tx, TxId};
 
 /// 1 RAMI = 100_000_000 ramiwei (8 decimales, como BTC).
 pub const COIN: Amount = 100_000_000;
@@ -52,9 +53,67 @@ pub struct Account {
     pub nonce: u64,
 }
 
+/// Precio de una parcela libre de la ciudad (se QUEMA: sumidero anti-spam,
+/// nadie lo cobra). 10 RAMI.
+pub const PARCEL_PRICE: Amount = 10 * COIN;
+/// Precio de acuñar un activo (se quema). 1 RAMI.
+pub const MINT_PRICE: Amount = COIN;
+
+/// Parcela de la ciudad RAMI: la "empresa" montada sobre ella.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Parcel {
+    pub owner: AccountId,
+    pub name: String,
+    /// 0 empresa, 1 granja, 2 tienda, 3 oficina.
+    pub kind: u8,
+    pub since: u64,
+    /// Nº de cosechas repartidas y la última (altura, total).
+    pub harvests: u64,
+    pub last_harvest: Option<(u64, Amount)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Lease {
+    pub tenant: AccountId,
+    pub from: u64,
+    /// Última altura (inclusive) en la que el alquiler está vigente.
+    pub until: u64,
+    pub price: Amount,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Offer {
+    pub price: Amount,
+    pub term: u64,
+}
+
+/// Activo (NFT nativo) de la ciudad: una planta o un objeto en una parcela.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Asset {
+    pub owner: AccountId,
+    pub x: u16,
+    pub y: u16,
+    /// 0 planta (participa en cosechas), 1 objeto.
+    pub kind: u8,
+    pub meta: String,
+    pub minted: u64,
+    pub offer: Option<Offer>,
+    pub lease: Option<Lease>,
+}
+
+impl Asset {
+    /// ¿Hay un alquiler vigente a esta altura?
+    pub fn leased_at(&self, height: u64) -> bool {
+        self.lease.as_ref().map(|l| height <= l.until).unwrap_or(false)
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct State {
     pub accounts: HashMap<AccountId, Account>,
+    /// Ciudad RAMI: parcelas por coordenada y activos por id (= txid de acuñado).
+    pub parcels: BTreeMap<(u16, u16), Parcel>,
+    pub assets: BTreeMap<TxId, Asset>,
     /// commit_txid -> (firmante, altura de inclusión del commit)
     pub commits: HashMap<TxId, (AccountId, u64)>,
     /// commit_txid -> commitment de 32 bytes registrado por la tx Commit
@@ -107,17 +166,7 @@ pub fn apply_block(state: &mut State, block: &Block, expected_height: u64) -> Re
     }
 
     // 4) Suma de comisiones de las tx no-coinbase (para acotar la recompensa).
-    let mut total_fees: u128 = 0;
-    for tx in &block.txs {
-        match tx {
-            Tx::Coinbase { .. } => {}
-            Tx::Transfer { fee, .. }
-            | Tx::Stake { fee, .. }
-            | Tx::Unstake { fee, .. }
-            | Tx::Commit { fee, .. }
-            | Tx::Reveal { fee, .. } => total_fees += *fee as u128,
-        }
-    }
+    let total_fees: u128 = block.txs.iter().map(|t| fee_of(t) as u128).sum();
 
     // 5) Cota de la recompensa coinbase = emisión(altura) + comisiones.
     if let Some(Tx::Coinbase { height, reward, .. }) = block.txs.first() {
@@ -161,7 +210,10 @@ fn spend(state: &mut State, who: &AccountId, amount: Amount, fee: Amount) -> Res
     Ok(())
 }
 
-fn apply_tx(
+/// Transición de estado de UNA transacción. Pública para que el mempool y el
+/// constructor de bloques usen EXACTAMENTE las mismas reglas que la validación
+/// de bloques (una tx que pase aquí nunca invalidará el bloque minado).
+pub fn apply_tx(
     state: &mut State,
     tx: &Tx,
     height: u64,
@@ -242,6 +294,126 @@ fn apply_tx(
             state.revealed.insert(*commit_txid);
             Ok(())
         }
+
+        // ---------- Ciudad RAMI ----------
+        Tx::ClaimParcel { who, x, y, name, kind, fee, nonce, .. } => {
+            require_nonce(state, who, *nonce)?;
+            let name = String::from_utf8(name.clone()).map_err(|_| "nombre no UTF-8".to_string())?;
+            match state.parcels.get(&(*x, *y)) {
+                Some(p) if p.owner != *who => return Err("la parcela ya tiene dueño".into()),
+                Some(_) => {
+                    // Renombrar / cambiar el tipo de una parcela propia: solo comisión.
+                    spend(state, who, 0, *fee)?;
+                    let p = state.parcels.get_mut(&(*x, *y)).expect("existe");
+                    p.name = name;
+                    p.kind = *kind;
+                }
+                None => {
+                    // Parcela libre: el precio se QUEMA (nadie lo recibe).
+                    spend(state, who, PARCEL_PRICE, *fee)?;
+                    state.parcels.insert(
+                        (*x, *y),
+                        Parcel { owner: *who, name, kind: *kind, since: height, harvests: 0, last_harvest: None },
+                    );
+                }
+            }
+            Ok(())
+        }
+        Tx::MintAsset { who, x, y, kind, meta, fee, nonce, .. } => {
+            require_nonce(state, who, *nonce)?;
+            match state.parcels.get(&(*x, *y)) {
+                Some(p) if p.owner == *who => {}
+                Some(_) => return Err("solo el dueño de la parcela puede acuñar en ella".into()),
+                None => return Err("la parcela no tiene dueño".into()),
+            }
+            spend(state, who, MINT_PRICE, *fee)?; // precio quemado
+            let meta = String::from_utf8(meta.clone()).map_err(|_| "meta no UTF-8".to_string())?;
+            state.assets.insert(
+                *this_txid,
+                Asset { owner: *who, x: *x, y: *y, kind: *kind, meta, minted: height, offer: None, lease: None },
+            );
+            Ok(())
+        }
+        Tx::TransferAsset { from, asset, to, fee, nonce, .. } => {
+            require_nonce(state, from, *nonce)?;
+            spend(state, from, 0, *fee)?;
+            let a = state.assets.get_mut(asset).ok_or("activo inexistente")?;
+            if a.owner != *from {
+                return Err("no eres el dueño del activo".into());
+            }
+            if a.leased_at(height) {
+                return Err("el activo está alquilado; espera a que venza".into());
+            }
+            a.owner = *to;
+            a.offer = None;
+            Ok(())
+        }
+        Tx::ListLease { who, asset, price, term, fee, nonce, .. } => {
+            require_nonce(state, who, *nonce)?;
+            spend(state, who, 0, *fee)?;
+            let a = state.assets.get_mut(asset).ok_or("activo inexistente")?;
+            if a.owner != *who {
+                return Err("no eres el dueño del activo".into());
+            }
+            if a.leased_at(height) {
+                return Err("el activo ya está alquilado".into());
+            }
+            a.offer = Some(Offer { price: *price, term: *term });
+            Ok(())
+        }
+        Tx::Rent { who, asset, fee, nonce, .. } => {
+            require_nonce(state, who, *nonce)?;
+            let (owner, price, term) = {
+                let a = state.assets.get(asset).ok_or("activo inexistente")?;
+                let o = a.offer.as_ref().ok_or("el activo no está en alquiler")?;
+                if a.owner == *who {
+                    return Err("no puedes alquilarte tu propio activo".into());
+                }
+                if a.leased_at(height) {
+                    return Err("el activo ya está alquilado".into());
+                }
+                (a.owner, o.price, o.term)
+            };
+            // El arrendatario paga el precio al dueño (más la comisión al minero).
+            spend(state, who, price, *fee)?;
+            state.acct(&owner).balance += price;
+            let a = state.assets.get_mut(asset).expect("existe");
+            a.lease = Some(Lease { tenant: *who, from: height, until: height + term, price });
+            a.offer = None;
+            Ok(())
+        }
+        Tx::Harvest { who, x, y, total, fee, nonce, .. } => {
+            require_nonce(state, who, *nonce)?;
+            match state.parcels.get(&(*x, *y)) {
+                Some(p) if p.owner == *who => {}
+                Some(_) => return Err("solo el dueño de la parcela puede repartir cosecha".into()),
+                None => return Err("la parcela no tiene dueño".into()),
+            }
+            // Arrendatarios ACTIVOS de las plantas de la parcela (orden determinista).
+            let tenants: Vec<AccountId> = state
+                .assets
+                .values()
+                .filter(|a| a.x == *x && a.y == *y && a.kind == 0 && a.leased_at(height))
+                .map(|a| a.lease.as_ref().expect("vigente").tenant)
+                .collect();
+            if tenants.is_empty() {
+                return Err("no hay plantas alquiladas en esta parcela: nada que repartir".into());
+            }
+            // El total sale del saldo del dueño; el resto de la división se queda con él.
+            let share = *total / tenants.len() as u64;
+            if share == 0 {
+                return Err("cosecha demasiado pequeña para repartir".into());
+            }
+            let distributed = share * tenants.len() as u64;
+            spend(state, who, distributed, *fee)?;
+            for t in &tenants {
+                state.acct(t).balance += share;
+            }
+            let p = state.parcels.get_mut(&(*x, *y)).expect("existe");
+            p.harvests += 1;
+            p.last_harvest = Some((height, distributed));
+            Ok(())
+        }
     }
 }
 
@@ -320,10 +492,78 @@ mod tests {
             | Tx::Stake { sig: s, .. }
             | Tx::Unstake { sig: s, .. }
             | Tx::Commit { sig: s, .. }
-            | Tx::Reveal { sig: s, .. } => *s = sig,
+            | Tx::Reveal { sig: s, .. }
+            | Tx::ClaimParcel { sig: s, .. }
+            | Tx::MintAsset { sig: s, .. }
+            | Tx::TransferAsset { sig: s, .. }
+            | Tx::ListLease { sig: s, .. }
+            | Tx::Rent { sig: s, .. }
+            | Tx::Harvest { sig: s, .. } => *s = sig,
             Tx::Coinbase { .. } => {}
         }
         tx
+    }
+
+    /// Ciudad: reclamar parcela → acuñar planta → publicar alquiler → alquilar →
+    /// cosecha repartida al arrendatario; y las reglas que lo protegen.
+    #[test]
+    fn city_claim_mint_rent_harvest() {
+        let mut st = State::default();
+        let farmer = KeyPair::from_secret(&[11u8; 32]);
+        let renter = KeyPair::from_secret(&[12u8; 32]);
+        let (f, r) = (farmer.public_bytes(), renter.public_bytes());
+        // bloque 0/1: fondos para ambos
+        let b0 = block_with(0, ZERO_HASH, vec![coinbase(0, f, 50 * COIN)]);
+        apply_block(&mut st, &b0, 0).unwrap();
+        let b1 = block_with(1, b0.hash(), vec![coinbase(1, r, block_reward(1))]);
+        apply_block(&mut st, &b1, 1).unwrap();
+
+        // bloque 2: el granjero reclama (5,7) como granja y acuña una planta
+        let claim = signed(&farmer, Tx::ClaimParcel { who: f, x: 5, y: 7, name: b"Granja demo".to_vec(), kind: 1, fee: 1, nonce: 0, sig: [0u8; 64] });
+        let mint = signed(&farmer, Tx::MintAsset { who: f, x: 5, y: 7, kind: 0, meta: b"planta #1".to_vec(), fee: 1, nonce: 1, sig: [0u8; 64] });
+        let plant = txid(&mint);
+        let b2 = block_with(2, b1.hash(), vec![coinbase(2, f, block_reward(2)), claim, mint]);
+        apply_block(&mut st, &b2, 2).unwrap();
+        assert_eq!(st.parcels[&(5, 7)].owner, f);
+        // precio de parcela y de acuñado QUEMADOS (no van a nadie)
+        assert_eq!(st.balance_of(&f), 50 * COIN + block_reward(2) - PARCEL_PRICE - MINT_PRICE - 2);
+
+        // otro NO puede reclamar una parcela con dueño ni acuñar en ella
+        let steal = signed(&renter, Tx::ClaimParcel { who: r, x: 5, y: 7, name: b"mia".to_vec(), kind: 0, fee: 1, nonce: 0, sig: [0u8; 64] });
+        let bad = block_with(3, b2.hash(), vec![coinbase(3, f, block_reward(3)), steal]);
+        assert!(apply_block(&mut st.clone(), &bad, 3).is_err());
+
+        // bloque 3: publicar alquiler (2 RAMI por 100 bloques) y alquilar
+        let list = signed(&farmer, Tx::ListLease { who: f, asset: plant, price: 2 * COIN, term: 100, fee: 1, nonce: 2, sig: [0u8; 64] });
+        let rent = signed(&renter, Tx::Rent { who: r, asset: plant, fee: 1, nonce: 0, sig: [0u8; 64] });
+        let b3 = block_with(3, b2.hash(), vec![coinbase(3, f, block_reward(3)), list, rent]);
+        let before_f = st.balance_of(&f);
+        apply_block(&mut st, &b3, 3).unwrap();
+        let a = &st.assets[&plant];
+        assert!(a.leased_at(3) && a.leased_at(103) && !a.leased_at(104));
+        assert_eq!(a.lease.as_ref().unwrap().tenant, r);
+        assert_eq!(st.balance_of(&f), before_f + block_reward(3) + 2 * COIN - 1); // cobró el alquiler (menos su comisión de publicar)
+
+        // alquilado: no se puede transferir
+        let xfer = signed(&farmer, Tx::TransferAsset { from: f, asset: plant, to: r, fee: 1, nonce: 3, sig: [0u8; 64] });
+        let bad = block_with(4, b3.hash(), vec![coinbase(4, f, block_reward(4)), xfer]);
+        assert!(apply_block(&mut st.clone(), &bad, 4).is_err());
+
+        // bloque 4: cosecha de 9 RAMI → va íntegra al único arrendatario, del saldo del granjero
+        let harvest = signed(&farmer, Tx::Harvest { who: f, x: 5, y: 7, total: 9 * COIN, fee: 1, nonce: 3, sig: [0u8; 64] });
+        let b4 = block_with(4, b3.hash(), vec![coinbase(4, f, block_reward(4)), harvest]);
+        let (bf, br) = (st.balance_of(&f), st.balance_of(&r));
+        apply_block(&mut st, &b4, 4).unwrap();
+        assert_eq!(st.balance_of(&r), br + 9 * COIN);
+        assert_eq!(st.balance_of(&f), bf + block_reward(4) - 9 * COIN - 1);
+        assert_eq!(st.parcels[&(5, 7)].harvests, 1);
+
+        // bloque 200: el alquiler venció → cosecha sin arrendatarios se rechaza
+        let mut later = st.clone();
+        later.height = 199;
+        let harvest2 = signed(&farmer, Tx::Harvest { who: f, x: 5, y: 7, total: COIN, fee: 1, nonce: 4, sig: [0u8; 64] });
+        let b200 = block_with(200, b4.hash(), vec![coinbase(200, f, block_reward(200)), harvest2]);
+        assert!(apply_block(&mut later, &b200, 200).is_err());
     }
 
     // Un Reveal colocado en el MISMO bloque que su Commit viola la regla

@@ -31,6 +31,26 @@ const T_STAKE: u8 = 0x02;
 const T_UNSTAKE: u8 = 0x03;
 const T_COMMIT: u8 = 0x04;
 const T_REVEAL: u8 = 0x05;
+// Ciudad RAMI (fase 0 del metaverso): parcelas y activos como reglas nativas.
+const T_CLAIM_PARCEL: u8 = 0x10;
+const T_MINT_ASSET: u8 = 0x11;
+const T_TRANSFER_ASSET: u8 = 0x12;
+const T_LIST_LEASE: u8 = 0x13;
+const T_RENT: u8 = 0x14;
+const T_HARVEST: u8 = 0x15;
+
+/// Lado de la cuadrícula de la ciudad (parcelas 0..CITY_SIZE en x e y).
+pub const CITY_SIZE: u16 = 32;
+/// Tope del nombre de una parcela/empresa (bytes UTF-8).
+pub const MAX_NAME_BYTES: usize = 32;
+/// Tope de los metadatos de un activo (bytes UTF-8).
+pub const MAX_META_BYTES: usize = 64;
+/// Plazo máximo de un alquiler, en bloques (~1 año a 60 s/bloque).
+pub const MAX_LEASE_TERM: u64 = 525_600;
+/// Tipos de parcela: 0 empresa, 1 granja, 2 tienda, 3 oficina.
+pub const MAX_PARCEL_KIND: u8 = 3;
+/// Tipos de activo: 0 planta (cosecha), 1 objeto.
+pub const MAX_ASSET_KIND: u8 = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Tx {
@@ -54,6 +74,22 @@ pub enum Tx {
         #[serde(with = "crate::serdehex::b64")]
         sig: [u8; 64],
     },
+    // ---------- Ciudad RAMI (metaverso, fase 0) ----------
+    /// Reclama (o renombra, si ya es tuya) la parcela (x, y) y "monta la
+    /// empresa": nombre + tipo. Una parcela libre cuesta PARCEL_PRICE (se quema).
+    ClaimParcel { who: AccountId, x: u16, y: u16, name: Vec<u8>, kind: u8, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
+    /// Acuña un activo (planta u objeto) en una parcela propia. Su id = txid.
+    MintAsset { who: AccountId, x: u16, y: u16, kind: u8, meta: Vec<u8>, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
+    /// Transfiere un activo propio (no puede estar alquilado).
+    TransferAsset { from: AccountId, asset: TxId, to: AccountId, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
+    /// Publica un activo propio en alquiler: precio por plazo y plazo en bloques.
+    ListLease { who: AccountId, asset: TxId, price: Amount, term: u64, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
+    /// Alquila un activo publicado: paga el precio al dueño y queda arrendatario
+    /// hasta altura_actual + plazo.
+    Rent { who: AccountId, asset: TxId, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
+    /// Cosecha: el dueño de la parcela reparte `total` de SU saldo a partes
+    /// iguales entre los arrendatarios activos de las plantas de esa parcela.
+    Harvest { who: AccountId, x: u16, y: u16, total: Amount, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
 }
 
 fn put_u8(o: &mut Vec<u8>, x: u8) {
@@ -119,6 +155,59 @@ pub fn encode_body(tx: &Tx) -> Vec<u8> {
             put_u64(&mut o, *fee);
             put_u64(&mut o, *nonce);
         }
+        Tx::ClaimParcel { who, x, y, name, kind, fee, nonce, .. } => {
+            put_u8(&mut o, T_CLAIM_PARCEL);
+            put_32(&mut o, who);
+            put_u64(&mut o, *x as u64);
+            put_u64(&mut o, *y as u64);
+            put_var(&mut o, name);
+            put_u8(&mut o, *kind);
+            put_u64(&mut o, *fee);
+            put_u64(&mut o, *nonce);
+        }
+        Tx::MintAsset { who, x, y, kind, meta, fee, nonce, .. } => {
+            put_u8(&mut o, T_MINT_ASSET);
+            put_32(&mut o, who);
+            put_u64(&mut o, *x as u64);
+            put_u64(&mut o, *y as u64);
+            put_u8(&mut o, *kind);
+            put_var(&mut o, meta);
+            put_u64(&mut o, *fee);
+            put_u64(&mut o, *nonce);
+        }
+        Tx::TransferAsset { from, asset, to, fee, nonce, .. } => {
+            put_u8(&mut o, T_TRANSFER_ASSET);
+            put_32(&mut o, from);
+            put_32(&mut o, asset);
+            put_32(&mut o, to);
+            put_u64(&mut o, *fee);
+            put_u64(&mut o, *nonce);
+        }
+        Tx::ListLease { who, asset, price, term, fee, nonce, .. } => {
+            put_u8(&mut o, T_LIST_LEASE);
+            put_32(&mut o, who);
+            put_32(&mut o, asset);
+            put_u64(&mut o, *price);
+            put_u64(&mut o, *term);
+            put_u64(&mut o, *fee);
+            put_u64(&mut o, *nonce);
+        }
+        Tx::Rent { who, asset, fee, nonce, .. } => {
+            put_u8(&mut o, T_RENT);
+            put_32(&mut o, who);
+            put_32(&mut o, asset);
+            put_u64(&mut o, *fee);
+            put_u64(&mut o, *nonce);
+        }
+        Tx::Harvest { who, x, y, total, fee, nonce, .. } => {
+            put_u8(&mut o, T_HARVEST);
+            put_32(&mut o, who);
+            put_u64(&mut o, *x as u64);
+            put_u64(&mut o, *y as u64);
+            put_u64(&mut o, *total);
+            put_u64(&mut o, *fee);
+            put_u64(&mut o, *nonce);
+        }
     }
     o
 }
@@ -130,7 +219,13 @@ fn sig_of(tx: &Tx) -> Option<&[u8; 64]> {
         | Tx::Stake { sig, .. }
         | Tx::Unstake { sig, .. }
         | Tx::Commit { sig, .. }
-        | Tx::Reveal { sig, .. } => Some(sig),
+        | Tx::Reveal { sig, .. }
+        | Tx::ClaimParcel { sig, .. }
+        | Tx::MintAsset { sig, .. }
+        | Tx::TransferAsset { sig, .. }
+        | Tx::ListLease { sig, .. }
+        | Tx::Rent { sig, .. }
+        | Tx::Harvest { sig, .. } => Some(sig),
     }
 }
 
@@ -141,6 +236,30 @@ pub fn signer_of(tx: &Tx) -> Option<&AccountId> {
         Tx::Transfer { from, .. } => Some(from),
         Tx::Stake { who, .. } | Tx::Unstake { who, .. } => Some(who),
         Tx::Commit { by, .. } | Tx::Reveal { by, .. } => Some(by),
+        Tx::ClaimParcel { who, .. }
+        | Tx::MintAsset { who, .. }
+        | Tx::ListLease { who, .. }
+        | Tx::Rent { who, .. }
+        | Tx::Harvest { who, .. } => Some(who),
+        Tx::TransferAsset { from, .. } => Some(from),
+    }
+}
+
+/// Comisión de una transacción (0 para la coinbase).
+pub fn fee_of(tx: &Tx) -> Amount {
+    match tx {
+        Tx::Coinbase { .. } => 0,
+        Tx::Transfer { fee, .. }
+        | Tx::Stake { fee, .. }
+        | Tx::Unstake { fee, .. }
+        | Tx::Commit { fee, .. }
+        | Tx::Reveal { fee, .. }
+        | Tx::ClaimParcel { fee, .. }
+        | Tx::MintAsset { fee, .. }
+        | Tx::TransferAsset { fee, .. }
+        | Tx::ListLease { fee, .. }
+        | Tx::Rent { fee, .. }
+        | Tx::Harvest { fee, .. } => *fee,
     }
 }
 
@@ -205,11 +324,47 @@ pub fn merkle_root_txids(txids: &[TxId]) -> [u8; 32] {
 /// (saldo, orden de nonce, cota de recompensa, suficiencia de stake) y las de
 /// commit/reveal con estado se hacen en la transición de estado.
 pub fn verify_tx(tx: &Tx) -> Result<(), String> {
-    // Cota de payload del Reveal (anti-DoS).
-    if let Tx::Reveal { payload, .. } = tx {
-        if payload.len() > MAX_PAYLOAD_BYTES {
+    // Cotas estructurales (anti-DoS / anti-bloat), sin estado.
+    match tx {
+        Tx::Reveal { payload, .. } if payload.len() > MAX_PAYLOAD_BYTES => {
             return Err("payload de reveal excede MAX_PAYLOAD_BYTES".into());
         }
+        Tx::ClaimParcel { x, y, name, kind, .. } => {
+            if *x >= CITY_SIZE || *y >= CITY_SIZE {
+                return Err("parcela fuera de la ciudad".into());
+            }
+            if name.is_empty() || name.len() > MAX_NAME_BYTES || std::str::from_utf8(name).is_err() {
+                return Err("nombre de parcela vacío, demasiado largo o no UTF-8".into());
+            }
+            if *kind > MAX_PARCEL_KIND {
+                return Err("tipo de parcela desconocido".into());
+            }
+        }
+        Tx::MintAsset { x, y, kind, meta, .. } => {
+            if *x >= CITY_SIZE || *y >= CITY_SIZE {
+                return Err("parcela fuera de la ciudad".into());
+            }
+            if meta.len() > MAX_META_BYTES || std::str::from_utf8(meta).is_err() {
+                return Err("metadatos del activo demasiado largos o no UTF-8".into());
+            }
+            if *kind > MAX_ASSET_KIND {
+                return Err("tipo de activo desconocido".into());
+            }
+        }
+        Tx::ListLease { term, .. } => {
+            if *term == 0 || *term > MAX_LEASE_TERM {
+                return Err("plazo de alquiler fuera de rango".into());
+            }
+        }
+        Tx::Harvest { x, y, total, .. } => {
+            if *x >= CITY_SIZE || *y >= CITY_SIZE {
+                return Err("parcela fuera de la ciudad".into());
+            }
+            if *total == 0 {
+                return Err("la cosecha debe repartir algo".into());
+            }
+        }
+        _ => {}
     }
     // La coinbase no lleva firma.
     let (Some(sig_bytes), Some(pk_bytes)) = (sig_of(tx), signer_of(tx)) else {

@@ -281,7 +281,40 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
     hay versión nueva, «Actualizar ahora». Antes solo existía el aviso
     automático, que por diseño no aparece si ya tienes la última versión — y
     parecía que «no había opción de actualizar».
-- **v0.5 (siguiente):** instantáneas de cadena re-verificables para el explorador
+- **v0.5.0 (esto): Ciudad RAMI — fase 0 del metaverso, en la testnet.**
+  Parcelas, empresas y activos como **reglas nativas de consenso** en Rust
+  (sin máquina virtual): seis transacciones nuevas.
+  - `ClaimParcel`: reclama una parcela de la cuadrícula 32×32 y «monta la
+    empresa» (nombre + tipo). Una parcela libre cuesta 10 RAMI que se
+    **queman** (sumidero anti-spam; nadie los cobra). Reclamar una propia la
+    renombra por solo la comisión.
+  - `MintAsset`: acuña un activo (planta u objeto; NFT nativo, id = txid) en
+    una parcela propia (1 RAMI quemado). `TransferAsset`: lo cede (no si está
+    alquilado).
+  - `ListLease` / `Rent`: el dueño publica un activo en alquiler (precio +
+    plazo en bloques, máx. ~1 año); otro lo alquila pagando el precio al dueño
+    y queda arrendatario hasta `altura + plazo` (vencimiento implícito, sin
+    limpieza).
+  - `Harvest` («cosecha»): el dueño de la parcela reparte un total **de su
+    propio saldo** a partes iguales entre los arrendatarios activos de las
+    plantas de esa parcela. Es el mecanismo real de una empresa distribuyendo
+    ingresos, simulado con RAMI de testnet — nunca dinero de la nada.
+  - **Panel «🏙️ Ciudad»**: ciudad isométrica (canvas, sin dependencias) para
+    elegir parcela, montar la empresa con un clic, acuñar plantas, publicar y
+    alquilar, y repartir cosechas. Incluye la **granja demo de cannabis
+    medicinal** como ejemplo del modelo. Endpoints `GET /api/city` y
+    `POST /api/city/{claim,mint,transfer,list,rent,harvest}`.
+  - **Mempool con las reglas reales**: el mempool y el bloque candidato usan
+    ahora `apply_tx` (la misma función que valida bloques). Antes una tx
+    «válida de forma» pero inválida de estado (p. ej. un reveal de un commit
+    inexistente) podía colarse en el candidato, invalidar el bloque minado y
+    dejar al minero atascado.
+  - Marco: es una **simulación** en una testnet **sin valor monetario**. No es
+    una inversión ni una oferta de valores. Tokenizar participaciones reales
+    en beneficios exige una entidad autorizada (fase 2 de la hoja de ruta:
+    plataforma ECSP/valores tokenizados con KYB/KYC y auditor) — ver la
+    sección «Hoja de ruta del metaverso».
+- **v0.5.x (siguiente):** instantáneas de cadena re-verificables para el explorador
   web, seeds comunitarios, endurecimiento P2P (puntuación de pares, límites por
   IP) y IPC dedicado faucet↔nodo.
 

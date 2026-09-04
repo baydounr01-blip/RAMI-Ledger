@@ -59,69 +59,19 @@ pub fn parse_pubkey(hexs: &str) -> Result<AccountId, String> {
 }
 
 pub fn tx_fee(tx: &Tx) -> u64 {
-    match tx {
-        Tx::Coinbase { .. } => 0,
-        Tx::Transfer { fee, .. }
-        | Tx::Stake { fee, .. }
-        | Tx::Unstake { fee, .. }
-        | Tx::Commit { fee, .. }
-        | Tx::Reveal { fee, .. } => *fee,
-    }
+    rami_core::tx::fee_of(tx)
 }
 
-/// Comprobación económica de una tx suelta contra una copia del estado (nonce y
-/// saldo). Mutar `sim` permite encadenar varias en el mismo bloque candidato.
-fn try_apply(sim: &mut State, tx: &Tx) -> Result<(), String> {
-    match tx {
-        Tx::Transfer { from, to, amount, fee, nonce, .. } => {
-            if *nonce != sim.nonce_of(from) {
-                return Err("nonce".into());
-            }
-            if (sim.balance_of(from) as u128) < (*amount as u128 + *fee as u128) {
-                return Err("saldo".into());
-            }
-            let a = sim.accounts.entry(*from).or_default();
-            a.nonce += 1;
-            a.balance -= amount + fee;
-            sim.accounts.entry(*to).or_default().balance += *amount;
-            Ok(())
-        }
-        Tx::Stake { who, amount, fee, nonce, .. } => {
-            if *nonce != sim.nonce_of(who) {
-                return Err("nonce".into());
-            }
-            if (sim.balance_of(who) as u128) < (*amount as u128 + *fee as u128) {
-                return Err("saldo".into());
-            }
-            let a = sim.accounts.entry(*who).or_default();
-            a.nonce += 1;
-            Ok(())
-        }
-        Tx::Unstake { who, amount, fee, nonce, .. } => {
-            if *nonce != sim.nonce_of(who) {
-                return Err("nonce".into());
-            }
-            if (sim.balance_of(who) as u128) < (*fee as u128)
-                || (sim.accounts.get(who).map(|a| a.staked).unwrap_or(0) as u128) < (*amount as u128)
-            {
-                return Err("saldo/stake".into());
-            }
-            let a = sim.accounts.entry(*who).or_default();
-            a.nonce += 1;
-            Ok(())
-        }
-        Tx::Commit { by, fee, nonce, .. } | Tx::Reveal { by, fee, nonce, .. } => {
-            if *nonce != sim.nonce_of(by) {
-                return Err("nonce".into());
-            }
-            if (sim.balance_of(by) as u128) < (*fee as u128) {
-                return Err("saldo".into());
-            }
-            sim.accounts.entry(*by).or_default().nonce += 1;
-            Ok(())
-        }
-        Tx::Coinbase { .. } => Err("coinbase no va en mempool".into()),
+/// Comprobación de una tx suelta contra una copia del estado, con las MISMAS
+/// reglas que la validación de bloques (`apply_tx`): así el mempool y el bloque
+/// candidato nunca admiten una tx que luego invalidaría el bloque minado (y
+/// dejaría al minero atascado). `height` = altura del bloque en que iría.
+/// Mutar `sim` permite encadenar varias en el mismo bloque candidato.
+fn try_apply(sim: &mut State, tx: &Tx, height: u64) -> Result<(), String> {
+    if matches!(tx, Tx::Coinbase { .. }) {
+        return Err("coinbase no va en mempool".into());
     }
+    rami_core::state::apply_tx(sim, tx, height, 1, &txid(tx))
 }
 
 /// Construye la CABECERA candidata (sin minar, nonce 0) y las tx de un bloque a
@@ -144,7 +94,7 @@ pub fn build_candidate(
         if verify_tx(tx).is_err() {
             continue;
         }
-        if try_apply(&mut sim, tx).is_ok() {
+        if try_apply(&mut sim, tx, height).is_ok() {
             fees += tx_fee(tx) as u128;
             included.push(tx.clone());
         }
@@ -391,6 +341,154 @@ fn tx_view(tx: &Tx) -> TxView {
             fee: *fee,
             memo: None,
         },
+        Tx::ClaimParcel { who, x, y, name, fee, .. } => TxView {
+            kind: "claim_parcel".into(),
+            txid: id,
+            from: Some(hex::encode(who)),
+            to: None,
+            amount: None,
+            fee: *fee,
+            memo: Some(format!("({x},{y}) {}", String::from_utf8_lossy(name))),
+        },
+        Tx::MintAsset { who, x, y, meta, fee, .. } => TxView {
+            kind: "mint_asset".into(),
+            txid: id,
+            from: Some(hex::encode(who)),
+            to: None,
+            amount: None,
+            fee: *fee,
+            memo: Some(format!("({x},{y}) {}", String::from_utf8_lossy(meta))),
+        },
+        Tx::TransferAsset { from, asset, to, fee, .. } => TxView {
+            kind: "transfer_asset".into(),
+            txid: id,
+            from: Some(hex::encode(from)),
+            to: Some(hex::encode(to)),
+            amount: None,
+            fee: *fee,
+            memo: Some(hex::encode(asset)),
+        },
+        Tx::ListLease { who, asset, price, term, fee, .. } => TxView {
+            kind: "list_lease".into(),
+            txid: id,
+            from: Some(hex::encode(who)),
+            to: None,
+            amount: Some(*price),
+            fee: *fee,
+            memo: Some(format!("{} por {term} bloques", hex::encode(asset))),
+        },
+        Tx::Rent { who, asset, fee, .. } => TxView {
+            kind: "rent".into(),
+            txid: id,
+            from: Some(hex::encode(who)),
+            to: None,
+            amount: None,
+            fee: *fee,
+            memo: Some(hex::encode(asset)),
+        },
+        Tx::Harvest { who, x, y, total, fee, .. } => TxView {
+            kind: "harvest".into(),
+            txid: id,
+            from: Some(hex::encode(who)),
+            to: None,
+            amount: Some(*total),
+            fee: *fee,
+            memo: Some(format!("cosecha en ({x},{y})")),
+        },
+    }
+}
+
+// ------------------------- Ciudad RAMI (vistas) -------------------------
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ParcelView {
+    pub x: u16,
+    pub y: u16,
+    pub owner: String,
+    pub name: String,
+    pub kind: u8,
+    pub since: u64,
+    pub harvests: u64,
+    pub last_harvest: Option<(u64, u64)>,
+    pub assets: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct LeaseView {
+    pub tenant: String,
+    pub from: u64,
+    pub until: u64,
+    pub price: u64,
+    pub active: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AssetView {
+    pub id: String,
+    pub owner: String,
+    pub x: u16,
+    pub y: u16,
+    pub kind: u8,
+    pub meta: String,
+    pub minted: u64,
+    pub offer: Option<rami_core::state::Offer>,
+    pub lease: Option<LeaseView>,
+}
+
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct CityView {
+    pub size: u16,
+    pub height: u64,
+    pub parcel_price: u64,
+    pub mint_price: u64,
+    pub parcels: Vec<ParcelView>,
+    pub assets: Vec<AssetView>,
+}
+
+fn city_view(st: &State, height: u64) -> CityView {
+    let assets: Vec<AssetView> = st
+        .assets
+        .iter()
+        .map(|(id, a)| AssetView {
+            id: hex::encode(id),
+            owner: hex::encode(a.owner),
+            x: a.x,
+            y: a.y,
+            kind: a.kind,
+            meta: a.meta.clone(),
+            minted: a.minted,
+            offer: a.offer.clone(),
+            lease: a.lease.as_ref().map(|l| LeaseView {
+                tenant: hex::encode(l.tenant),
+                from: l.from,
+                until: l.until,
+                price: l.price,
+                active: height <= l.until,
+            }),
+        })
+        .collect();
+    let parcels = st
+        .parcels
+        .iter()
+        .map(|((x, y), p)| ParcelView {
+            x: *x,
+            y: *y,
+            owner: hex::encode(p.owner),
+            name: p.name.clone(),
+            kind: p.kind,
+            since: p.since,
+            harvests: p.harvests,
+            last_harvest: p.last_harvest,
+            assets: st.assets.values().filter(|a| a.x == *x && a.y == *y).count(),
+        })
+        .collect();
+    CityView {
+        size: rami_core::tx::CITY_SIZE,
+        height,
+        parcel_price: rami_core::state::PARCEL_PRICE,
+        mint_price: rami_core::state::MINT_PRICE,
+        parcels,
+        assets,
     }
 }
 
@@ -424,6 +522,7 @@ enum NodeCmd {
     NextNonce(AccountId, Sender<u64>),
     RecentBlocks(usize, Sender<Vec<BlockView>>),
     GetBlock(u64, Sender<Option<BlockDetail>>),
+    GetCity(Sender<CityView>),
 }
 
 /// Manejador del nodo para la CLI y el monedero de escritorio.
@@ -475,6 +574,14 @@ impl NodeHandle {
         let (r, rx) = channel();
         if self.tx.send(NodeMsg::Cmd(NodeCmd::RecentBlocks(n, r))).is_err() {
             return Vec::new();
+        }
+        rx.recv_timeout(Duration::from_secs(3)).unwrap_or_default()
+    }
+    /// Estado de la ciudad RAMI (parcelas y activos) en la punta del observador.
+    pub fn city(&self) -> CityView {
+        let (r, rx) = channel();
+        if self.tx.send(NodeMsg::Cmd(NodeCmd::GetCity(r))).is_err() {
+            return CityView::default();
         }
         rx.recv_timeout(Duration::from_secs(3)).unwrap_or_default()
     }
@@ -786,10 +893,11 @@ impl Node {
         // para admitir nonces consecutivos del mismo firmante (p. ej. enviar y
         // luego comprometer sin esperar a que se mine el primero).
         let mut sim = self.tree.head_state().unwrap_or_default();
+        let next_height = self.head_height() + 1;
         for t in &self.mempool {
-            let _ = try_apply(&mut sim, t);
+            let _ = try_apply(&mut sim, t, next_height);
         }
-        try_apply(&mut sim, &tx).map_err(|e| format!("no aplica: {e}"))?;
+        try_apply(&mut sim, &tx, next_height).map_err(|e| format!("no aplica: {e}"))?;
         self.mempool.push(tx.clone());
         self.seen_tx.insert(id);
         let _ = self.chain.append_mempool(&tx);
@@ -874,6 +982,10 @@ impl Node {
                     })
                     .collect();
                 let _ = reply.send(out);
+            }
+            NodeCmd::GetCity(reply) => {
+                let st = self.tree.head_state().unwrap_or_default();
+                let _ = reply.send(city_view(&st, self.head_height()));
             }
             NodeCmd::GetBlock(height, reply) => {
                 let chain = self.tree.observer_chain();
@@ -977,19 +1089,41 @@ impl Node {
 fn miner_loop(shared: Arc<MiningShared>, tx: Sender<NodeMsg>) {
     let mut local: Option<MiningJob> = None;
     let mut local_epoch = u64::MAX;
+    // Tras encontrar un bloque, espera a que el nodo publique una época NUEVA
+    // y no vuelvas a enviar la misma cabecera: con dificultad baja (regtest)
+    // recargar el mismo trabajo producía miles de `Mined` duplicados por
+    // segundo que saturaban el hilo del nodo (panel y órdenes sin respuesta).
+    let mut wait_new_epoch = false;
+    let mut last_found: Option<Vec<u8>> = None;
     let mut hashes = 0u64;
     let mut t0 = Instant::now();
     loop {
         if !shared.on.load(Ordering::Relaxed) {
             local = None;
+            wait_new_epoch = false;
             shared.hashrate.store(0, Ordering::Relaxed);
             thread::sleep(Duration::from_millis(100));
             continue;
         }
         let cur = shared.epoch.load(Ordering::Relaxed);
+        if wait_new_epoch {
+            if cur == local_epoch {
+                thread::sleep(Duration::from_millis(20));
+                continue;
+            }
+            wait_new_epoch = false;
+        }
         if local.is_none() || local_epoch != cur {
             local = shared.job.lock().unwrap().clone();
             local_epoch = cur;
+            // Misma cabecera que la ya encontrada => no la reenvíes; espera.
+            if let (Some(j), Some(lf)) = (local.as_ref(), last_found.as_ref()) {
+                if &j.header.canonical_bytes() == lf {
+                    local = None;
+                    wait_new_epoch = true;
+                    continue;
+                }
+            }
         }
         let Some(job) = local.as_mut() else {
             thread::sleep(Duration::from_millis(50));
@@ -1006,12 +1140,14 @@ fn miner_loop(shared: Arc<MiningShared>, tx: Sender<NodeMsg>) {
         }
         if found {
             if shared.epoch.load(Ordering::Relaxed) == local_epoch {
+                last_found = Some(job.header.canonical_bytes());
                 let block = Block { header: job.header.clone(), txs: job.txs.clone() };
                 if tx.send(NodeMsg::Mined(block)).is_err() {
                     return;
                 }
             }
-            local = None; // espera a que el nodo publique el siguiente candidato
+            local = None;
+            wait_new_epoch = true; // espera a que el nodo publique el siguiente candidato
         }
         let dt = t0.elapsed().as_secs_f64();
         if dt >= 1.0 {

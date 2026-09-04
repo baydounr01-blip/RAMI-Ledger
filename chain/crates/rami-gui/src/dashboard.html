@@ -200,6 +200,15 @@
   .overlay .warn-line{color:var(--warn);font-size:12.5px;margin-top:12px}
   .overlay .err-line{color:var(--danger);font-size:13px;margin-top:10px;min-height:16px}
 
+  /* ---------- Ciudad ---------- */
+  .citywrap{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:14px;align-items:start}
+  @media (max-width:980px){.citywrap{grid-template-columns:1fr}}
+  #cityCanvas{width:100%;max-width:960px;display:block;background:radial-gradient(ellipse at 50% 30%,#12202e,#0b0f14 70%);border:1px solid var(--line);border-radius:12px;cursor:pointer}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:var(--muted);margin-top:8px}
+  .legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle;background:var(--c)}
+  .assetrow{border-top:1px solid var(--line);padding:10px 0;font-size:13px}
+  .assetrow .id{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .demo{background:rgba(126,240,192,.08);border:1px solid rgba(126,240,192,.3);border-radius:12px;padding:12px 14px;font-size:13px;margin-bottom:14px}
   /* ---------- Banners de estado ---------- */
   .upd{background:rgba(126,240,192,.10);border-bottom:1px solid rgba(126,240,192,.35);
     padding:10px 20px;font-size:13px;color:var(--text);display:none;align-items:center;gap:12px}
@@ -311,6 +320,7 @@
     <button data-view="recibir"><span class="ico">↙️</span> Recibir</button>
     <button data-view="minar"><span class="ico">⛏</span> Minar</button>
     <button data-view="staking"><span class="ico">🔒</span> Apostar</button>
+    <button data-view="ciudad"><span class="ico">🏙️</span> Ciudad</button>
     <button data-view="predicciones"><span class="ico">🔮</span> Predicciones</button>
     <button data-view="explorador"><span class="ico">🔍</span> Explorador</button>
     <button data-view="red"><span class="ico">🌐</span> Red</button>
@@ -501,6 +511,37 @@
         <p class="note">Descarga manual desde la web oficial:
           <a href="https://quantbot.army/#descargas" target="_blank" rel="noopener">quantbot.army/#descargas</a>.
           La comprobación automática se repite cada 10 minutos y avisa arriba si aparece una versión nueva.</p>
+      </div>
+    </section>
+
+    <!-- ============ CIUDAD (metaverso, fase 0) ============ -->
+    <section id="v-ciudad" class="hidden">
+      <h1 class="section-title">Ciudad RAMI 🏙️</h1>
+      <p class="section-sub">Elige tu parcela y monta tu empresa con un clic. Las parcelas, las empresas y sus activos
+      viven en la cadena: son reglas de consenso, no una base de datos.</p>
+      <div class="demo">🌿 <b>Granja demo de cannabis medicinal</b> — simulación para entender el modelo: la granja acuña
+        <b>plantas</b> (activos), las publica en <b>alquiler</b> por un plazo (p. ej. 3 meses) y, al llegar la
+        <b>cosecha</b>, reparte RAMI de su propio saldo entre quienes tienen una planta alquilada. Todo con RAMI de
+        <b>testnet, sin valor monetario</b>: no es una inversión ni una oferta de valores. Los precios de parcela
+        (<span id="cityParcelPrice">10</span> RAMI) y de acuñado (<span id="cityMintPrice">1</span> RAMI) se <b>queman</b>.</div>
+      <div class="citywrap">
+        <div>
+          <canvas id="cityCanvas" width="960" height="560"></canvas>
+          <div class="legend">
+            <span style="--c:#1d2a3a">Libre</span>
+            <span style="--c:#4f8cff">Empresa</span>
+            <span style="--c:#4ccf6e">Granja</span>
+            <span style="--c:#f2b84b">Tienda</span>
+            <span style="--c:#c77dff">Oficina</span>
+            <span style="--c:#7ef0c0">Tuya (borde claro)</span>
+            <span id="cityStats" style="margin-left:auto"></span>
+          </div>
+        </div>
+        <div class="card" id="cityPanel">
+          <div id="cityInfo" class="note" style="margin-top:0">Haz clic en una parcela de la ciudad.</div>
+          <div id="cityActions"></div>
+          <div class="status" id="cityStatus"></div>
+        </div>
       </div>
     </section>
 
@@ -790,7 +831,7 @@
   }
 
   // ---------- navegación ----------
-  var views = ["resumen","enviar","recibir","minar","staking","predicciones","explorador","red","actualizar"];
+  var views = ["resumen","enviar","recibir","minar","staking","predicciones","explorador","red","actualizar","ciudad"];
   document.getElementById("nav").addEventListener("click", function(e){
     var b = e.target.closest("button[data-view]");
     if(!b) return;
@@ -807,6 +848,7 @@
     if(v==="resumen") pollBlocks();
     if(v==="explorador") pollExplorer();
     if(v==="actualizar") checkUpdate(true);
+    if(v==="ciudad") loadCity();
   }
 
   // ---------- render top bar / conexión ----------
@@ -1267,6 +1309,137 @@
       .then(function(r){ if(r.ok) pollStatus(); else alert(r.error || "no se pudo cifrar"); })
       .catch(function(){ alert("Sin conexión con el nodo."); });
   });
+
+  // ---------- Ciudad RAMI (metaverso, fase 0) ----------
+  var city = { data:null, sel:null, timer:null };
+  var KIND_NAMES = ["Empresa","Granja","Tienda","Oficina"];
+  var KIND_COLORS = ["#4f8cff","#4ccf6e","#f2b84b","#c77dff"];
+  var ASSET_NAMES = ["🌿 Planta","📦 Objeto"];
+  var TERMS = [["3 meses (129 600 bloques)",129600],["1 mes (43 200)",43200],["1 semana (10 080)",10080],["1 día (1 440)",1440],["100 bloques (prueba)",100]];
+  function ramFmt(n){ n = Number(n)||0; return (n/1e8).toLocaleString("es-ES",{maximumFractionDigits:8}); }
+  function shortAddr(h){ return h ? h.slice(0,8)+"…"+h.slice(-6) : "—"; }
+  function loadCity(){
+    jget("/api/city").then(function(d){
+      if(!d || !d.ok){ document.getElementById("cityStatus").textContent = (d && d.error) || "sin datos"; return; }
+      city.data = d;
+      document.getElementById("cityParcelPrice").textContent = ramFmt(d.parcel_price);
+      document.getElementById("cityMintPrice").textContent = ramFmt(d.mint_price);
+      document.getElementById("cityStats").textContent = d.parcels.length+" parcelas ocupadas · "+d.assets.length+" activos · altura "+fmtNum(d.height);
+      drawCity(); renderCityPanel();
+    }).catch(function(){ document.getElementById("cityStatus").textContent = "sin conexión con el nodo"; });
+  }
+  function parcelAt(x,y){ var d=city.data; if(!d) return null; for(var i=0;i<d.parcels.length;i++){ if(d.parcels[i].x===x && d.parcels[i].y===y) return d.parcels[i]; } return null; }
+  function assetsAt(x,y){ var d=city.data; if(!d) return []; return d.assets.filter(function(a){ return a.x===x && a.y===y; }); }
+  // Proyección isométrica: (x,y) de la cuadrícula -> píxeles.
+  var ISO = { w:28, h:14 };
+  function isoOrigin(cv){ var n = city.data ? city.data.size : 32; return { ox: cv.width/2, oy: (cv.height - n*ISO.h)/2 + 8 }; }
+  function drawCity(){
+    var cv = document.getElementById("cityCanvas"), ctx = cv.getContext("2d"), d = city.data; if(!d) return;
+    ctx.clearRect(0,0,cv.width,cv.height);
+    var n = d.size, o = isoOrigin(cv), me = d.me;
+    for(var y=0;y<n;y++) for(var x=0;x<n;x++){
+      var px = o.ox + (x - y)*ISO.w/2, py = o.oy + (x + y)*ISO.h/2;
+      var p = parcelAt(x,y);
+      var fill = p ? KIND_COLORS[p.kind] || "#4f8cff" : "#1d2a3a";
+      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px+ISO.w/2, py+ISO.h/2); ctx.lineTo(px, py+ISO.h); ctx.lineTo(px-ISO.w/2, py+ISO.h/2); ctx.closePath();
+      ctx.fillStyle = fill; ctx.fill();
+      var isSel = city.sel && city.sel.x===x && city.sel.y===y;
+      ctx.lineWidth = isSel ? 2 : 1;
+      ctx.strokeStyle = isSel ? "#ffffff" : (p && me && p.owner===me) ? "#7ef0c0" : "rgba(255,255,255,.08)";
+      ctx.stroke();
+      if(p){ // "edificio": una caja sencilla sobre la parcela
+        var hgt = 6 + Math.min(14, p.assets*2);
+        ctx.fillStyle = fill; ctx.globalAlpha = .85;
+        ctx.fillRect(px-6, py+ISO.h/2-hgt-2, 12, hgt); ctx.globalAlpha = 1;
+        ctx.fillStyle = "rgba(0,0,0,.25)"; ctx.fillRect(px-6, py+ISO.h/2-2, 12, 2);
+        if(p.kind===1 && p.assets>0){ ctx.fillStyle="#9dff9d"; for(var k=0;k<Math.min(p.assets,4);k++){ ctx.fillRect(px-8+k*4, py+ISO.h/2-hgt-5, 2, 3); } }
+      }
+    }
+  }
+  document.getElementById("cityCanvas").addEventListener("click", function(ev){
+    var cv = this, d = city.data; if(!d) return;
+    var r = cv.getBoundingClientRect(), sx = cv.width / r.width, sy = cv.height / r.height;
+    var mx = (ev.clientX - r.left)*sx, my = (ev.clientY - r.top)*sy, o = isoOrigin(cv);
+    // inversa de la proyección: x-y = 2(mx-ox)/w ; x+y = 2(my-oy)/h
+    var a = 2*(mx - o.ox)/ISO.w, b = 2*(my - o.oy)/ISO.h;
+    var x = Math.floor((a + b)/2), y = Math.floor((b - a)/2);
+    if(x<0||y<0||x>=d.size||y>=d.size){ city.sel=null; } else { city.sel={x:x,y:y}; }
+    drawCity(); renderCityPanel();
+  });
+  function cityForm(html){ return '<div class="card" style="margin-top:10px;padding:12px">'+html+'</div>'; }
+  function renderCityPanel(){
+    var info = document.getElementById("cityInfo"), acts = document.getElementById("cityActions"), d = city.data;
+    if(!d || !city.sel){ info.textContent = "Haz clic en una parcela de la ciudad."; acts.innerHTML=""; return; }
+    var x=city.sel.x, y=city.sel.y, p=parcelAt(x,y), me=d.me, mine = !!(p && me && p.owner===me), h="";
+    var assets = assetsAt(x,y);
+    if(!p){
+      info.innerHTML = "<b>Parcela ("+x+","+y+")</b> · <span style='color:var(--muted)'>libre</span>";
+      h += cityForm('<strong>Montar mi empresa aquí</strong>'+
+        '<label class="field" style="margin-top:10px"><span class="cap">Nombre (máx. 32 bytes)</span><input id="cyName" placeholder="Mi empresa S.L."></label>'+
+        '<label class="field"><span class="cap">Tipo</span><select id="cyKind">'+KIND_NAMES.map(function(k,i){return '<option value="'+i+'">'+k+'</option>';}).join("")+'</select></label>'+
+        '<button class="btn" id="cyClaim">Reclamar por '+ramFmt(d.parcel_price)+' RAMI</button>'+
+        '<p class="note">El precio se quema (no lo cobra nadie). Necesitas el monedero desbloqueado.</p>');
+    } else {
+      info.innerHTML = "<b>"+esc(p.name)+"</b> · "+KIND_NAMES[p.kind]+" · parcela ("+x+","+y+")<br>"+
+        "<span style='color:var(--muted)'>dueño "+(mine?"<b style='color:var(--accent)'>tú</b>":esc(shortAddr(p.owner)))+
+        " · desde bloque "+fmtNum(p.since)+" · "+p.assets+" activo(s) · "+p.harvests+" cosecha(s)"+
+        (p.last_harvest? " · última: "+ramFmt(p.last_harvest[1])+" RAMI en bloque "+fmtNum(p.last_harvest[0]) : "")+"</span>";
+      if(mine){
+        h += cityForm('<strong>Acuñar activo</strong>'+
+          '<label class="field" style="margin-top:10px"><span class="cap">Tipo</span><select id="cyAKind">'+ASSET_NAMES.map(function(k,i){return '<option value="'+i+'">'+k+'</option>';}).join("")+'</select></label>'+
+          '<label class="field"><span class="cap">Descripción (máx. 64 bytes)</span><input id="cyMeta" placeholder="Planta #1 · lote primavera"></label>'+
+          '<button class="btn" id="cyMint">Acuñar por '+ramFmt(d.mint_price)+' RAMI</button>');
+        h += cityForm('<strong>Repartir cosecha</strong>'+
+          '<label class="field" style="margin-top:10px"><span class="cap">Total a repartir (RAMI, de tu saldo)</span><input id="cyTotal" placeholder="9" inputmode="decimal"></label>'+
+          '<button class="btn ghost" id="cyHarvest">Repartir entre los arrendatarios activos</button>'+
+          '<p class="note">A partes iguales entre quienes tengan una planta de esta parcela alquilada ahora mismo.</p>');
+        h += cityForm('<strong>Renombrar / cambiar tipo</strong>'+
+          '<label class="field" style="margin-top:10px"><span class="cap">Nombre</span><input id="cyName" value="'+esc(p.name)+'"></label>'+
+          '<label class="field"><span class="cap">Tipo</span><select id="cyKind">'+KIND_NAMES.map(function(k,i){return '<option value="'+i+'"'+(i===p.kind?" selected":"")+'>'+k+'</option>';}).join("")+'</select></label>'+
+          '<button class="btn ghost" id="cyClaim">Guardar (solo comisión)</button>');
+      }
+    }
+    if(assets.length){
+      h += '<div style="margin-top:12px"><strong>Activos en esta parcela</strong></div>';
+      assets.forEach(function(a){
+        var amine = me && a.owner===me, active = a.lease && a.lease.active, tenantMe = active && a.lease.tenant===me;
+        var st = active ? ("alquilada por "+(tenantMe?"<b>ti</b>":esc(shortAddr(a.lease.tenant)))+" hasta el bloque "+fmtNum(a.lease.until))
+               : (a.offer ? ("en alquiler: "+ramFmt(a.offer.price)+" RAMI por "+fmtNum(a.offer.term)+" bloques") : "sin alquilar");
+        var row = '<div class="assetrow"><div>'+ASSET_NAMES[a.kind]+' '+esc(a.meta||"")+' <span style="color:var(--muted)">· dueño '+(amine?"tú":esc(shortAddr(a.owner)))+'</span></div>'+
+                  '<div class="id">'+a.id+'</div><div style="color:var(--muted)">'+st+'</div>';
+        if(amine && !active){
+          row += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">'+
+            '<input class="cyPrice" data-id="'+a.id+'" placeholder="precio RAMI" inputmode="decimal" style="width:110px">'+
+            '<select class="cyTerm" data-id="'+a.id+'">'+TERMS.map(function(t){return '<option value="'+t[1]+'">'+t[0]+'</option>';}).join("")+'</select>'+
+            '<button class="btn small cyList" data-id="'+a.id+'">Publicar alquiler</button>'+
+            '<input class="cyTo" data-id="'+a.id+'" placeholder="transferir a (dirección hex)" style="min-width:200px">'+
+            '<button class="btn small ghost cyXfer" data-id="'+a.id+'">Transferir</button></div>';
+        } else if(!amine && a.offer && !active){
+          row += '<div style="margin-top:6px"><button class="btn small cyRent" data-id="'+a.id+'">Alquilar por '+ramFmt(a.offer.price)+' RAMI</button></div>';
+        }
+        h += row+'</div>';
+      });
+    }
+    acts.innerHTML = h;
+  }
+  function cityAct(path, body, okMsg){
+    var st = document.getElementById("cityStatus"); st.textContent = "Enviando…";
+    jpost(path, body).then(function(r){
+      st.textContent = r.ok ? ("✓ "+okMsg+" (txid "+String(r.txid).slice(0,12)+"…). Se aplica al minarse el próximo bloque.") : ("✗ "+(r.error||"error"));
+      setTimeout(loadCity, 1500);
+    }).catch(function(){ st.textContent = "✗ sin conexión con el nodo"; });
+  }
+  document.getElementById("cityActions").addEventListener("click", function(e){
+    var b = e.target.closest("button"); if(!b || !city.sel) return;
+    var x = city.sel.x, y = city.sel.y, id = b.getAttribute("data-id");
+    if(b.id==="cyClaim"){ cityAct("/api/city/claim", {x:x,y:y,name:document.getElementById("cyName").value.trim(),kind:Number(document.getElementById("cyKind").value)}, "parcela reclamada"); }
+    else if(b.id==="cyMint"){ cityAct("/api/city/mint", {x:x,y:y,kind:Number(document.getElementById("cyAKind").value),meta:document.getElementById("cyMeta").value.trim()}, "activo acuñado"); }
+    else if(b.id==="cyHarvest"){ if(confirm("Repartirás ese total de TU saldo entre los arrendatarios activos. ¿Continuar?")) cityAct("/api/city/harvest", {x:x,y:y,total:document.getElementById("cyTotal").value.trim()}, "cosecha repartida"); }
+    else if(b.classList.contains("cyList")){ cityAct("/api/city/list", {asset:id, price:document.querySelector('.cyPrice[data-id="'+id+'"]').value.trim(), term:Number(document.querySelector('.cyTerm[data-id="'+id+'"]').value)}, "alquiler publicado"); }
+    else if(b.classList.contains("cyRent")){ cityAct("/api/city/rent", {asset:id}, "activo alquilado"); }
+    else if(b.classList.contains("cyXfer")){ cityAct("/api/city/transfer", {asset:id, to:document.querySelector('.cyTo[data-id="'+id+'"]').value.trim()}, "activo transferido"); }
+  });
+  setInterval(function(){ if(currentView==="ciudad") loadCity(); }, 5000);
 
   // ---------- actualización: aviso automático + sección «Actualizar» ----------
   // El backend (nodo) comprueba el Release oficial, descarga el instalador y
