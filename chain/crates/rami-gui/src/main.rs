@@ -39,6 +39,14 @@ use serde_json::{json, Value};
 const DASHBOARD: &str = include_str!("dashboard.html");
 /// Diccionarios del panel (en, zh, ru, sw); el español es el texto original.
 const I18N_JS: &str = include_str!("i18n.js");
+/// Cliente 3D de la Ciudad RAMI (Three.js r150, licencia MIT, empaquetado en
+/// el binario: el panel no necesita internet para renderizar).
+const THREE_JS: &[u8] = include_bytes!("vendor/three.min.js");
+const CITY3D_JS: &str = include_str!("city3d-stub.js");
+/// Terreno de Tenerife (datos abiertos: Mapzen/AWS Terrain Tiles; ver
+/// tools/geo/README.md). Mapa de alturas PNG de 16 bits + metadatos.
+const GEO_HGT: &[u8] = include_bytes!("geo/tenerife.hgt.png");
+const GEO_META: &str = include_str!("geo/tenerife.json");
 
 /// Estado del monedero en memoria. `pubkey` se conoce aunque esté bloqueado
 /// (para minar y ver saldo); `kp` solo está presente cuando se puede FIRMAR.
@@ -173,6 +181,31 @@ fn route(g: &Gui, req: Request) -> Response {
     }
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/") | ("GET", "/index.html") => Response::html(DASHBOARD),
+        ("GET", "/vendor/three.min.js") => Response {
+            status: 200,
+            content_type: "application/javascript; charset=utf-8".into(),
+            body: THREE_JS.to_vec(),
+        },
+        ("GET", "/city3d.js") => Response {
+            status: 200,
+            content_type: "application/javascript; charset=utf-8".into(),
+            body: CITY3D_JS.as_bytes().to_vec(),
+        },
+        ("GET", "/geo/tenerife.hgt.png") => Response { status: 200, content_type: "image/png".into(), body: GEO_HGT.to_vec() },
+        ("GET", "/geo/tenerife.json") => Response {
+            status: 200,
+            content_type: "application/json; charset=utf-8".into(),
+            body: GEO_META.as_bytes().to_vec(),
+        },
+        // Localiza una dirección de Tenerife (OpenStreetMap Nominatim, solo a
+        // petición del usuario). No verifica ninguna empresa.
+        ("POST", "/api/geocode") => {
+            let q = str_field(&body_json(&req), "q").to_string();
+            match rami_node::geo::search(&q) {
+                Ok(places) => Response::json(&json!({ "ok": true, "places": places })),
+                Err(e) => Response::json(&json!({ "ok": false, "error": e })),
+            }
+        }
         ("GET", "/i18n.js") => Response {
             status: 200,
             content_type: "application/javascript; charset=utf-8".into(),

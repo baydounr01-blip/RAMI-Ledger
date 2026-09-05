@@ -208,6 +208,12 @@
   @media (max-width:980px){.citywrap{grid-template-columns:1fr}}
   #cityCanvas{width:100%;max-width:960px;display:block;background:radial-gradient(ellipse at 50% 30%,#12202e,#0b0f14 70%);border:1px solid var(--line);border-radius:12px;cursor:pointer}
   .legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:var(--muted);margin-top:8px}
+  #city3d{width:100%;max-width:960px;height:560px;border:1px solid var(--line);border-radius:12px;overflow:hidden;
+    background:#0b0f14;position:relative;display:none;touch-action:none}
+  #city3d canvas{display:block}
+  .citybar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+  .citybar .btn.on{outline:2px solid var(--accent);outline-offset:1px}
+  #cityCanvas.hidden{display:none}
   .legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle;background:var(--c)}
   .assetrow{border-top:1px solid var(--line);padding:10px 0;font-size:13px}
   .assetrow .id{font-family:var(--mono);font-size:11px;color:var(--muted)}
@@ -552,7 +558,8 @@
     <!-- ============ CIUDAD (metaverso, fase 0) ============ -->
     <section id="v-ciudad" class="hidden">
       <h1 class="section-title">Ciudad RAMI 🏙️</h1>
-      <p class="section-sub">Elige tu parcela y monta tu empresa con un clic. Las parcelas, las empresas y sus activos
+      <p class="section-sub">La isla de Tenerife en 3D (datos abiertos) dividida en una cuadrícula de 32×32 parcelas: elige la tuya,
+      monta tu empresa con un clic y sitúala donde está de verdad. Las parcelas, las empresas y sus activos
       viven en la cadena: son reglas de consenso, no una base de datos.</p>
       <div class="demo">🌿 <b>Granja demo de cannabis medicinal</b> — simulación para entender el modelo: la granja acuña
         <b>plantas</b> (activos), las publica en <b>alquiler</b> por un plazo (p. ej. 3 meses) y, al llegar la
@@ -561,7 +568,17 @@
         (<span id="cityParcelPrice">10</span> RAMI) y de acuñado (<span id="cityMintPrice">1</span> RAMI) se <b>queman</b>.</div>
       <div class="citywrap">
         <div>
-          <canvas id="cityCanvas" width="960" height="560"></canvas>
+          <div class="citybar">
+            <button class="btn small ghost" id="cyViewIsland">🏝️ Isla</button>
+            <button class="btn small ghost" id="cyViewCity">🏙️ Ciudad</button>
+            <span style="width:8px"></span>
+            <button class="btn small ghost on" id="cyMode3d">3D</button>
+            <button class="btn small ghost" id="cyMode2d">2D</button>
+            <button class="btn small" id="cyVR" style="display:none">🥽 Gafas VR</button>
+            <span class="muted" id="cyLoad" style="font-size:12px"></span>
+          </div>
+          <div id="city3d"></div>
+          <canvas id="cityCanvas" width="960" height="560" class="hidden"></canvas>
           <div class="legend">
             <span style="--c:#1d2a3a">Libre</span>
             <span style="--c:#4f8cff">Empresa</span>
@@ -569,10 +586,18 @@
             <span style="--c:#f2b84b">Tienda</span>
             <span style="--c:#c77dff">Oficina</span>
             <span style="--c:#7ef0c0">Tuya (borde claro)</span>
+            <span id="cityHover"></span>
             <span id="cityStats" style="margin-left:auto"></span>
           </div>
         </div>
         <div class="card" id="cityPanel">
+          <div id="cityLocate" style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--line)">
+            <div class="lbl" style="margin-bottom:6px">📍 Localizar mi empresa en Tenerife</div>
+            <input id="cyAddr" placeholder="Dirección (calle, municipio)" style="width:100%" autocomplete="off">
+            <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button class="btn small" id="cyLocateBtn">Buscar dirección</button></div>
+            <div class="status" id="cyLocateStatus"></div>
+            <p class="note" style="margin-top:6px">Mapa de datos abiertos (no Google Maps: sus condiciones prohíben copiar sus datos). La dirección se busca en OpenStreetMap solo al pulsar el botón. RAMI-Chain no verifica que una empresa exista ni sea legal: compruébalo en el <a href="https://www.registradores.org" target="_blank" rel="noopener">Registro Mercantil</a> o el <a href="https://www.boe.es/diario_borme/" target="_blank" rel="noopener">BORME</a>.</p>
+          </div>
           <div id="cityInfo" class="note" style="margin-top:0">Haz clic en una parcela de la ciudad.</div>
           <div id="cityActions"></div>
           <div class="status" id="cityStatus"></div>
@@ -937,7 +962,8 @@
     if(v==="resumen") pollBlocks();
     if(v==="explorador") pollExplorer();
     if(v==="actualizar") checkUpdate(true);
-    if(v==="ciudad") loadCity();
+    if(v==="ciudad"){ loadCity(); if(c3d.mode==="3d") setCityMode("3d"); }
+    else if(c3d.handle) c3d.handle.setVisible(false);
   }
 
   // ---------- render top bar / conexión ----------
@@ -1412,7 +1438,101 @@
   });
 
   // ---------- Ciudad RAMI (metaverso, fase 0) ----------
-  var city = { data:null, sel:null, timer:null };
+  var city = { data:null, sel:null, timer:null, lastTxt:"", pIdx:{}, aIdx:{} };
+  // Cuadrícula de 32×32 sobre TODA la isla (celda de 2,6 km): la parcela (x,y)
+  // corresponde a un lugar real de Tenerife, así una empresa puede situarse
+  // donde está de verdad. (0,0) = esquina noroeste.
+  var CITY_ANCHOR = { lat: 28.675, lon: -16.95, cellMeters: 2600, rotationDeg: 0 };
+  function latLonToParcel(lat, lon){
+    var mx = 111320*Math.cos(CITY_ANCHOR.lat*Math.PI/180), n = (city.data && city.data.size) || 32;
+    var dx = (lon - CITY_ANCHOR.lon)*mx, dy = (CITY_ANCHOR.lat - lat)*110574;
+    var x = Math.floor(dx/CITY_ANCHOR.cellMeters), y = Math.floor(dy/CITY_ANCHOR.cellMeters);
+    return { x:x, y:y, inside:(x>=0 && y>=0 && x<n && y<n) };
+  }
+  function parcelToLatLon(x, y){
+    var mx = 111320*Math.cos(CITY_ANCHOR.lat*Math.PI/180);
+    return { lat: CITY_ANCHOR.lat - (y+0.5)*CITY_ANCHOR.cellMeters/110574, lon: CITY_ANCHOR.lon + (x+0.5)*CITY_ANCHOR.cellMeters/mx };
+  }
+  function buildCityIndex(d){
+    city.pIdx = {}; city.aIdx = {};
+    d.parcels.forEach(function(p){ city.pIdx[p.x+","+p.y] = p; });
+    d.assets.forEach(function(a){ var k = a.x+","+a.y; (city.aIdx[k] = city.aIdx[k] || []).push(a); });
+  }
+  // ---- cliente 3D (Three.js, cargado solo al entrar en la Ciudad) ----
+  var c3d = { handle:null, loading:null, mode:"3d", failed:false };
+  function loadScript(src){
+    return new Promise(function(res, rej){
+      var sc = document.createElement("script"); sc.src = src; sc.onload = res;
+      sc.onerror = function(){ rej(new Error("no se pudo cargar "+src)); };
+      document.head.appendChild(sc);
+    });
+  }
+  function ensureCity3D(){
+    if(c3d.handle) return Promise.resolve(c3d.handle);
+    if(c3d.loading) return c3d.loading;
+    txt("cyLoad", t("Cargando el mapa 3D…"));
+    c3d.loading = loadScript("/vendor/three.min.js").then(function(){ return loadScript("/city3d.js"); }).then(function(){
+      var el = document.getElementById("city3d"); el.style.display = "block";
+      var h = window.RamiCity3D.mount(el, {
+        heightUrl:"/geo/tenerife.hgt.png", metaUrl:"/geo/tenerife.json", gridSize:32, anchor:CITY_ANCHOR, t:t,
+        onSelect:function(x,y){ city.sel = (x==null) ? null : {x:x,y:y}; renderCityPanel(); if(c3d.mode==="2d") drawCity(); },
+        onHover:function(x,y){ var el2 = document.getElementById("cityHover"); if(el2) el2.textContent = (x==null) ? "" : t("parcela")+" ("+x+","+y+")"; }
+      });
+      c3d.handle = h; window.__ramiCity3D = h;   // (pruebas automáticas)
+      if(city.data) h.setCity(city.data);
+      if(city.sel) h.select(city.sel.x, city.sel.y);
+      txt("cyLoad", "");
+      h.xrSupported().then(function(ok){ document.getElementById("cyVR").style.display = ok ? "" : "none"; }).catch(function(){});
+      window.addEventListener("resize", function(){ if(c3d.handle) c3d.handle.resize(); });
+      return h;
+    }).catch(function(e){
+      c3d.failed = true; c3d.loading = null;
+      txt("cyLoad", t("El mapa 3D no está disponible en este navegador; se muestra la vista 2D.")+" ("+((e && e.message) || e)+")");
+      setCityMode("2d");
+      throw e;
+    });
+    return c3d.loading;
+  }
+  function setCityMode(m){
+    c3d.mode = m;
+    var el = document.getElementById("city3d"), cv = document.getElementById("cityCanvas");
+    document.getElementById("cyMode3d").classList.toggle("on", m==="3d");
+    document.getElementById("cyMode2d").classList.toggle("on", m==="2d");
+    if(m==="3d" && !c3d.failed){
+      cv.classList.add("hidden");
+      ensureCity3D().then(function(h){ el.style.display = "block"; h.setVisible(true); h.resize(); }).catch(function(){});
+    } else {
+      el.style.display = "none"; cv.classList.remove("hidden");
+      if(c3d.handle) c3d.handle.setVisible(false);
+      drawCity();
+    }
+  }
+  document.getElementById("cyMode3d").addEventListener("click", function(){ c3d.failed = false; setCityMode("3d"); });
+  document.getElementById("cyMode2d").addEventListener("click", function(){ setCityMode("2d"); });
+  document.getElementById("cyViewIsland").addEventListener("click", function(){ if(c3d.mode!=="3d") setCityMode("3d"); ensureCity3D().then(function(h){ h.flyToIsland(); }).catch(function(){}); });
+  document.getElementById("cyViewCity").addEventListener("click", function(){ if(c3d.mode!=="3d") setCityMode("3d"); ensureCity3D().then(function(h){ if(city.sel) h.flyTo(city.sel.x, city.sel.y); else h.flyToCity(); }).catch(function(){}); });
+  document.getElementById("cyVR").addEventListener("click", function(){
+    var st = document.getElementById("cityStatus");
+    ensureCity3D().then(function(h){ return h.enterVR(); }).then(function(){ st.textContent = ""; })
+      .catch(function(e){ st.textContent = "✗ " + t("No se pudo entrar en VR: ") + ((e && e.message) || e); });
+  });
+  // Localizar una dirección real de Tenerife y llevarla a su parcela.
+  document.getElementById("cyLocateBtn").addEventListener("click", function(){
+    var q = document.getElementById("cyAddr").value.trim(), st = document.getElementById("cyLocateStatus");
+    if(!q){ showStatus(st, false, t("Escribe una dirección.")); return; }
+    var btn = this; btn.disabled = true;
+    showStatus(st, true, '<span class="k">'+t("Buscando…")+'</span>');
+    jpost("/api/geocode", {q:q}).then(function(r){
+      btn.disabled = false;
+      if(!r || !r.ok){ showStatus(st, false, (r && r.error) || t("no encontrada")); return; }
+      var pl = r.places[0], pc = latLonToParcel(pl.lat, pl.lon);
+      if(!pc.inside){ showStatus(st, false, t("La dirección está fuera del mapa de Tenerife.")); return; }
+      city.sel = {x:pc.x, y:pc.y}; renderCityPanel(); drawCity();
+      showStatus(st, true, esc(pl.name)+"<br>"+t("Parcela")+" ("+pc.x+","+pc.y+") · "+pl.lat.toFixed(4)+", "+pl.lon.toFixed(4));
+      if(c3d.handle){ c3d.handle.select(pc.x, pc.y); c3d.handle.flyTo(pc.x, pc.y); }
+    }).catch(function(){ btn.disabled = false; showStatus(st, false, t("Sin conexión con el nodo.")); });
+  });
+  document.getElementById("cyAddr").addEventListener("keydown", function(e){ if(e.key==="Enter") document.getElementById("cyLocateBtn").click(); });
   var KIND_NAMES = ["Empresa","Granja","Tienda","Oficina"];
   var KIND_COLORS = ["#4f8cff","#4ccf6e","#f2b84b","#c77dff"];
   var ASSET_NAMES = ["🌿 Planta","📦 Objeto"];
@@ -1420,22 +1540,28 @@
   function ramFmt(n){ n = Number(n)||0; return (n/1e8).toLocaleString("es-ES",{maximumFractionDigits:8}); }
   function shortAddr(h){ return h ? h.slice(0,8)+"…"+h.slice(-6) : "—"; }
   function loadCity(){
-    jget("/api/city").then(function(d){
+    fetch("/api/city", {headers:{"Accept":"application/json"}}).then(function(r){ return r.text(); }).then(function(txtBody){
+      if(txtBody === city.lastTxt) return;           // nada cambió: no se repinta nada
+      city.lastTxt = txtBody;
+      var d = null; try{ d = JSON.parse(txtBody); }catch(e){}
       if(!d || !d.ok){ document.getElementById("cityStatus").textContent = (d && d.error) || t("sin datos"); return; }
-      city.data = d;
+      city.data = d; buildCityIndex(d);
+      if(c3d.handle) c3d.handle.setCity(d);
       document.getElementById("cityParcelPrice").textContent = ramFmt(d.parcel_price);
       document.getElementById("cityMintPrice").textContent = ramFmt(d.mint_price);
       document.getElementById("cityStats").textContent = d.parcels.length+" parcelas ocupadas · "+d.assets.length+" activos · altura "+fmtNum(d.height);
       drawCity(); renderCityPanel();
     }).catch(function(){ document.getElementById("cityStatus").textContent = t("sin conexión con el nodo"); });
   }
-  function parcelAt(x,y){ var d=city.data; if(!d) return null; for(var i=0;i<d.parcels.length;i++){ if(d.parcels[i].x===x && d.parcels[i].y===y) return d.parcels[i]; } return null; }
-  function assetsAt(x,y){ var d=city.data; if(!d) return []; return d.assets.filter(function(a){ return a.x===x && a.y===y; }); }
+  function parcelAt(x,y){ return city.pIdx[x+","+y] || null; }
+  function assetsAt(x,y){ return city.aIdx[x+","+y] || []; }
   // Proyección isométrica: (x,y) de la cuadrícula -> píxeles.
   var ISO = { w:28, h:14 };
   function isoOrigin(cv){ var n = city.data ? city.data.size : 32; return { ox: cv.width/2, oy: (cv.height - n*ISO.h)/2 + 8 }; }
   function drawCity(){
-    var cv = document.getElementById("cityCanvas"), ctx = cv.getContext("2d"), d = city.data; if(!d) return;
+    var cv = document.getElementById("cityCanvas"), d = city.data; if(!d) return;
+    if(cv.classList.contains("hidden")) return;       // vista 3D activa: el canvas 2D no se dibuja
+    var ctx = cv.getContext("2d");
     ctx.clearRect(0,0,cv.width,cv.height);
     var n = d.size, o = isoOrigin(cv), me = d.me;
     for(var y=0;y<n;y++) for(var x=0;x<n;x++){
@@ -1466,13 +1592,17 @@
     var x = Math.floor((a + b)/2), y = Math.floor((b - a)/2);
     if(x<0||y<0||x>=d.size||y>=d.size){ city.sel=null; } else { city.sel={x:x,y:y}; }
     drawCity(); renderCityPanel();
+    if(c3d.handle) c3d.handle.select(city.sel ? city.sel.x : null, city.sel ? city.sel.y : null);
   });
   function cityForm(html){ return '<div class="card" style="margin-top:10px;padding:12px">'+html+'</div>'; }
   function renderCityPanel(){
     var info = document.getElementById("cityInfo"), acts = document.getElementById("cityActions"), d = city.data;
     if(!d || !city.sel){ info.textContent = t("Haz clic en una parcela de la ciudad."); acts.innerHTML=""; return; }
     var x=city.sel.x, y=city.sel.y, p=parcelAt(x,y), me=d.me, mine = !!(p && me && p.owner===me), h="";
-    var assets = assetsAt(x,y);
+    var assets = assetsAt(x,y), ll = parcelToLatLon(x,y);
+    var geoLine = '<div class="note" style="margin:6px 0 0">📍 '+ll.lat.toFixed(4)+', '+ll.lon.toFixed(4)+
+      ' · <a href="https://www.openstreetmap.org/?mlat='+ll.lat.toFixed(5)+'&mlon='+ll.lon.toFixed(5)+'#map=13/'+ll.lat.toFixed(4)+'/'+ll.lon.toFixed(4)+'" target="_blank" rel="noopener">'+t("Ver en OpenStreetMap")+'</a></div>';
+    h += geoLine;
     if(!p){
       info.innerHTML = "<b>"+t("Parcela")+" ("+x+","+y+")</b> · <span style='color:var(--muted)'>"+t("libre")+"</span>";
       h += cityForm('<strong>'+t("Montar mi empresa aquí")+'</strong>'+

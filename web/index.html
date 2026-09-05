@@ -147,6 +147,12 @@
   <code>rami-wallet</code>) sigue ahí para quien la quiera.</p>
   <p class="sub"><strong>En tu idioma:</strong> el panel del monedero está en <strong>español, inglés, chino, ruso y suajili</strong>;
   se cambia con un clic arriba a la derecha y se recuerda.</p>
+  <p class="sub"><strong>Nuevo en v0.6 — Tenerife en 3D 🏝️</strong>: la Ciudad RAMI se juega sobre una réplica 3D de la isla
+  de Tenerife hecha con <strong>datos abiertos</strong> (relieve real, costa, Teide, pueblos y carreteras principales), dividida
+  en 32×32 parcelas que corresponden a lugares reales: escribe la dirección de tu empresa y la app la sitúa en su parcela.
+  Gráficos WebGL rápidos (todo instanciado), vista Isla/Ciudad, y <strong>gafas de realidad virtual</strong> vía WebXR
+  (Quest, Pico, SteamVR con navegador compatible). No usamos Google Maps (sus condiciones prohíben copiar sus datos) y
+  RAMI-Chain no verifica la legalidad de ninguna empresa: eso lo hace el Registro Mercantil.</p>
   <p class="sub"><strong>Nuevo en v0.5 — la Ciudad RAMI 🏙️</strong> (fase 0 del metaverso): elige tu parcela,
   <strong>monta tu empresa con un clic</strong>, acuña plantas u objetos y alquílalos por un plazo. La
   <strong>granja demo de cannabis medicinal</strong> enseña el modelo: la granja reparte su cosecha, de su propio
@@ -292,7 +298,7 @@
       <b>2 · Abre solo si entiendes el riesgo.</b> macOS: clic derecho → Abrir (o Ajustes del Sistema →
       Privacidad y seguridad → «Abrir de todas formas»). Windows: Más información → Ejecutar de todas formas.
       Estás asumiendo tú la verificación que normalmente haría la plataforma.<br>
-      <b>3 · Instalación desde la terminal</b> (mismo resultado que el instalador; <code>$TAG</code> es la versión, p. ej. <code>v0.5.5</code>):<br>
+      <b>3 · Instalación desde la terminal</b> (mismo resultado que el instalador; <code>$TAG</code> es la versión, p. ej. <code>v0.6.0</code>):<br>
       <code style="display:block;white-space:pre-wrap;margin:6px 0;padding:8px 10px;background:rgba(255,255,255,.05);border-radius:8px">TAG=$(curl -sIL -o /dev/null -w '%{url_effective}' https://github.com/baydounr01-blip/RAMI-Ledger/releases/latest | sed 's#.*/tag/##')
 # macOS (Apple Silicon; Intel: macos-x64)
 curl -fLO https://github.com/baydounr01-blip/RAMI-Ledger/releases/download/$TAG/RAMI-Chain-$TAG-macos-arm64.dmg

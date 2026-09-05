@@ -147,6 +147,12 @@
   <code>rami-wallet</code>) is still there for anyone who wants it.</p>
   <p class="sub"><strong>In your language:</strong> the wallet dashboard comes in <strong>Spanish, English, Chinese, Russian and Swahili</strong>;
   switch with one click at the top right, and it remembers your choice.</p>
+  <p class="sub"><strong>New in v0.6 — Tenerife in 3D 🏝️</strong>: RAMI City is played on a 3D replica of the island of
+  Tenerife built from <strong>open data</strong> (real relief, coastline, the Teide, towns and main roads), divided into 32×32
+  parcels that map to real places: type your company's address and the app puts it on its parcel. Fast WebGL graphics
+  (everything instanced), Island/City views, and <strong>VR headsets</strong> via WebXR (Quest, Pico, SteamVR with a
+  WebXR browser). We do not use Google Maps (its terms forbid copying its data) and RAMI-Chain does not verify any
+  company's legality: that is the Commercial Registry's job.</p>
   <p class="sub"><strong>New in v0.5 — RAMI City 🏙️</strong> (metaverse phase 0): pick your parcel,
   <strong>set up your company with one click</strong>, mint plants or objects and lease them for a term. The
   <strong>medical-cannabis demo farm</strong> shows the model: the farm distributes its harvest, from its own
@@ -293,7 +299,7 @@
       <b>2 · Open only if you understand the risk.</b> macOS: right-click → Open (or System Settings →
       Privacy &amp; Security → "Open Anyway"). Windows: More info → Run anyway. You are taking on the
       verification the platform would normally do for you.<br>
-      <b>3 · Terminal install</b> (same result as the installer; <code>$TAG</code> is the version, e.g. <code>v0.5.5</code>):<br>
+      <b>3 · Terminal install</b> (same result as the installer; <code>$TAG</code> is the version, e.g. <code>v0.6.0</code>):<br>
       <code style="display:block;white-space:pre-wrap;margin:6px 0;padding:8px 10px;background:rgba(255,255,255,.05);border-radius:8px">TAG=$(curl -sIL -o /dev/null -w '%{url_effective}' https://github.com/baydounr01-blip/RAMI-Ledger/releases/latest | sed 's#.*/tag/##')
 # macOS (Apple Silicon; Intel: macos-x64)
 curl -fLO https://github.com/baydounr01-blip/RAMI-Ledger/releases/download/$TAG/RAMI-Chain-$TAG-macos-arm64.dmg

@@ -14,3 +14,5 @@ web/.netlify/
 dist/
 # descargas que baja el build de Netlify desde el release (no se versionan)
 web/descargas/
+# caché de teselas de elevación / GeoJSON del builder de terreno (tools/geo)
+tools/geo/cache/

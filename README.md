@@ -399,7 +399,25 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
   recuerda en el navegador y se guarda en `~/.rami/lang` (`POST /api/lang`)
   para que los diálogos nativos de macOS salgan en el mismo idioma; sin
   elección previa se usa el idioma del sistema.
-- **v0.5.x (siguiente):** instantáneas de cadena re-verificables para el explorador
+- **v0.6.0 (esto): Tenerife en 3D, el metaverso sobre la isla real.** La
+  Ciudad RAMI pasa de un tablero isométrico a un **mapa 3D de Tenerife** hecho
+  con **datos abiertos** (relieve de Mapzen/AWS Terrain Tiles a ~67 m/píxel:
+  costa, Teide, barrancos; pueblos, aeropuertos y carreteras principales de
+  Natural Earth), embebido en el binario (`tools/geo/build_tenerife.py`
+  reconstruye el dataset; ver `tools/geo/README.md`). La cuadrícula de
+  consenso 32×32 se proyecta sobre TODA la isla (celda de 2,6 km): cada
+  parcela corresponde a un lugar real y **«Localizar mi empresa»** geocodifica
+  una dirección (OpenStreetMap Nominatim, solo a petición) y la lleva a su
+  parcela. Renderer Three.js (r150, MIT, empaquetado) con todo instanciado,
+  LOD de terreno, cámara orbital propia, vista Isla/Ciudad, etiquetas y
+  **WebXR** («🥽 Gafas VR»: Quest/Pico/SteamVR con navegador WebXR). Vista 2D
+  como respaldo si no hay WebGL; el panel no repinta nada si la ciudad no
+  cambió. **Sin cambios de consenso** (no hay hard fork). Marco legal: no se
+  usa Google Maps/Earth (sus condiciones prohíben extraer sus datos) y
+  RAMI-Chain **no verifica** la existencia ni la legalidad de ninguna empresa:
+  el panel enlaza al Registro Mercantil y al BORME para que cada uno lo
+  compruebe. Testnet sin valor monetario.
+- **v0.6.x (siguiente):** instantáneas de cadena re-verificables para el explorador
   web, seeds comunitarios, endurecimiento P2P (puntuación de pares, límites por
   IP) y IPC dedicado faucet↔nodo.
 

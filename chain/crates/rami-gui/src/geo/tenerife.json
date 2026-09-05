@@ -1,0 +1,300 @@
+{
+ "name": "Tenerife",
+ "attribution": "Terrain: Mapzen/AWS Terrain Tiles (SRTM, GMTED2010, ETOPO1 and other public sources) · Roads: Natural Earth (public domain)",
+ "zoom": 12,
+ "downsample": 2,
+ "width": 1238,
+ "height": 1059,
+ "origin_px": {
+  "x": 474917.0,
+  "y": 437226.0
+ },
+ "meters_per_pixel": 67.3011,
+ "offset": 1000,
+ "min_h": -2783.08,
+ "max_h": 3677.44,
+ "bbox": {
+  "west": -16.95,
+  "south": 27.98,
+  "east": -16.1,
+  "north": 28.62
+ },
+ "peak": {
+  "name": "Teide",
+  "lat": 28.2724,
+  "lon": -16.6425,
+  "h": 3677.4
+ },
+ "towns": [
+  {
+   "name": "Santa Cruz de Tenerife",
+   "lat": 28.4636,
+   "lon": -16.2518,
+   "kind": "city"
+  },
+  {
+   "name": "San Cristóbal de La Laguna",
+   "lat": 28.4853,
+   "lon": -16.32,
+   "kind": "city"
+  },
+  {
+   "name": "Puerto de la Cruz",
+   "lat": 28.4142,
+   "lon": -16.5448,
+   "kind": "town"
+  },
+  {
+   "name": "La Orotava",
+   "lat": 28.3908,
+   "lon": -16.5231,
+   "kind": "town"
+  },
+  {
+   "name": "Adeje",
+   "lat": 28.1227,
+   "lon": -16.726,
+   "kind": "town"
+  },
+  {
+   "name": "Arona",
+   "lat": 28.0996,
+   "lon": -16.681,
+   "kind": "town"
+  },
+  {
+   "name": "Los Cristianos",
+   "lat": 28.0511,
+   "lon": -16.7157,
+   "kind": "port"
+  },
+  {
+   "name": "Playa de las Américas",
+   "lat": 28.0625,
+   "lon": -16.7284,
+   "kind": "beach"
+  },
+  {
+   "name": "Granadilla de Abona",
+   "lat": 28.1189,
+   "lon": -16.575,
+   "kind": "town"
+  },
+  {
+   "name": "El Médano",
+   "lat": 28.045,
+   "lon": -16.5364,
+   "kind": "beach"
+  },
+  {
+   "name": "Candelaria",
+   "lat": 28.355,
+   "lon": -16.3717,
+   "kind": "town"
+  },
+  {
+   "name": "Güímar",
+   "lat": 28.3125,
+   "lon": -16.4115,
+   "kind": "town"
+  },
+  {
+   "name": "Icod de los Vinos",
+   "lat": 28.367,
+   "lon": -16.7113,
+   "kind": "town"
+  },
+  {
+   "name": "Garachico",
+   "lat": 28.373,
+   "lon": -16.764,
+   "kind": "town"
+  },
+  {
+   "name": "Los Realejos",
+   "lat": 28.382,
+   "lon": -16.585,
+   "kind": "town"
+  },
+  {
+   "name": "Tacoronte",
+   "lat": 28.478,
+   "lon": -16.411,
+   "kind": "town"
+  },
+  {
+   "name": "Santiago del Teide",
+   "lat": 28.297,
+   "lon": -16.815,
+   "kind": "town"
+  },
+  {
+   "name": "Los Gigantes",
+   "lat": 28.245,
+   "lon": -16.841,
+   "kind": "port"
+  },
+  {
+   "name": "Aeropuerto Tenerife Sur",
+   "lat": 28.0445,
+   "lon": -16.5725,
+   "kind": "airport"
+  },
+  {
+   "name": "Aeropuerto Tenerife Norte",
+   "lat": 28.4827,
+   "lon": -16.3415,
+   "kind": "airport"
+  },
+  {
+   "name": "Teide",
+   "lat": 28.2724,
+   "lon": -16.6425,
+   "kind": "peak"
+  },
+  {
+   "name": "Punta de Teno",
+   "lat": 28.3425,
+   "lon": -16.921,
+   "kind": "beach"
+  },
+  {
+   "name": "Anaga (Taganana)",
+   "lat": 28.561,
+   "lon": -16.216,
+   "kind": "town"
+  },
+  {
+   "name": "Vilaflor",
+   "lat": 28.156,
+   "lon": -16.636,
+   "kind": "town"
+  },
+  {
+   "name": "Buenavista del Norte",
+   "lat": 28.371,
+   "lon": -16.852,
+   "kind": "town"
+  }
+ ],
+ "roads": [
+  [
+   [
+    -16.25113,
+    28.45692
+   ],
+   [
+    -16.27175,
+    28.4363
+   ]
+  ],
+  [
+   [
+    -16.27175,
+    28.4363
+   ],
+   [
+    -16.28825,
+    28.44455
+   ],
+   [
+    -16.32124,
+    28.46517
+   ],
+   [
+    -16.34599,
+    28.47754
+   ],
+   [
+    -16.37074,
+    28.47754
+   ],
+   [
+    -16.41198,
+    28.45692
+   ],
+   [
+    -16.44497,
+    28.42392
+   ],
+   [
+    -16.46972,
+    28.41155
+   ],
+   [
+    -16.49034,
+    28.39505
+   ],
+   [
+    -16.53159,
+    28.39505
+   ]
+  ],
+  [
+   [
+    -16.27175,
+    28.4363
+   ],
+   [
+    -16.28825,
+    28.4198
+   ],
+   [
+    -16.31299,
+    28.4033
+   ],
+   [
+    -16.34599,
+    28.3868
+   ],
+   [
+    -16.36661,
+    28.35381
+   ],
+   [
+    -16.37074,
+    28.33319
+   ],
+   [
+    -16.37899,
+    28.27544
+   ],
+   [
+    -16.41198,
+    28.20121
+   ],
+   [
+    -16.4491,
+    28.13934
+   ],
+   [
+    -16.46972,
+    28.11459
+   ],
+   [
+    -16.53571,
+    28.05273
+   ],
+   [
+    -16.57283,
+    28.0321
+   ],
+   [
+    -16.60995,
+    28.01973
+   ],
+   [
+    -16.6512,
+    28.02386
+   ],
+   [
+    -16.68419,
+    28.0321
+   ],
+   [
+    -16.70069,
+    28.03623
+   ]
+  ]
+ ]
+}

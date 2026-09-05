@@ -11,6 +11,7 @@
 
 pub mod http;
 pub mod update;
+pub mod geo;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
