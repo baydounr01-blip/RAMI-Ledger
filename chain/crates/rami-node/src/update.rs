@@ -492,9 +492,14 @@ fn make_executable(_path: &Path) -> std::io::Result<()> {
 /// del panel ocupado por la vieja (que la haría salir creyendo que ya hay un
 /// monedero abierto).
 fn spawn_relauncher_unix(open_cmd: &str, target: &Path) -> Result<(), String> {
+    spawn_relauncher_unix_with(open_cmd, target, &[])
+}
+
+fn spawn_relauncher_unix_with(open_cmd: &str, target: &Path, extra: &[&str]) -> Result<(), String> {
     // Se conservan los argumentos con los que se abrió esta instancia
     // (--network, --port, --chain…): la versión nueva arranca igual que la vieja.
-    let user_args: Vec<String> = std::env::args().skip(1).collect();
+    let mut user_args: Vec<String> = std::env::args().skip(1).collect();
+    user_args.extend(extra.iter().map(|a| a.to_string()));
     let pass_args = if user_args.is_empty() {
         ""
     } else if open_cmd.is_empty() {
@@ -676,8 +681,14 @@ pub fn self_install() -> Result<PathBuf, String> {
 /// Programa la apertura de `target` (una app o ejecutable) en cuanto ESTE
 /// proceso termine, conservando los argumentos de arranque.
 pub fn relaunch_after_exit(target: &Path) -> Result<(), String> {
+    relaunch_after_exit_with(target, &[])
+}
+
+/// Como [`relaunch_after_exit`], añadiendo argumentos (p. ej. `--no-install`
+/// tras instalarse, para que la copia nueva nunca vuelva a proponerlo).
+pub fn relaunch_after_exit_with(target: &Path, extra: &[&str]) -> Result<(), String> {
     let open_cmd = if cfg!(target_os = "macos") { "open" } else { "" };
-    spawn_relauncher_unix(open_cmd, target)
+    spawn_relauncher_unix_with(open_cmd, target, extra)
 }
 
 /// macOS: instala la app del `.dmg` VERIFICADO en el sitio de la actual (o en
@@ -794,6 +805,17 @@ fn install_bundle(src: &Path, dest: &Path) -> Result<(), String> {
         let _ = std::fs::remove_dir_all(&staged);
         return Err(e);
     }
+    // La copia instalada es la MISMA app que el usuario ya abrió de forma
+    // consciente (este código está corriendo) y cuya firma acabamos de
+    // verificar. Se libera de la cuarentena de descarga, como hacen los
+    // instaladores/actualizadores de Mac (Sparkle): sin esto, macOS trata la
+    // copia como recién descargada, la ejecuta «traslocada» en una carpeta
+    // temporal de solo lectura y vuelve a pedir instalarla, en bucle.
+    let _ = Command::new("xattr")
+        .args(["-dr", "com.apple.quarantine"])
+        .arg(&staged)
+        .stdin(Stdio::null())
+        .output();
     // Intercambio: la app en uso pasa a .anterior (el proceso vivo sigue
     // funcionando: macOS mantiene el ejecutable abierto), la nueva ocupa su sitio.
     let _ = std::fs::remove_dir_all(&old);

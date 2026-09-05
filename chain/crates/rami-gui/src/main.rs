@@ -490,7 +490,7 @@ fn route(g: &Gui, req: Request) -> Response {
             dlog("instalación en Aplicaciones solicitada desde el panel");
             match rami_node::update::self_install() {
                 Ok(dest) => {
-                    let relaunch = rami_node::update::relaunch_after_exit(&dest).is_ok();
+                    let relaunch = rami_node::update::relaunch_after_exit_with(&dest, &["--no-install"]).is_ok();
                     if relaunch {
                         rami_node::update::exit_soon();
                     }
@@ -859,7 +859,7 @@ fn main() -> ExitCode {
                 match rami_node::update::self_install() {
                     Ok(dest) => {
                         dlog(&format!("instalada en {}; me reabro desde ahí", dest.display()));
-                        match rami_node::update::relaunch_after_exit(&dest) {
+                        match rami_node::update::relaunch_after_exit_with(&dest, &["--no-install"]) {
                             Ok(()) => return ExitCode::SUCCESS,
                             Err(e) => native_dialog(
                                 "RAMI-Chain",

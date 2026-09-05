@@ -375,7 +375,7 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
   silencio; Linux: AppImage atómico), se cierra y **se vuelve a abrir sola**.
   El panel espera y se recarga; pestaña Actualizar con «Novedades». Antes, en
   macOS/Windows solo se abría el instalador y había que terminar a mano.
-- **v0.5.3 (esto): instalación sin terminal, como Bitcoin Core.** La app de
+- **v0.5.3–v0.5.4 (esto): instalación sin terminal, como Bitcoin Core.** La app de
   macOS, abierta desde el `.dmg` (o Descargas), **se instala sola en
   Aplicaciones** con un diálogo nativo, cierra la versión anterior y se reabre
   desde allí (`/api/install` y aviso en la pestaña Actualizar si no está
@@ -384,7 +384,11 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
   parecía que «no se actualizaba»). El instalador de Windows cierra el
   monedero abierto antes de sustituirlo. `/api/status` incluye `pid` y desde
   dónde corre la app; el panel se recarga si el proceso cambia. Web/README
-  con los pasos para novatos y para avanzados (terminal).
+  con los pasos para novatos y para avanzados (terminal). v0.5.4: la copia
+  instalada se libera de la cuarentena de descarga (como hace Sparkle: es la
+  misma app que el usuario ya abrió y cuya firma se verifica) para que macOS
+  no la ejecute «traslocada» y vuelva a pedir instalarla; la reapertura tras
+  instalarse lleva `--no-install`.
 - **v0.5.x (siguiente):** instantáneas de cadena re-verificables para el explorador
   web, seeds comunitarios, endurecimiento P2P (puntuación de pares, límites por
   IP) y IPC dedicado faucet↔nodo.
