@@ -37,6 +37,8 @@ use http::{Request, Response};
 use serde_json::{json, Value};
 
 const DASHBOARD: &str = include_str!("dashboard.html");
+/// Diccionarios del panel (en, zh, ru, sw); el español es el texto original.
+const I18N_JS: &str = include_str!("i18n.js");
 
 /// Estado del monedero en memoria. `pubkey` se conoce aunque esté bloqueado
 /// (para minar y ver saldo); `kp` solo está presente cuando se puede FIRMAR.
@@ -171,6 +173,23 @@ fn route(g: &Gui, req: Request) -> Response {
     }
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/") | ("GET", "/index.html") => Response::html(DASHBOARD),
+        ("GET", "/i18n.js") => Response {
+            status: 200,
+            content_type: "application/javascript; charset=utf-8".into(),
+            body: I18N_JS.as_bytes().to_vec(),
+        },
+        // Idioma elegido en el panel: se guarda para que los diálogos NATIVOS
+        // (p. ej. «instalar en Aplicaciones») salgan en el mismo idioma.
+        ("POST", "/api/lang") => {
+            let lang = str_field(&body_json(&req), "lang").to_string();
+            if ["es", "en", "zh", "ru", "sw"].contains(&lang.as_str()) {
+                let _ = std::fs::create_dir_all(format!("{}/.rami", rami_wallet::home_dir()));
+                let _ = std::fs::write(lang_path(), &lang);
+                Response::json(&json!({ "ok": true, "lang": lang }))
+            } else {
+                Response::json(&json!({ "ok": false, "error": "idioma no soportado" }))
+            }
+        }
 
         ("GET", "/api/status") => {
             let w = g.wallet.lock().unwrap_or_else(|e| e.into_inner());
@@ -697,6 +716,81 @@ fn native_dialog(title: &str, msg: &str) {
 #[cfg(not(target_os = "macos"))]
 fn native_dialog(_title: &str, _msg: &str) {}
 
+fn lang_path() -> PathBuf {
+    PathBuf::from(format!("{}/.rami/lang", rami_wallet::home_dir()))
+}
+
+/// Idioma para los diálogos nativos: el elegido en el panel (~/.rami/lang),
+/// si no el del sistema (RAMI_LANG, LANG/LC_ALL, AppleLocale en macOS), si no
+/// español. Solo los cinco del panel: es, en, zh, ru, sw.
+#[allow(dead_code)]
+fn ui_lang() -> &'static str {
+    fn pick(code: &str) -> Option<&'static str> {
+        let c = code.trim().to_ascii_lowercase();
+        for l in ["es", "en", "zh", "ru", "sw"] {
+            if c.starts_with(l) {
+                return Some(l);
+            }
+        }
+        None
+    }
+    if let Ok(saved) = std::fs::read_to_string(lang_path()) {
+        if let Some(l) = pick(&saved) {
+            return l;
+        }
+    }
+    for var in ["RAMI_LANG", "LC_ALL", "LC_MESSAGES", "LANG"] {
+        if let Ok(v) = std::env::var(var) {
+            if let Some(l) = pick(&v) {
+                return l;
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = Command::new("defaults").args(["read", "-g", "AppleLocale"]).output() {
+            if let Some(l) = pick(&String::from_utf8_lossy(&out.stdout)) {
+                return l;
+            }
+        }
+    }
+    "es"
+}
+
+/// Textos de los diálogos nativos en los cinco idiomas del panel.
+#[allow(dead_code)]
+fn native_text(key: &str) -> &'static str {
+    let l = ui_lang();
+    match (key, l) {
+        ("install.q", "en") => "For RAMI-Chain to update itself, it must be in the Applications folder.\n\nInstall it now? (a previous version is replaced; your wallet and chain are untouched)",
+        ("install.q", "zh") => "为了让 RAMI-Chain 能自动更新，它必须位于“应用程序”文件夹中。\n\n现在安装吗？（旧版本会被替换；你的钱包和链不受影响）",
+        ("install.q", "ru") => "Чтобы RAMI-Chain обновлялся сам, он должен находиться в папке «Программы».\n\nУстановить сейчас? (предыдущая версия заменяется; кошелёк и цепочка не затрагиваются)",
+        ("install.q", "sw") => "Ili RAMI-Chain ijisasishe yenyewe, lazima iwe kwenye folda ya Applications.\n\nIsakinishe sasa? (toleo la awali hubadilishwa; pochi yako na mnyororo hazitaguswa)",
+        ("install.q", _) => "Para que RAMI-Chain se actualice sola, debe estar en la carpeta Aplicaciones.\n\n¿Instalarla ahora? (si hay una versión anterior, se sustituye; tu monedero y tu cadena no se tocan)",
+        ("btn.later", "en") => "Not now",
+        ("btn.later", "zh") => "暂不",
+        ("btn.later", "ru") => "Не сейчас",
+        ("btn.later", "sw") => "Si sasa",
+        ("btn.later", _) => "Ahora no",
+        ("btn.install", "en") => "Install",
+        ("btn.install", "zh") => "安装",
+        ("btn.install", "ru") => "Установить",
+        ("btn.install", "sw") => "Sakinisha",
+        ("btn.install", _) => "Instalar",
+        ("installed.noreopen", "en") => "Installed in {dest}, but it could not be reopened automatically ({e}). Open it from Applications.",
+        ("installed.noreopen", "zh") => "已安装到 {dest}，但无法自动重新打开（{e}）。请从“应用程序”中打开它。",
+        ("installed.noreopen", "ru") => "Установлено в {dest}, но не удалось открыть заново ({e}). Откройте из папки «Программы».",
+        ("installed.noreopen", "sw") => "Imesakinishwa kwenye {dest}, lakini haikuweza kufunguka yenyewe ({e}). Ifungue kutoka Applications.",
+        ("installed.noreopen", _) => "Instalada en {dest}, pero no pude reabrirla sola ({e}). Ábrela desde Aplicaciones.",
+        ("install.failed", "en") => "Could not install into Applications ({e}). Drag RAMI-Chain to Applications by hand. It will keep opening from here.",
+        ("install.failed", "zh") => "无法安装到“应用程序”（{e}）。请手动把 RAMI-Chain 拖到“应用程序”。它将继续从这里打开。",
+        ("install.failed", "ru") => "Не удалось установить в «Программы» ({e}). Перетащите RAMI-Chain в «Программы» вручную. Приложение продолжит открываться отсюда.",
+        ("install.failed", "sw") => "Haikuweza kusakinishwa kwenye Applications ({e}). Buruta RAMI-Chain kwenye Applications mwenyewe. Itaendelea kufunguka kutoka hapa.",
+        ("install.failed", _) => "No pude instalarla en Aplicaciones ({e}). Arrastra RAMI-Chain a Aplicaciones a mano. Seguiré abriéndose desde aquí.",
+        _ => "",
+    }
+}
+
 /// Pregunta NATIVA de macOS con dos botones; devuelve true si el usuario
 /// pulsa `yes`. Si osascript falla, devuelve false (no se hace nada).
 #[cfg(target_os = "macos")]
@@ -839,13 +933,7 @@ fn main() -> ExitCode {
         let info = rami_node::update::install_info();
         if info.can_install && !has(&args, "--no-install") && !std::io::stdin().is_terminal() {
             dlog(&format!("la app corre desde «{}» ({}); ofrezco instalarla", info.bundle, info.location));
-            let yes = native_ask(
-                "RAMI-Chain",
-                "Para que RAMI-Chain se actualice sola, debe estar en la carpeta Aplicaciones.\n\n\
-                 ¿Instalarla ahora? (si hay una versión anterior, se sustituye; tu monedero y tu cadena no se tocan)",
-                "Ahora no",
-                "Instalar",
-            );
+            let yes = native_ask("RAMI-Chain", native_text("install.q"), native_text("btn.later"), native_text("btn.install"));
             if yes {
                 // Cierra la versión anterior si está abierta (puerto del panel).
                 for p in dash_port..dash_port.saturating_add(10) {
@@ -863,17 +951,14 @@ fn main() -> ExitCode {
                             Ok(()) => return ExitCode::SUCCESS,
                             Err(e) => native_dialog(
                                 "RAMI-Chain",
-                                &format!("Instalada en {}, pero no pude reabrirla sola ({e}). Ábrela desde Aplicaciones.", dest.display()),
+                                &native_text("installed.noreopen").replace("{dest}", &dest.display().to_string()).replace("{e}", &e),
                             ),
                         }
                         return ExitCode::SUCCESS;
                     }
                     Err(e) => {
                         dlog(&format!("instalación fallida: {e}"));
-                        native_dialog(
-                            "RAMI-Chain",
-                            &format!("No pude instalarla en Aplicaciones ({e}). Arrastra RAMI-Chain a Aplicaciones a mano. Seguiré abriéndose desde aquí."),
-                        );
+                        native_dialog("RAMI-Chain", &native_text("install.failed").replace("{e}", &e));
                     }
                 }
             } else {

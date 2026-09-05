@@ -80,6 +80,9 @@
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
   .topbar .spacer{flex:1}
   .topbar .ver{color:var(--muted);font-size:12px;font-family:var(--mono)}
+  .langsel{background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:8px;
+    padding:4px 6px;font-size:12px;cursor:pointer}
+  .langsel option{background:#0f1520;color:#e6e8ef}
 
   /* ---------- Layout ---------- */
   .shell{display:flex;max-width:1400px;margin:0 auto;min-height:calc(100vh - 120px)}
@@ -293,6 +296,13 @@
     <span id="syncTxt">conectando…</span>
   </div>
   <div class="spacer"></div>
+  <select class="langsel" id="langSel" title="Idioma / Language" aria-label="Idioma">
+    <option value="es">🇪🇸 Español</option>
+    <option value="en">🇬🇧 English</option>
+    <option value="zh">🇨🇳 中文</option>
+    <option value="ru">🇷🇺 Русский</option>
+    <option value="sw">🇰🇪 Kiswahili</option>
+  </select>
   <button class="lockbtn hidden" id="lockBtn">🔒 Bloquear</button>
   <button class="lockbtn" id="quitBtn" title="Cerrar el monedero y el nodo">⏻ Salir</button>
   <span class="ver" id="verLink" style="cursor:pointer" title="Buscar actualizaciones">v<span id="verTxt">—</span> ⬆️</span>
@@ -759,12 +769,66 @@
   </div>
 </div>
 
+<script src="/i18n.js"></script>
 <script>
 "use strict";
 (function(){
   // ---------- estado ----------
   var state = { status:null, connected:false };
   var currentView = "resumen";
+
+  // ---------- idioma (i18n) ----------
+  // Las claves son el texto ORIGINAL en español (como gettext). El diccionario
+  // de cada idioma llega en /i18n.js (window.RAMI_I18N). El panel se traduce
+  // recorriendo los nodos de texto; lo que genera el JS pasa por t().
+  var I18N = window.RAMI_I18N || {};
+  var LANG = "es";
+  var _origText = (typeof WeakMap === "function") ? new WeakMap() : null;
+  function normKey(x){ return String(x).replace(/\s+/g, " ").trim(); }
+  function t(k){ var d = (LANG !== "es") && I18N[LANG]; return (d && d[k]) || k; }
+  function detectLang(){
+    var saved = null; try{ saved = localStorage.getItem("rami.lang"); }catch(e){}
+    if(saved && (saved === "es" || I18N[saved])) return saved;
+    var nav = String(navigator.language || "es").toLowerCase().slice(0,2);
+    return (nav === "es" || I18N[nav]) ? nav : "es";
+  }
+  function applyLang(lang, persist){
+    LANG = (lang === "es" || I18N[lang]) ? lang : "es";
+    if(persist){ try{ localStorage.setItem("rami.lang", LANG); }catch(e){} jpost("/api/lang", {lang: LANG}).catch(function(){}); }
+    document.documentElement.lang = LANG;
+    var dict = (LANG !== "es") ? (I18N[LANG] || {}) : null;
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+    var n, nodes = []; while((n = walker.nextNode())) nodes.push(n);
+    nodes.forEach(function(node){
+      var p = node.parentElement; if(!p) return;
+      var tag = p.tagName; if(tag === "SCRIPT" || tag === "STYLE") return;
+      var orig;
+      if(_origText){ if(!_origText.has(node)) _origText.set(node, node.nodeValue); orig = _origText.get(node); }
+      else orig = node.nodeValue;
+      var k = normKey(orig); if(!k) return;
+      var tr = dict ? dict[k] : null;
+      if(tr){ var m = orig.match(/^(\s*)[\s\S]*?(\s*)$/); node.nodeValue = m[1] + tr + m[2]; }
+      else if(node.nodeValue !== orig) node.nodeValue = orig;
+    });
+    [["placeholder","@ph:"],["title","@title:"]].forEach(function(pair){
+      var attr = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll("["+attr+"]"), function(el){
+        var mem = "data-orig-"+attr;
+        if(!el.hasAttribute(mem)) el.setAttribute(mem, el.getAttribute(attr));
+        var orig = el.getAttribute(mem), tr = dict ? dict[pre + normKey(orig)] : null;
+        el.setAttribute(attr, tr || orig);
+      });
+    });
+    var sel = document.getElementById("langSel"); if(sel && sel.value !== LANG) sel.value = LANG;
+    // Lo generado por JS se vuelve a pintar con el idioma nuevo.
+    try{
+      setConnection(state.connected);
+      if(state.status) renderStatus(state.status);
+      if(typeof renderCityPanel === "function" && city && city.data) renderCityPanel();
+      if(lastUpdate) renderUpdate(lastUpdate);
+    }catch(e){}
+  }
+  var lastUpdate = null;
 
   // ---------- helpers red ----------
   function jget(url){
@@ -819,7 +883,7 @@
     function done(){
       if(!btn) return;
       var old = btn.textContent;
-      btn.textContent = "¡Copiado!";
+      btn.textContent = t("¡Copiado!");
       setTimeout(function(){ btn.textContent = old; }, 1400);
     }
     if(navigator.clipboard && navigator.clipboard.writeText){
@@ -883,16 +947,16 @@
     var txt = document.getElementById("syncTxt");
     if(!ok){
       dot.className = "dot off";
-      txt.textContent = "sin conexión con el nodo";
+      txt.textContent = t("sin conexión con el nodo");
       return;
     }
     var s = state.status;
     if(s && s.synced){
       dot.className = "dot sync";
-      txt.textContent = "sincronizado";
+      txt.textContent = t("sincronizado");
     } else {
       dot.className = "dot syncing";
-      txt.textContent = "sincronizando";
+      txt.textContent = t("sincronizando");
     }
   }
 
@@ -914,13 +978,13 @@
     // El nodo aún está cargando la cadena (el panel abre al instante).
     if(s.starting){
       document.getElementById("syncDot").className = "dot syncing";
-      document.getElementById("syncTxt").textContent = "cargando la cadena…";
+      document.getElementById("syncTxt").textContent = t("cargando la cadena…");
       if(s.wallet) renderWallet(s.wallet);
       return;
     }
     if(s.failed){
       document.getElementById("syncDot").className = "dot off";
-      document.getElementById("syncTxt").textContent = "el nodo no pudo arrancar: " + s.failed;
+      document.getElementById("syncTxt").textContent = t("el nodo no pudo arrancar: ") + s.failed;
       return;
     }
     state.status = s;
@@ -951,13 +1015,13 @@
 
     // Minar
     var mining = !!s.mining;
-    document.getElementById("mineState").textContent = mining ? "Activa" : "Detenida";
+    document.getElementById("mineState").textContent = mining ? t("Activa") : "Detenida";
     document.getElementById("mineState").style.color = mining ? "var(--green)" : "var(--muted)";
     document.getElementById("mineRate").textContent  = fmtHashrate(s.hashrate);
     document.getElementById("mineFound").textContent = fmtNum(s.found);
     document.getElementById("mineDiff").textContent  = fmtNum(s.difficulty);
     var tgl = document.getElementById("mineToggle");
-    tgl.textContent = mining ? "Detener minería" : "Empezar a minar";
+    tgl.textContent = mining ? t("Detener minería") : "Empezar a minar";
     tgl.className = "btn " + (mining ? "danger" : "green");
     document.getElementById("mineLive").classList.toggle("hidden", !mining);
 
@@ -1004,8 +1068,8 @@
     }
     body.innerHTML = peers.map(function(p){
       var badge = p.inbound
-        ? '<span class="badge in">entrante</span>'
-        : '<span class="badge out">saliente</span>';
+        ? '<span class="badge in">'+t("entrante")+'</span>'
+        : '<span class="badge out">'+t("saliente")+'</span>';
       return "<tr><td>"+esc(p.addr)+"</td><td>"+badge+"</td><td class='num'>"+fmtNum(p.height)+"</td></tr>";
     }).join("");
   }
@@ -1013,7 +1077,7 @@
   function renderBlocks(list){
     var body = document.getElementById("blocksBody");
     if(!list || !list.length){
-      body.innerHTML = '<tr><td colspan="5" class="muted">Sin bloques.</td></tr>';
+      body.innerHTML = '<tr><td colspan="5" class="muted">Sin'+t(" bloques")+'.</td></tr>';
       return;
     }
     // ordenar por altura descendente (más reciente arriba)
@@ -1040,7 +1104,7 @@
   function renderExpBlocks(list){
     var body = document.getElementById("expBlocksBody");
     if(!list || !list.length){
-      body.innerHTML = '<tr><td colspan="5" class="muted">Sin bloques.</td></tr>';
+      body.innerHTML = '<tr><td colspan="5" class="muted">Sin'+t(" bloques")+'.</td></tr>';
       return;
     }
     // ordenar por altura descendente (más reciente arriba)
@@ -1062,7 +1126,7 @@
       .then(function(d){ renderExpBlocks(d.blocks||[]); })
       .catch(function(){
         document.getElementById("expBlocksBody").innerHTML =
-          '<tr><td colspan="5" class="muted">Sin conexión con el nodo.</td></tr>';
+          '<tr><td colspan="5" class="muted">'+t("Sin conexión con el nodo.")+'</td></tr>';
       });
   }
 
@@ -1095,7 +1159,7 @@
   function renderBlockDetail(b){
     document.getElementById("expStatus").className = "status";
     document.getElementById("expDetailCard").classList.remove("hidden");
-    document.getElementById("expDetailTitle").textContent = "Bloque #"+fmtNum(b.height);
+    document.getElementById("expDetailTitle").textContent = t("Bloque #")+fmtNum(b.height);
     copyStore.expHashFull   = b.hash || "";
     copyStore.expPrevFull   = b.prev_hash || "";
     copyStore.expMerkleFull = b.merkle_root || "";
@@ -1119,13 +1183,13 @@
     Array.prototype.forEach.call(document.querySelectorAll("#expBlocksBody tr[data-height]"), function(tr){
       tr.classList.toggle("sel", Number(tr.getAttribute("data-height"))===expSelected);
     });
-    showStatus(document.getElementById("expStatus"), true, '<span class="k">Cargando bloque…</span>');
+    showStatus(document.getElementById("expStatus"), true, '<span class="k">'+t("Cargando bloque…")+'</span>');
     jget("/api/block?height="+encodeURIComponent(expSelected))
       .then(function(r){
         if(r && r.ok && r.block) renderBlockDetail(r.block);
-        else expError("Error: "+((r && r.error) ? r.error : "bloque no encontrado"));
+        else expError(t("Error: ")+((r && r.error) ? r.error : t("bloque no encontrado")));
       })
-      .catch(function(){ expError("Sin conexión con el nodo."); });
+      .catch(function(){ expError(t("Sin conexión con el nodo.")); });
   }
 
   document.getElementById("expBlocksBody").addEventListener("click", function(e){
@@ -1137,7 +1201,7 @@
   document.getElementById("expGoBtn").addEventListener("click", function(){
     var v = document.getElementById("expGoHeight").value.trim();
     if(v==="" || !isFinite(Number(v)) || Number(v)<0){
-      expError("Indica una altura válida.");
+      expError(t("Indica una altura válida."));
       return;
     }
     loadBlock(v);
@@ -1165,16 +1229,16 @@
     var amount = document.getElementById("sendAmount").value.trim();
     var fee = document.getElementById("sendFee").value.trim();
     var st = document.getElementById("sendStatus");
-    if(!to){ showStatus(st, false, "Indica la dirección de destino."); return; }
-    if(!amount){ showStatus(st, false, "Indica el importe."); return; }
+    if(!to){ showStatus(st, false, t("Indica la dirección de destino.")); return; }
+    if(!amount){ showStatus(st, false, t("Indica el importe.")); return; }
     var btn = this; btn.disabled = true;
-    showStatus(st, true, '<span class="k">Enviando…</span>');
+    showStatus(st, true, '<span class="k">'+t("Enviando…")+'</span>');
     jpost("/api/send", {to:to, amount:amount, fee:Number(fee)||0})
       .then(function(r){
-        if(r.ok) showStatus(st, true, "Enviado. "+txidLine(r.txid));
-        else showStatus(st, false, "Error: "+esc(r.error||"desconocido"));
+        if(r.ok) showStatus(st, true, t("Enviado. ")+txidLine(r.txid));
+        else showStatus(st, false, t("Error: ")+esc(r.error||t("desconocido")));
       })
-      .catch(function(){ showStatus(st, false, "Sin conexión con el nodo."); })
+      .catch(function(){ showStatus(st, false, t("Sin conexión con el nodo.")); })
       .then(function(){ btn.disabled = false; });
   });
 
@@ -1186,13 +1250,13 @@
     jpost("/api/mine", {on:on})
       .then(function(r){
         if(r.ok){
-          showStatus(st, true, on ? "Minería iniciada." : "Minería detenida.");
+          showStatus(st, true, on ? t("Minería iniciada.") : t("Minería detenida."));
           pollStatus();
         } else {
-          showStatus(st, false, "Error: "+esc(r.error||"desconocido"));
+          showStatus(st, false, t("Error: ")+esc(r.error||t("desconocido")));
         }
       })
-      .catch(function(){ showStatus(st, false, "Sin conexión con el nodo."); })
+      .catch(function(){ showStatus(st, false, t("Sin conexión con el nodo.")); })
       .then(function(){ btn.disabled = false; });
   });
 
@@ -1201,29 +1265,29 @@
     var payload = document.getElementById("commitPayload").value.trim();
     var fee = document.getElementById("commitFee").value.trim();
     var st = document.getElementById("commitStatus");
-    if(!payload){ showStatus(st, false, "Escribe el payload JSON de tu predicción."); return; }
+    if(!payload){ showStatus(st, false, t("Escribe el payload JSON de tu predicción.")); return; }
     // validación ligera de JSON
     try{ JSON.parse(payload); }
-    catch(e){ showStatus(st, false, "El payload no es JSON válido."); return; }
+    catch(e){ showStatus(st, false, t("El payload no es JSON válido.")); return; }
     var btn = this; btn.disabled = true;
-    showStatus(st, true, '<span class="k">Comprometiendo…</span>');
+    showStatus(st, true, '<span class="k">'+t("Comprometiendo…")+'</span>');
     jpost("/api/commit", {payload:payload, fee:Number(fee)||0})
       .then(function(r){
         if(r.ok){
           var ctx = r.commit_txid || r.txid;
           showStatus(st, true,
-            "Compromiso registrado.<br>"+txidLine(r.txid)+
+            t("Compromiso registrado.")+"<br>"+txidLine(r.txid)+
             '<br><span class="k">commit_txid:</span> <span class="txid">'+esc(ctx)+'</span>'+
-            '<div style="margin-top:10px"><button class="btn green small" id="useCommitBtn">Usar en «Revelar» →</button></div>');
+            '<div style="margin-top:10px"><button class="btn green small" id="useCommitBtn">'+t("Usar en «Revelar» →")+'</button></div>');
           var useBtn = document.getElementById("useCommitBtn");
           if(useBtn) useBtn.addEventListener("click", function(){
             document.getElementById("revealCommit").value = ctx;
           });
         } else {
-          showStatus(st, false, "Error: "+esc(r.error||"desconocido"));
+          showStatus(st, false, t("Error: ")+esc(r.error||t("desconocido")));
         }
       })
-      .catch(function(){ showStatus(st, false, "Sin conexión con el nodo."); })
+      .catch(function(){ showStatus(st, false, t("Sin conexión con el nodo.")); })
       .then(function(){ btn.disabled = false; });
   });
 
@@ -1232,15 +1296,15 @@
     var commit = document.getElementById("revealCommit").value.trim();
     var fee = document.getElementById("revealFee").value.trim();
     var st = document.getElementById("revealStatus");
-    if(!commit){ showStatus(st, false, "Indica el txid del commit."); return; }
+    if(!commit){ showStatus(st, false, t("Indica el txid del commit.")); return; }
     var btn = this; btn.disabled = true;
-    showStatus(st, true, '<span class="k">Revelando…</span>');
+    showStatus(st, true, '<span class="k">'+t("Revelando…")+'</span>');
     jpost("/api/reveal", {commit:commit, fee:Number(fee)||0})
       .then(function(r){
-        if(r.ok) showStatus(st, true, "Revelado. "+txidLine(r.txid));
-        else showStatus(st, false, "Error: "+esc(r.error||"desconocido"));
+        if(r.ok) showStatus(st, true, t("Revelado. ")+txidLine(r.txid));
+        else showStatus(st, false, t("Error: ")+esc(r.error||t("desconocido")));
       })
-      .catch(function(){ showStatus(st, false, "Sin conexión con el nodo."); })
+      .catch(function(){ showStatus(st, false, t("Sin conexión con el nodo.")); })
       .then(function(){ btn.disabled = false; });
   });
 
@@ -1248,14 +1312,14 @@
   document.getElementById("peerBtn").addEventListener("click", function(){
     var addr = document.getElementById("peerAddr").value.trim();
     var st = document.getElementById("peerStatus");
-    if(!addr){ showStatus(st, false, "Indica host:puerto."); return; }
+    if(!addr){ showStatus(st, false, t("Indica host:puerto.")); return; }
     var btn = this; btn.disabled = true;
     jpost("/api/peer", {addr:addr})
       .then(function(r){
-        if(r.ok){ showStatus(st, true, "Conexión solicitada a "+esc(addr)+"."); document.getElementById("peerAddr").value=""; pollStatus(); }
-        else showStatus(st, false, "Error: "+esc(r.error||"desconocido"));
+        if(r.ok){ showStatus(st, true, t("Conexión solicitada a ")+esc(addr)+"."); document.getElementById("peerAddr").value=""; pollStatus(); }
+        else showStatus(st, false, t("Error: ")+esc(r.error||t("desconocido")));
       })
-      .catch(function(){ showStatus(st, false, "Sin conexión con el nodo."); })
+      .catch(function(){ showStatus(st, false, t("Sin conexión con el nodo.")); })
       .then(function(){ btn.disabled = false; });
   });
 
@@ -1264,15 +1328,15 @@
     var amount = document.getElementById(amtId).value.trim();
     var fee = document.getElementById(feeId).value.trim();
     var st = document.getElementById(stId);
-    if(!amount){ showStatus(st, false, "Indica el importe."); return; }
+    if(!amount){ showStatus(st, false, t("Indica el importe.")); return; }
     btnEl.disabled = true;
-    showStatus(st, true, '<span class="k">Enviando…</span>');
+    showStatus(st, true, '<span class="k">'+t("Enviando…")+'</span>');
     jpost(path, {amount:amount, fee:Number(fee)||0})
       .then(function(r){
-        if(r.ok) showStatus(st, true, "Hecho. "+txidLine(r.txid));
-        else showStatus(st, false, "Error: "+esc(r.error||"desconocido"));
+        if(r.ok) showStatus(st, true, t("Hecho. ")+txidLine(r.txid));
+        else showStatus(st, false, t("Error: ")+esc(r.error||t("desconocido")));
       })
-      .catch(function(){ showStatus(st, false, "Sin conexión con el nodo."); })
+      .catch(function(){ showStatus(st, false, t("Sin conexión con el nodo.")); })
       .then(function(){ btnEl.disabled = false; pollStatus(); });
   }
   document.getElementById("stakeBtn").addEventListener("click", function(){
@@ -1287,15 +1351,15 @@
     var p1 = document.getElementById("ovPw1").value;
     var p2 = document.getElementById("ovPw2").value;
     var er = document.getElementById("ovSetupErr");
-    if(p1.length < 8){ er.textContent = "La contraseña debe tener al menos 8 caracteres."; return; }
-    if(p1 !== p2){ er.textContent = "Las contraseñas no coinciden."; return; }
+    if(p1.length < 8){ er.textContent = t("La contraseña debe tener al menos 8 caracteres."); return; }
+    if(p1 !== p2){ er.textContent = t("Las contraseñas no coinciden."); return; }
     er.textContent = ""; var btn = this; btn.disabled = true;
     jpost("/api/setup", {password:p1})
       .then(function(r){
         if(r.ok){ document.getElementById("ovPw1").value=""; document.getElementById("ovPw2").value=""; hideOverlay(); pollStatus(); }
-        else er.textContent = r.error || "no se pudo crear el monedero";
+        else er.textContent = r.error || t("no se pudo crear el monedero");
       })
-      .catch(function(){ er.textContent = "Sin conexión con el nodo."; })
+      .catch(function(){ er.textContent = t("Sin conexión con el nodo."); })
       .then(function(){ btn.disabled = false; });
   });
 
@@ -1307,9 +1371,9 @@
     jpost("/api/unlock", {password:p})
       .then(function(r){
         if(r.ok){ document.getElementById("ovPwU").value=""; hideOverlay(); pollStatus(); }
-        else er.textContent = r.error || "contraseña incorrecta";
+        else er.textContent = r.error || t("contraseña incorrecta");
       })
-      .catch(function(){ er.textContent = "Sin conexión con el nodo."; })
+      .catch(function(){ er.textContent = t("Sin conexión con el nodo."); })
       .then(function(){ btn.disabled = false; });
   });
   document.getElementById("ovPwU").addEventListener("keydown", function(e){
@@ -1328,23 +1392,23 @@
   // tiene ventana propia, así que cerrar solo la pestaña la dejaba corriendo
   // invisible y el siguiente clic en el icono parecía «no responder».
   document.getElementById("quitBtn").addEventListener("click", function(){
-    if(!confirm("¿Cerrar el monedero? El nodo y la minería se detendrán.")) return;
+    if(!confirm(t("¿Cerrar el monedero? El nodo y la minería se detendrán."))) return;
     jpost("/api/quit", {}).catch(function(){});
     document.body.innerHTML = '<div style="display:flex;min-height:90vh;align-items:center;'+
       'justify-content:center;font-family:inherit;color:inherit"><div style="text-align:center">'+
-      '<h2>Monedero cerrado ✅</h2><p>Puedes cerrar esta pestaña. Para volver, abre de nuevo la aplicación.</p>'+
+      '<h2>'+t("Monedero cerrado ✅")+'</h2><p>'+t("Puedes cerrar esta pestaña. Para volver, abre de nuevo la aplicación.")+'</p>'+
       '</div></div>';
     setTimeout(function(){ try{ window.close(); }catch(e){} }, 800);
   });
 
   // Cifrar un monedero en texto plano (estado "plain")
   document.getElementById("encryptBtn").addEventListener("click", function(){
-    var p = prompt("Contraseña para cifrar tu monedero (mínimo 8 caracteres):");
+    var p = prompt(t("Contraseña para cifrar tu monedero (mínimo 8 caracteres):"));
     if(p == null) return;
-    if(p.length < 8){ alert("La contraseña debe tener al menos 8 caracteres."); return; }
+    if(p.length < 8){ alert(t("La contraseña debe tener al menos 8 caracteres.")); return; }
     jpost("/api/encrypt", {password:p})
-      .then(function(r){ if(r.ok) pollStatus(); else alert(r.error || "no se pudo cifrar"); })
-      .catch(function(){ alert("Sin conexión con el nodo."); });
+      .then(function(r){ if(r.ok) pollStatus(); else alert(r.error || t("no se pudo cifrar")); })
+      .catch(function(){ alert(t("Sin conexión con el nodo.")); });
   });
 
   // ---------- Ciudad RAMI (metaverso, fase 0) ----------
@@ -1352,18 +1416,18 @@
   var KIND_NAMES = ["Empresa","Granja","Tienda","Oficina"];
   var KIND_COLORS = ["#4f8cff","#4ccf6e","#f2b84b","#c77dff"];
   var ASSET_NAMES = ["🌿 Planta","📦 Objeto"];
-  var TERMS = [["3 meses (129 600 bloques)",129600],["1 mes (43 200)",43200],["1 semana (10 080)",10080],["1 día (1 440)",1440],["100 bloques (prueba)",100]];
+  var TERMS = [["3 meses (129 600"+t(" bloques")+")",129600],["1 mes (43 200)",43200],["1 semana (10 080)",10080],["1 día (1 440)",1440],["100"+t(" bloques")+" (prueba)",100]];
   function ramFmt(n){ n = Number(n)||0; return (n/1e8).toLocaleString("es-ES",{maximumFractionDigits:8}); }
   function shortAddr(h){ return h ? h.slice(0,8)+"…"+h.slice(-6) : "—"; }
   function loadCity(){
     jget("/api/city").then(function(d){
-      if(!d || !d.ok){ document.getElementById("cityStatus").textContent = (d && d.error) || "sin datos"; return; }
+      if(!d || !d.ok){ document.getElementById("cityStatus").textContent = (d && d.error) || t("sin datos"); return; }
       city.data = d;
       document.getElementById("cityParcelPrice").textContent = ramFmt(d.parcel_price);
       document.getElementById("cityMintPrice").textContent = ramFmt(d.mint_price);
       document.getElementById("cityStats").textContent = d.parcels.length+" parcelas ocupadas · "+d.assets.length+" activos · altura "+fmtNum(d.height);
       drawCity(); renderCityPanel();
-    }).catch(function(){ document.getElementById("cityStatus").textContent = "sin conexión con el nodo"; });
+    }).catch(function(){ document.getElementById("cityStatus").textContent = t("sin conexión con el nodo"); });
   }
   function parcelAt(x,y){ var d=city.data; if(!d) return null; for(var i=0;i<d.parcels.length;i++){ if(d.parcels[i].x===x && d.parcels[i].y===y) return d.parcels[i]; } return null; }
   function assetsAt(x,y){ var d=city.data; if(!d) return []; return d.assets.filter(function(a){ return a.x===x && a.y===y; }); }
@@ -1406,53 +1470,53 @@
   function cityForm(html){ return '<div class="card" style="margin-top:10px;padding:12px">'+html+'</div>'; }
   function renderCityPanel(){
     var info = document.getElementById("cityInfo"), acts = document.getElementById("cityActions"), d = city.data;
-    if(!d || !city.sel){ info.textContent = "Haz clic en una parcela de la ciudad."; acts.innerHTML=""; return; }
+    if(!d || !city.sel){ info.textContent = t("Haz clic en una parcela de la ciudad."); acts.innerHTML=""; return; }
     var x=city.sel.x, y=city.sel.y, p=parcelAt(x,y), me=d.me, mine = !!(p && me && p.owner===me), h="";
     var assets = assetsAt(x,y);
     if(!p){
-      info.innerHTML = "<b>Parcela ("+x+","+y+")</b> · <span style='color:var(--muted)'>libre</span>";
-      h += cityForm('<strong>Montar mi empresa aquí</strong>'+
-        '<label class="field" style="margin-top:10px"><span class="cap">Nombre (máx. 32 bytes)</span><input id="cyName" placeholder="Mi empresa S.L."></label>'+
-        '<label class="field"><span class="cap">Tipo</span><select id="cyKind">'+KIND_NAMES.map(function(k,i){return '<option value="'+i+'">'+k+'</option>';}).join("")+'</select></label>'+
-        '<button class="btn" id="cyClaim">Reclamar por '+ramFmt(d.parcel_price)+' RAMI</button>'+
-        '<p class="note">El precio se quema (no lo cobra nadie). Necesitas el monedero desbloqueado.</p>');
+      info.innerHTML = "<b>"+t("Parcela")+" ("+x+","+y+")</b> · <span style='color:var(--muted)'>"+t("libre")+"</span>";
+      h += cityForm('<strong>'+t("Montar mi empresa aquí")+'</strong>'+
+        '<label class="field" style="margin-top:10px"><span class="cap">'+t("Nombre (máx. 32 bytes)")+'</span><input id="cyName" placeholder="'+t("Mi empresa S.L.")+'"></label>'+
+        '<label class="field"><span class="cap">Tipo</span><select id="cyKind">'+KIND_NAMES.map(function(k,i){return '<option value="'+i+'">'+t(k)+'</option>';}).join("")+'</select></label>'+
+        '<button class="btn" id="cyClaim">'+t("Reclamar por ")+ramFmt(d.parcel_price)+' RAMI</button>'+
+        '<p class="note">'+t("El precio se quema (no lo cobra nadie). Necesitas el monedero desbloqueado.")+'</p>');
     } else {
-      info.innerHTML = "<b>"+esc(p.name)+"</b> · "+KIND_NAMES[p.kind]+" · parcela ("+x+","+y+")<br>"+
-        "<span style='color:var(--muted)'>dueño "+(mine?"<b style='color:var(--accent)'>tú</b>":esc(shortAddr(p.owner)))+
-        " · desde bloque "+fmtNum(p.since)+" · "+p.assets+" activo(s) · "+p.harvests+" cosecha(s)"+
-        (p.last_harvest? " · última: "+ramFmt(p.last_harvest[1])+" RAMI en bloque "+fmtNum(p.last_harvest[0]) : "")+"</span>";
+      info.innerHTML = "<b>"+esc(p.name)+"</b> · "+t(KIND_NAMES[p.kind])+" · "+t("parcela")+" ("+x+","+y+")<br>"+
+        "<span style='color:var(--muted)'>"+t("dueño ")+(mine?"<b style='color:var(--accent)'>"+t("tú")+"</b>":esc(shortAddr(p.owner)))+
+        t(" · desde bloque ")+fmtNum(p.since)+" · "+p.assets+t(" activo(s) · ")+p.harvests+t(" cosecha(s)")+
+        (p.last_harvest? t(" · última: ")+ramFmt(p.last_harvest[1])+t(" RAMI en bloque ")+fmtNum(p.last_harvest[0]) : "")+"</span>";
       if(mine){
-        h += cityForm('<strong>Acuñar activo</strong>'+
-          '<label class="field" style="margin-top:10px"><span class="cap">Tipo</span><select id="cyAKind">'+ASSET_NAMES.map(function(k,i){return '<option value="'+i+'">'+k+'</option>';}).join("")+'</select></label>'+
-          '<label class="field"><span class="cap">Descripción (máx. 64 bytes)</span><input id="cyMeta" placeholder="Planta #1 · lote primavera"></label>'+
-          '<button class="btn" id="cyMint">Acuñar por '+ramFmt(d.mint_price)+' RAMI</button>');
-        h += cityForm('<strong>Repartir cosecha</strong>'+
-          '<label class="field" style="margin-top:10px"><span class="cap">Total a repartir (RAMI, de tu saldo)</span><input id="cyTotal" placeholder="9" inputmode="decimal"></label>'+
-          '<button class="btn ghost" id="cyHarvest">Repartir entre los arrendatarios activos</button>'+
-          '<p class="note">A partes iguales entre quienes tengan una planta de esta parcela alquilada ahora mismo.</p>');
-        h += cityForm('<strong>Renombrar / cambiar tipo</strong>'+
-          '<label class="field" style="margin-top:10px"><span class="cap">Nombre</span><input id="cyName" value="'+esc(p.name)+'"></label>'+
-          '<label class="field"><span class="cap">Tipo</span><select id="cyKind">'+KIND_NAMES.map(function(k,i){return '<option value="'+i+'"'+(i===p.kind?" selected":"")+'>'+k+'</option>';}).join("")+'</select></label>'+
-          '<button class="btn ghost" id="cyClaim">Guardar (solo comisión)</button>');
+        h += cityForm('<strong>'+t("Acuñar activo")+'</strong>'+
+          '<label class="field" style="margin-top:10px"><span class="cap">Tipo</span><select id="cyAKind">'+ASSET_NAMES.map(function(k,i){return '<option value="'+i+'">'+t(k)+'</option>';}).join("")+'</select></label>'+
+          '<label class="field"><span class="cap">'+t("Descripción (máx. 64 bytes)")+'</span><input id="cyMeta" placeholder="'+t("Planta #1 · lote primavera")+'"></label>'+
+          '<button class="btn" id="cyMint">'+t("Acuñar por ")+ramFmt(d.mint_price)+' RAMI</button>');
+        h += cityForm('<strong>'+t("Repartir cosecha")+'</strong>'+
+          '<label class="field" style="margin-top:10px"><span class="cap">'+t("Total a repartir (RAMI, de tu saldo)")+'</span><input id="cyTotal" placeholder="9" inputmode="decimal"></label>'+
+          '<button class="btn ghost" id="cyHarvest">'+t("Repartir entre los arrendatarios activos")+'</button>'+
+          '<p class="note">'+t("A partes iguales entre quienes tengan una planta de esta parcela alquilada ahora mismo.")+'</p>');
+        h += cityForm('<strong>'+t("Renombrar / cambiar tipo")+'</strong>'+
+          '<label class="field" style="margin-top:10px"><span class="cap">'+t("Nombre")+'</span><input id="cyName" value="'+esc(p.name)+'"></label>'+
+          '<label class="field"><span class="cap">Tipo</span><select id="cyKind">'+KIND_NAMES.map(function(k,i){return '<option value="'+i+'"'+(i===p.kind?" selected":"")+'>'+t(k)+'</option>';}).join("")+'</select></label>'+
+          '<button class="btn ghost" id="cyClaim">'+t("Guardar (solo comisión)")+'</button>');
       }
     }
     if(assets.length){
-      h += '<div style="margin-top:12px"><strong>Activos en esta parcela</strong></div>';
+      h += '<div style="margin-top:12px"><strong>'+t("Activos en esta parcela")+'</strong></div>';
       assets.forEach(function(a){
         var amine = me && a.owner===me, active = a.lease && a.lease.active, tenantMe = active && a.lease.tenant===me;
-        var st = active ? ("alquilada por "+(tenantMe?"<b>ti</b>":esc(shortAddr(a.lease.tenant)))+" hasta el bloque "+fmtNum(a.lease.until))
-               : (a.offer ? ("en alquiler: "+ramFmt(a.offer.price)+" RAMI por "+fmtNum(a.offer.term)+" bloques") : "sin alquilar");
-        var row = '<div class="assetrow"><div>'+ASSET_NAMES[a.kind]+' '+esc(a.meta||"")+' <span style="color:var(--muted)">· dueño '+(amine?"tú":esc(shortAddr(a.owner)))+'</span></div>'+
+        var st = active ? (t("alquilada por ")+(tenantMe?"<b>"+t("ti")+"</b>":esc(shortAddr(a.lease.tenant)))+t(" hasta el bloque ")+fmtNum(a.lease.until))
+               : (a.offer ? (t("en alquiler: ")+ramFmt(a.offer.price)+t(" RAMI por ")+fmtNum(a.offer.term)+t(" bloques")) : t("sin alquilar"));
+        var row = '<div class="assetrow"><div>'+t(ASSET_NAMES[a.kind])+' '+esc(a.meta||"")+' <span style="color:var(--muted)">'+t("· dueño ")+(amine?t("tú"):esc(shortAddr(a.owner)))+'</span></div>'+
                   '<div class="id">'+a.id+'</div><div style="color:var(--muted)">'+st+'</div>';
         if(amine && !active){
           row += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">'+
-            '<input class="cyPrice" data-id="'+a.id+'" placeholder="precio RAMI" inputmode="decimal" style="width:110px">'+
-            '<select class="cyTerm" data-id="'+a.id+'">'+TERMS.map(function(t){return '<option value="'+t[1]+'">'+t[0]+'</option>';}).join("")+'</select>'+
-            '<button class="btn small cyList" data-id="'+a.id+'">Publicar alquiler</button>'+
-            '<input class="cyTo" data-id="'+a.id+'" placeholder="transferir a (dirección hex)" style="min-width:200px">'+
-            '<button class="btn small ghost cyXfer" data-id="'+a.id+'">Transferir</button></div>';
+            '<input class="cyPrice" data-id="'+a.id+'" placeholder="'+t("precio RAMI")+'" inputmode="decimal" style="width:110px">'+
+            '<select class="cyTerm" data-id="'+a.id+'">'+TERMS.map(function(tm){return '<option value="'+tm[1]+'">'+t(tm[0])+'</option>';}).join("")+'</select>'+
+            '<button class="btn small cyList" data-id="'+a.id+'">'+t("Publicar alquiler")+'</button>'+
+            '<input class="cyTo" data-id="'+a.id+'" placeholder="'+t("transferir a (dirección hex)")+'" style="min-width:200px">'+
+            '<button class="btn small ghost cyXfer" data-id="'+a.id+'">'+t("Transferir")+'</button></div>';
         } else if(!amine && a.offer && !active){
-          row += '<div style="margin-top:6px"><button class="btn small cyRent" data-id="'+a.id+'">Alquilar por '+ramFmt(a.offer.price)+' RAMI</button></div>';
+          row += '<div style="margin-top:6px"><button class="btn small cyRent" data-id="'+a.id+'">'+t("Alquilar por ")+ramFmt(a.offer.price)+' RAMI</button></div>';
         }
         h += row+'</div>';
       });
@@ -1460,21 +1524,21 @@
     acts.innerHTML = h;
   }
   function cityAct(path, body, okMsg){
-    var st = document.getElementById("cityStatus"); st.textContent = "Enviando…";
+    var st = document.getElementById("cityStatus"); st.textContent = t("Enviando…");
     jpost(path, body).then(function(r){
-      st.textContent = r.ok ? ("✓ "+okMsg+" (txid "+String(r.txid).slice(0,12)+"…). Se aplica al minarse el próximo bloque.") : ("✗ "+(r.error||"error"));
+      st.textContent = r.ok ? ("✓ "+okMsg+" (txid "+String(r.txid).slice(0,12)+"…"+t("). Se aplica al minarse el próximo bloque.")) : ("✗ "+(r.error||"error"));
       setTimeout(loadCity, 1500);
-    }).catch(function(){ st.textContent = "✗ sin conexión con el nodo"; });
+    }).catch(function(){ st.textContent = t("✗ sin conexión con el nodo"); });
   }
   document.getElementById("cityActions").addEventListener("click", function(e){
     var b = e.target.closest("button"); if(!b || !city.sel) return;
     var x = city.sel.x, y = city.sel.y, id = b.getAttribute("data-id");
-    if(b.id==="cyClaim"){ cityAct("/api/city/claim", {x:x,y:y,name:document.getElementById("cyName").value.trim(),kind:Number(document.getElementById("cyKind").value)}, "parcela reclamada"); }
-    else if(b.id==="cyMint"){ cityAct("/api/city/mint", {x:x,y:y,kind:Number(document.getElementById("cyAKind").value),meta:document.getElementById("cyMeta").value.trim()}, "activo acuñado"); }
-    else if(b.id==="cyHarvest"){ if(confirm("Repartirás ese total de TU saldo entre los arrendatarios activos. ¿Continuar?")) cityAct("/api/city/harvest", {x:x,y:y,total:document.getElementById("cyTotal").value.trim()}, "cosecha repartida"); }
-    else if(b.classList.contains("cyList")){ cityAct("/api/city/list", {asset:id, price:document.querySelector('.cyPrice[data-id="'+id+'"]').value.trim(), term:Number(document.querySelector('.cyTerm[data-id="'+id+'"]').value)}, "alquiler publicado"); }
-    else if(b.classList.contains("cyRent")){ cityAct("/api/city/rent", {asset:id}, "activo alquilado"); }
-    else if(b.classList.contains("cyXfer")){ cityAct("/api/city/transfer", {asset:id, to:document.querySelector('.cyTo[data-id="'+id+'"]').value.trim()}, "activo transferido"); }
+    if(b.id==="cyClaim"){ cityAct("/api/city/claim", {x:x,y:y,name:document.getElementById("cyName").value.trim(),kind:Number(document.getElementById("cyKind").value)}, t("parcela reclamada")); }
+    else if(b.id==="cyMint"){ cityAct("/api/city/mint", {x:x,y:y,kind:Number(document.getElementById("cyAKind").value),meta:document.getElementById("cyMeta").value.trim()}, t("activo acuñado")); }
+    else if(b.id==="cyHarvest"){ if(confirm(t("Repartirás ese total de TU saldo entre los arrendatarios activos. ¿Continuar?"))) cityAct("/api/city/harvest", {x:x,y:y,total:document.getElementById("cyTotal").value.trim()}, t("cosecha repartida")); }
+    else if(b.classList.contains("cyList")){ cityAct("/api/city/list", {asset:id, price:document.querySelector('.cyPrice[data-id="'+id+'"]').value.trim(), term:Number(document.querySelector('.cyTerm[data-id="'+id+'"]').value)}, t("alquiler publicado")); }
+    else if(b.classList.contains("cyRent")){ cityAct("/api/city/rent", {asset:id}, t("activo alquilado")); }
+    else if(b.classList.contains("cyXfer")){ cityAct("/api/city/transfer", {asset:id, to:document.querySelector('.cyTo[data-id="'+id+'"]').value.trim()}, t("activo transferido")); }
   });
   setInterval(function(){ if(currentView==="ciudad") loadCity(); }, 5000);
 
@@ -1488,13 +1552,14 @@
   var updApplying = false;
   function txt(id, s){ document.getElementById(id).textContent = s; }
   function renderUpdate(d, errMsg){
+    if(d) lastUpdate = d;
     var cur = (state.status && state.status.version) || (d && d.current) || "—";
     txt("updCur", "v"+cur);
     var apply2 = document.getElementById("updApplyBtn2");
     if(errMsg){
       txt("updLatest", "—");
-      txt("updState", "✗ No se pudo comprobar: " + errMsg);
-      txt("updDetail", "Revisa tu conexión a internet. También puedes descargar a mano desde la web.");
+      txt("updState", t("✗ No se pudo comprobar: ") + errMsg);
+      txt("updDetail", t("Revisa tu conexión a internet. También puedes descargar a mano desde la web."));
       apply2.style.display = "none";
       return;
     }
@@ -1502,14 +1567,14 @@
     var canApply = !!(d.newer && d.asset_name && d.sha256);
     apply2.style.display = canApply ? "" : "none";
     if(d.newer){
-      txt("updState", "🎉 Hay una versión nueva: v"+d.latest+
-        (canApply ? ". Puedes actualizar desde aquí." : ". "+(d.note||"Descárgala desde la web.")));
+      txt("updState", t("🎉 Hay una versión nueva: v")+d.latest+
+        (canApply ? t(". Puedes actualizar desde aquí.") : ". "+(d.note||"Descárgala desde la web.")));
     } else {
-      txt("updState", "✅ Estás al día: v"+d.latest+" es la última versión publicada.");
+      txt("updState", t("✅ Estás al día: v")+d.latest+t(" es la última versión publicada."));
     }
     txt("updDetail", d.asset_name
-      ? ("Instalador para tu sistema ("+d.platform+"): "+d.asset_name+
-         (d.sha256 ? " · SHA-256 "+d.sha256.slice(0,16)+"…" : " · sin hash publicado"))
+      ? (t("Instalador para tu sistema (")+d.platform+"): "+d.asset_name+
+         (d.sha256 ? " · SHA-256 "+d.sha256.slice(0,16)+"…" : t(" · sin hash publicado")))
       : (d.note||""));
     if(d.html_url) document.getElementById("updGhLink").href = d.html_url;
     var nb = document.getElementById("updNotesBox");
@@ -1529,64 +1594,64 @@
   }
   function checkUpdate(manual){
     if(updApplying) return;
-    if(manual) txt("updState", "Comprobando…");
+    if(manual) txt("updState", t("Comprobando…"));
     jget("/api/update")
       .then(function(d){
         if(!d || !d.ok){ renderUpdate(null, (d && d.error) || "respuesta inválida"); return; }
         renderUpdate(d);
       })
-      .catch(function(){ renderUpdate(null, "sin conexión con el nodo"); });
+      .catch(function(){ renderUpdate(null, t("sin conexión con el nodo")); });
   }
   function applyUpdate(btn, msg){
     if(updApplying) return;
-    if(!confirm("Se descargará el instalador oficial, se comprobará su SHA-256, se instalará la versión nueva y el monedero se cerrará y volverá a abrirse solo. Tu monedero y tu cadena no se tocan. ¿Continuar?")) return;
+    if(!confirm(t("Se descargará el instalador oficial, se comprobará su SHA-256, se instalará la versión nueva y el monedero se cerrará y volverá a abrirse solo. Tu monedero y tu cadena no se tocan. ¿Continuar?"))) return;
     updApplying = true;
-    btn.disabled = true; btn.textContent = "Descargando y verificando…";
+    btn.disabled = true; btn.textContent = t("Descargando y verificando…");
     msg.textContent = "";
     jpost("/api/update/apply", {})
       .then(function(r){
         if(r && r.ok){
           btn.style.display = "none";
-          msg.textContent = "✓ " + (r.message || "Actualización aplicada.");
+          msg.textContent = "✓ " + t(r.message || t("Actualización aplicada."));
           if(r.relaunch) waitForNewVersion(r.new_version || "", r.message || "");
           else if(r.needs_restart){
             waitForNewVersion(r.new_version || "", r.message || "");
-            txt("updWaitMsg", r.message || "Cierra el monedero y vuelve a abrir la app para usar la versión nueva.");
+            txt("updWaitMsg", t(r.message || t("Cierra el monedero y vuelve a abrir la app para usar la versión nueva.")));
           }
         }else{
           btn.disabled = false; btn.textContent = "⬇️ Actualizar ahora";
-          msg.textContent = "✗ " + ((r && r.message) || (r && r.error) || "no se pudo actualizar");
+          msg.textContent = "✗ " + ((r && r.message) || (r && r.error) || t("no se pudo actualizar"));
         }
       })
       .catch(function(){
         btn.disabled = false; btn.textContent = "⬇️ Actualizar ahora";
-        msg.textContent = "✗ sin conexión con el nodo";
+        msg.textContent = t("✗ sin conexión con el nodo");
       })
       .then(function(){ updApplying = false; });
   }
   var installShown = null;
   function renderInstall(i){
     var where = document.getElementById("updWhere");
-    if(i.exe) where.textContent = "Ejecutando desde: " + (i.bundle || i.exe);
+    if(i.exe) where.textContent = t("Ejecutando desde: ") + (i.bundle || i.exe);
     var box = document.getElementById("installBox");
     var show = !!i.can_install;
     if(installShown !== show){ box.style.display = show ? "" : "none"; installShown = show; }
   }
   document.getElementById("installBtn").addEventListener("click", function(){
-    if(!confirm("RAMI-Chain se copiará a Aplicaciones (sustituyendo la versión anterior si la hay), se cerrará y se volverá a abrir desde allí. ¿Continuar?")) return;
+    if(!confirm(t("RAMI-Chain se copiará a Aplicaciones (sustituyendo la versión anterior si la hay), se cerrará y se volverá a abrir desde allí. ¿Continuar?"))) return;
     var btn = this, st = document.getElementById("installStatus");
     btn.disabled = true;
-    showStatus(st, true, '<span class="k">Instalando…</span>');
+    showStatus(st, true, '<span class="k">'+t("Instalando…")+'</span>');
     jpost("/api/install", {})
       .then(function(r){
         if(r && r.ok){
-          showStatus(st, true, "✓ " + (r.message || "Instalada."));
+          showStatus(st, true, "✓ " + t(r.message || t("Instalada.")));
           waitForNewVersion("", r.message || "");
-          txt("updWaitVer", "Aplicaciones");
-          txt("updWaitMsg", "Instalando en Aplicaciones. El monedero se cierra y se vuelve a abrir desde allí; esta pestaña se recargará sola.");
+          txt("updWaitVer", t("Aplicaciones"));
+          txt("updWaitMsg", t("Instalando en Aplicaciones. El monedero se cierra y se vuelve a abrir desde allí; esta pestaña se recargará sola."));
         }else{
           btn.disabled = false;
-          showStatus(st, false, (r && r.error) || "no se pudo instalar");
+          showStatus(st, false, (r && r.error) || t("no se pudo instalar"));
         }
       })
       .catch(function(e){ btn.disabled = false; showStatus(st, false, "error: " + e); });
@@ -1596,7 +1661,7 @@
   // Si en 3 minutos no aparece, explica qué hacer (sin tecnicismos).
   function waitForNewVersion(newVer, message){
     var box = document.getElementById("updWait");
-    txt("updWaitVer", newVer ? "v"+newVer : "la versión nueva");
+    txt("updWaitVer", newVer ? "v"+newVer : t("la versión nueva"));
     box.style.display = "flex";
     updApplying = true;
     var started = Date.now(), tries = 0;
@@ -1611,9 +1676,7 @@
         clearInterval(timer);
         var help = document.getElementById("updWaitHelp");
         help.style.display = "";
-        help.textContent = "La versión nueva no ha vuelto a abrirse sola. Abre RAMI-Chain como siempre " +
-          "(Aplicaciones / menú Inicio / tu AppImage). Si al abrirla sigue apareciendo la versión antigua, " +
-          "descárgala desde quantbot.army/#descargas e instálala encima. Detalle: " + (message || "");
+        help.textContent = t("La versión nueva no ha vuelto a abrirse sola. Abre RAMI-Chain como siempre (Aplicaciones / menú Inicio / tu AppImage). Si al abrirla sigue apareciendo la versión antigua, descárgala desde quantbot.army/#descargas e instálala encima. Detalle: ") + (message || "");
         document.getElementById("updWaitReload").style.display = "";
       }
     }, 1500);
@@ -1640,6 +1703,8 @@
   setInterval(function(){ if(currentView==="explorador") pollExplorer(); }, 5000);
   setTimeout(checkUpdate, 2500);
   setInterval(checkUpdate, 600000);
+  document.getElementById("langSel").addEventListener("change", function(){ applyLang(this.value, true); });
+  applyLang(detectLang(), false);
 })();
 </script>
 </body>

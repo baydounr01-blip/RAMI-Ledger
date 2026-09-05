@@ -389,6 +389,16 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
   misma app que el usuario ya abrió y cuya firma se verifica) para que macOS
   no la ejecute «traslocada» y vuelva a pedir instalarla; la reapertura tras
   instalarse lleva `--no-install`.
+- **v0.5.5 (esto): panel en cinco idiomas.** Selector de idioma en la barra
+  superior del monedero: **español, inglés, chino (simplificado), ruso y
+  suajili**. Las claves son el texto original en español (estilo gettext): el
+  panel se traduce recorriendo los nodos de texto, placeholders y tooltips, y
+  lo que genera el JS pasa por `t()`. Diccionarios en
+  `crates/rami-gui/src/i18n.js` (servido en `/i18n.js`), fáciles de corregir
+  o ampliar (añadir un idioma = añadir un diccionario). La elección se
+  recuerda en el navegador y se guarda en `~/.rami/lang` (`POST /api/lang`)
+  para que los diálogos nativos de macOS salgan en el mismo idioma; sin
+  elección previa se usa el idioma del sistema.
 - **v0.5.x (siguiente):** instantáneas de cadena re-verificables para el explorador
   web, seeds comunitarios, endurecimiento P2P (puntuación de pares, límites por
   IP) y IPC dedicado faucet↔nodo.
