@@ -688,8 +688,10 @@ fn install_from_mounted_dmg(mnt: &Path, dests: &[PathBuf]) -> Result<PathBuf, St
 fn install_bundle(src: &Path, dest: &Path) -> Result<(), String> {
     let parent = dest.parent().ok_or("destino sin carpeta")?;
     std::fs::create_dir_all(parent).map_err(|e| format!("no pude crear la carpeta: {e}"))?;
-    let staged = parent.join("RAMI-Chain.app.actualizando");
-    let old = parent.join("RAMI-Chain.app.anterior");
+    // Nombres con extensión .app: el bundle intermedio se verifica y se
+    // intercambia como una app normal (mismo sistema de archivos → rename atómico).
+    let staged = parent.join("RAMI-Chain-actualizando.app");
+    let old = parent.join("RAMI-Chain-anterior.app");
     let _ = std::fs::remove_dir_all(&staged);
     // `ditto` conserva firma, atributos y permisos del bundle (lo que Apple
     // recomienda para copiar apps).
