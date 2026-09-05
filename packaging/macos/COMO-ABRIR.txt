@@ -16,7 +16,12 @@ y NO pasa todavía el filtro de malware de Apple.
         shasum -a 256 <archivo.dmg>
      Si no coincide, bórrala. No abras nada que no hayas verificado.
 
-  2) Abre de forma consciente (método soportado por Apple):
+  2) Haz doble clic en RAMI-Chain dentro de esta ventana: la app te propone
+     INSTALARSE EN APLICACIONES (sustituye la versión anterior y cierra la que
+     estuviera abierta). Pulsa «Instalar». No hace falta arrastrar nada ni usar
+     la terminal. Si abres una versión nueva con la anterior aún abierta, la
+     nueva le pide que se cierre y ocupa su sitio.
+  3) Abre de forma consciente (método soportado por Apple):
      clic derecho sobre RAMI-Chain → Abrir → Abrir. Si no aparece la opción:
      Ajustes del Sistema → Privacidad y seguridad → «Abrir de todas formas».
      Al hacerlo, la verificación que normalmente haría Apple la asumes tú
@@ -29,8 +34,8 @@ del proyecto; el sistema de publicación ya está preparado (ver SIGNING.md).
 1) Comprueba el CHIP: menú  → «Acerca de este Mac». Chip Apple M1/M2/M3/M4 =
    descarga «Apple Silicon»; Intel = descarga «Intel». Con el .dmg equivocado
    la app no puede abrir.
-2) Arrastra la app a APLICACIONES antes de abrirla (no la ejecutes desde la
-   ventana del .dmg).
+2) Instálala en APLICACIONES (doble clic en la app dentro del .dmg → «Instalar»)
+   o arrástrala; no la uses desde la ventana del .dmg.
 3) Mira si existe el archivo ~/.rami/gui-launch.log (Finder → Ir → Ir a la
    carpeta… → escribe ~/.rami). Si NO existe, macOS nunca llegó a ejecutar la
    app (chip equivocado o bloqueo del sistema). Si existe, dentro está el

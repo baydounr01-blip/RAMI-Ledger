@@ -1,15 +1,17 @@
-## Novedades de v0.5.2 — actualización de un clic (incluye v0.5.1)
+## Novedades de v0.5.3 — instalar y actualizar sin terminal (para todo el mundo)
 
-- **Actualizar ahora, de verdad:** el monedero descarga el instalador oficial, **verifica su SHA-256**, **instala la versión nueva en el sitio de la actual** y **se vuelve a abrir solo**. El panel espera y se recarga con la versión nueva. Antes, en macOS y Windows, solo se abría el instalador y había que terminar a mano; si no lo hacías, seguías con la versión antigua (por eso la Ciudad RAMI «no aparecía» tras actualizar).
-- **macOS (v0.5.1):** la app deja de mostrar «no responde» al hacer clic en el icono con la app ya abierta; el clic vuelve a abrir el panel.
-- **Pestaña Actualizar:** muestra estas novedades, la fecha y enlaza al release de GitHub y a la web. Cada paso de la actualización queda en `~/.rami/gui-launch.log`.
-- **Ciudad RAMI 🏙️ (v0.5.0):** pestaña «Ciudad» del panel — elige parcela, monta tu empresa con un clic, acuña plantas u objetos, alquílalos y reparte cosechas. Simulación en testnet, sin valor monetario.
-- **Aviso:** v0.5.0+ es un cambio de reglas de la testnet (hard fork): todos los nodos deben actualizar.
+- **macOS: la app se instala sola.** Abre el `.dmg` y haz doble clic en RAMI-Chain: te propone instalarse en Aplicaciones (sustituye la versión anterior, cierra la que estuviera abierta y se reabre desde allí). Sin arrastrar, sin terminal. Si ya está abierta desde otro sitio, la pestaña Actualizar avisa y ofrece «Instalar en Aplicaciones».
+- **La versión nueva toma el relevo.** Si abres una versión nueva con la anterior aún abierta, la nueva le pide que se cierre y ocupa su sitio. Antes abría el panel viejo y salía: parecía que «no se actualizaba» y el aviso volvía a salir.
+- **Windows:** el instalador cierra el monedero abierto antes de sustituirlo, así «bajar el instalador nuevo y ejecutarlo» actualiza siempre.
+- **Panel:** muestra desde dónde se está ejecutando la app y se recarga solo si el proceso cambia. Cada paso queda en `~/.rami/gui-launch.log`.
+- **Web y README:** pasos para novatos (tres clics) y para avanzados (verificar SHA-256 e instalar desde la terminal).
+- Incluye v0.5.2 (actualización de un clic con verificación SHA-256, instalación en el sitio y reapertura automática), v0.5.1 (macOS «no responde») y v0.5.0 (Ciudad RAMI 🏙️). v0.5.0+ es un cambio de reglas de la testnet (hard fork): todos los nodos deben actualizar.
 
-## What's new in v0.5.2 — one-click update (includes v0.5.1)
+## What's new in v0.5.3 — install and update without a terminal (for everyone)
 
-- **"Update now" really updates:** the wallet downloads the official installer, **verifies its SHA-256**, **installs the new version in place** and **relaunches itself**; the dashboard waits and reloads. Previously on macOS/Windows it only opened the installer and you had to finish by hand.
-- **macOS (v0.5.1):** no more "not responding" when clicking the icon while the app is open.
-- **Update tab:** shows these notes and links to the GitHub release and the website. Every step is logged to `~/.rami/gui-launch.log`.
-- **RAMI City 🏙️ (v0.5.0):** the "Ciudad" tab — claim a parcel, set up your company with one click, mint and lease assets. Testnet simulation, no monetary value.
-- **Note:** v0.5.0+ changes the testnet rules (hard fork): all nodes must upgrade.
+- **macOS: the app installs itself.** Open the `.dmg` and double-click RAMI-Chain: it offers to install into Applications (replacing the previous version, closing any running one, and relaunching from there). No dragging, no terminal. If it is running from elsewhere, the Update tab warns and offers "Install into Applications".
+- **The new version takes over.** Opening a new version while the old one is still running now asks the old one to quit and takes its place. Previously the new one just opened the old dashboard and exited, which looked like "it didn't update".
+- **Windows:** the installer closes the running wallet before replacing it, so "download the new installer and run it" always updates.
+- **Dashboard:** shows where the app is running from and reloads itself if the process changes. Every step is logged to `~/.rami/gui-launch.log`.
+- **Website and README:** steps for beginners (three clicks) and for advanced users (verify SHA-256 and install from the terminal).
+- Includes v0.5.2 (one-click update with SHA-256 verification, in-place install and relaunch), v0.5.1 (macOS "not responding") and v0.5.0 (RAMI City 🏙️). v0.5.0+ changes the testnet rules (hard fork): all nodes must upgrade.

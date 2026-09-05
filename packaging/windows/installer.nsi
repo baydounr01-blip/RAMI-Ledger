@@ -34,6 +34,14 @@ BrandingText "RAMI-Chain ${VERSION} — testnet experimental, sin valor monetari
 !insertmacro MUI_LANGUAGE "English"
 
 Section "RAMI-Chain"
+  ; Si el monedero está abierto, se le pide que se cierre por su API local
+  ; (cierre limpio) y, si aún sigue, se fuerza: Windows no permite sustituir
+  ; un .exe en uso. Así «bajar el instalador nuevo y ejecutarlo» actualiza
+  ; siempre, sin pasos manuales (como el instalador de Bitcoin Core).
+  nsExec::ExecToLog 'curl.exe -s -m 3 -X POST -H "Content-Type: application/json" -d "{}" http://127.0.0.1:8645/api/quit'
+  Sleep 1500
+  nsExec::ExecToLog 'taskkill /IM rami-gui.exe /F'
+  Sleep 500
   SetOutPath "$INSTDIR"
   File "rami-gui.exe"
   File "rami-node.exe"

@@ -180,6 +180,8 @@ fn route(g: &Gui, req: Request) -> Response {
                 Err(_) => {
                     // El panel abre al instante; el nodo sigue cargando (o falló).
                     let mut v = json!({ "version": env!("CARGO_PKG_VERSION"), "wallet": wallet });
+                    v["pid"] = json!(std::process::id());
+                    v["install"] = serde_json::to_value(rami_node::update::install_info()).unwrap_or(json!({}));
                     match &*g.node.read().unwrap_or_else(|e| e.into_inner()) {
                         NodeSlot::Failed(e) => v["failed"] = json!(e),
                         _ => v["starting"] = json!(true),
@@ -190,6 +192,10 @@ fn route(g: &Gui, req: Request) -> Response {
             let s = node.status();
             let mut v = serde_json::to_value(&s).unwrap_or_else(|_| json!({}));
             v["version"] = json!(env!("CARGO_PKG_VERSION"));
+            // pid: el panel detecta que el proceso cambió (actualización o
+            // reinstalación) y se recarga. install: dónde corre esta copia.
+            v["pid"] = json!(std::process::id());
+            v["install"] = serde_json::to_value(rami_node::update::install_info()).unwrap_or(json!({}));
             if let Some(pk) = w.pubkey {
                 let acc = node.account(pk);
                 wallet["address"] = json!(hex::encode(pk));
@@ -477,6 +483,29 @@ fn route(g: &Gui, req: Request) -> Response {
             Response::json(&json!({"ok": true, "bye": true}))
         }
 
+        // Instala ESTA app en Aplicaciones (macOS) y la reabre desde allí. Es
+        // lo que hace falta para que las actualizaciones automáticas puedan
+        // sustituirla; aparece cuando la app corre desde el .dmg o Descargas.
+        ("POST", "/api/install") => {
+            dlog("instalación en Aplicaciones solicitada desde el panel");
+            match rami_node::update::self_install() {
+                Ok(dest) => {
+                    let relaunch = rami_node::update::relaunch_after_exit(&dest).is_ok();
+                    if relaunch {
+                        rami_node::update::exit_soon();
+                    }
+                    Response::json(&json!({
+                        "ok": true, "dest": dest.to_string_lossy(), "relaunch": relaunch,
+                        "message": format!("Instalada en {}. El monedero se cierra y se vuelve a abrir desde ahí.", dest.display())
+                    }))
+                }
+                Err(e) => {
+                    dlog(&format!("instalación fallida: {e}"));
+                    Response::json(&json!({ "ok": false, "error": e }))
+                }
+            }
+        }
+
         // ---- auto-actualizador ----
         // Comprueba el Release oficial (sin tocar nada) y dice si hay versión
         // nueva y con qué instalador se aplicaría.
@@ -668,6 +697,48 @@ fn native_dialog(title: &str, msg: &str) {
 #[cfg(not(target_os = "macos"))]
 fn native_dialog(_title: &str, _msg: &str) {}
 
+/// Pregunta NATIVA de macOS con dos botones; devuelve true si el usuario
+/// pulsa `yes`. Si osascript falla, devuelve false (no se hace nada).
+#[cfg(target_os = "macos")]
+fn native_ask(title: &str, msg: &str, no: &str, yes: &str) -> bool {
+    let q = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!(
+        "display dialog \"{}\" with title \"{}\" buttons {{\"{}\", \"{}\"}} default button \"{}\" with icon note",
+        q(msg), q(title), q(no), q(yes), q(yes)
+    );
+    match Command::new("osascript").args(["-e", &script]).output() {
+        Ok(out) => String::from_utf8_lossy(&out.stdout).contains(&format!("button returned:{yes}")),
+        Err(_) => false,
+    }
+}
+#[cfg(not(target_os = "macos"))]
+#[allow(dead_code)]
+fn native_ask(_title: &str, _msg: &str, _no: &str, _yes: &str) -> bool {
+    false
+}
+
+/// Pide a OTRA instancia del monedero (puerto `port`) que se cierre y espera
+/// a que libere el puerto (hasta ~10 s). true si quedó libre.
+fn ask_other_to_quit(port: u16) -> bool {
+    let _ = http::post_local(port, "/api/quit");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        if TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Versión que declara un `/api/status` ajeno (`"version":"x.y.z"`).
+fn version_in(body: &str) -> Option<String> {
+    let i = body.find("\"version\":\"")? + 11;
+    let rest = &body[i..];
+    let j = rest.find('"')?;
+    Some(rest[..j].to_string())
+}
+
 /// Error fatal VISIBLE: en macOS/Windows la app se lanza sin consola, así que
 /// un eprintln+exit es invisible («la app no responde»). Escribimos una página
 /// de error y la abrimos en el navegador para que el usuario sepa qué pasó.
@@ -757,6 +828,60 @@ fn main() -> ExitCode {
     // de antes), no es un fallo — abrimos el navegador hacia ese panel y
     // salimos. Si lo ocupa otro programa, probamos los puertos siguientes.
     // Sin esto, el segundo lanzamiento moría en silencio («la app no responde»).
+    // macOS: si la app se abrió desde el .dmg, desde Descargas o desde la
+    // cuarentena de traslocación, NO está instalada: las actualizaciones no
+    // podrían sustituirla y al expulsar el .dmg desaparecería. Como hacen
+    // muchas apps de Mac, se ofrece instalarla en Aplicaciones con un clic
+    // (sustituyendo la versión anterior), y se reabre desde allí. Sin terminal.
+    #[cfg(target_os = "macos")]
+    {
+        use std::io::IsTerminal;
+        let info = rami_node::update::install_info();
+        if info.can_install && !has(&args, "--no-install") && !std::io::stdin().is_terminal() {
+            dlog(&format!("la app corre desde «{}» ({}); ofrezco instalarla", info.bundle, info.location));
+            let yes = native_ask(
+                "RAMI-Chain",
+                "Para que RAMI-Chain se actualice sola, debe estar en la carpeta Aplicaciones.\n\n\
+                 ¿Instalarla ahora? (si hay una versión anterior, se sustituye; tu monedero y tu cadena no se tocan)",
+                "Ahora no",
+                "Instalar",
+            );
+            if yes {
+                // Cierra la versión anterior si está abierta (puerto del panel).
+                for p in dash_port..dash_port.saturating_add(10) {
+                    if let Some(body) = http::probe_local(p) {
+                        if body.contains("network_id") || body.contains("starting") {
+                            dlog(&format!("cierro el monedero anterior del puerto {p}"));
+                            ask_other_to_quit(p);
+                        }
+                    }
+                }
+                match rami_node::update::self_install() {
+                    Ok(dest) => {
+                        dlog(&format!("instalada en {}; me reabro desde ahí", dest.display()));
+                        match rami_node::update::relaunch_after_exit(&dest) {
+                            Ok(()) => return ExitCode::SUCCESS,
+                            Err(e) => native_dialog(
+                                "RAMI-Chain",
+                                &format!("Instalada en {}, pero no pude reabrirla sola ({e}). Ábrela desde Aplicaciones.", dest.display()),
+                            ),
+                        }
+                        return ExitCode::SUCCESS;
+                    }
+                    Err(e) => {
+                        dlog(&format!("instalación fallida: {e}"));
+                        native_dialog(
+                            "RAMI-Chain",
+                            &format!("No pude instalarla en Aplicaciones ({e}). Arrastra RAMI-Chain a Aplicaciones a mano. Seguiré abriéndose desde aquí."),
+                        );
+                    }
+                }
+            } else {
+                dlog("el usuario prefirió no instalar ahora");
+            }
+        }
+    }
+
     let explicit_port = arg(&args, "--port").is_some();
     let mut bound = None;
     for off in 0..10u16 {
@@ -769,6 +894,22 @@ fn main() -> ExitCode {
             Err(_) => {
                 if let Some(body) = http::probe_local(p) {
                     if body.contains("network_id") || body.contains("starting") {
+                        let other = version_in(&body).unwrap_or_default();
+                        if other != env!("CARGO_PKG_VERSION") {
+                            // Otra VERSIÓN abierta (p. ej. la anterior tras
+                            // instalar esta): le pedimos que se cierre y esta
+                            // toma su sitio. Antes, la nueva abría el panel
+                            // viejo y salía: parecía que «no se actualizaba».
+                            dlog(&format!("monedero v{other} abierto en {p}; le pido que se cierre y tomo su sitio"));
+                            if ask_other_to_quit(p) {
+                                if let Ok(l) = TcpListener::bind(("127.0.0.1", p)) {
+                                    bound = Some((l, p));
+                                    break;
+                                }
+                            }
+                            dlog(&format!("el monedero v{other} no liberó el puerto {p}; pruebo el siguiente"));
+                            continue;
+                        }
                         let url = format!("http://127.0.0.1:{p}");
                         dlog(&format!("ya hay un monedero abierto; reabriendo su panel {url}"));
                         println!("● Ya hay un monedero RAMI-Chain abierto — abriendo su panel: {url}");

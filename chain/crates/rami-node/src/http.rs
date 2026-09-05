@@ -73,6 +73,24 @@ pub fn probe_local(port: u16) -> Option<String> {
     buf.split_once("\r\n\r\n").map(|(_, body)| body.to_string())
 }
 
+/// POST local sin cuerpo útil (p. ej. `/api/quit` de OTRA instancia del
+/// monedero). Cumple la guardia anti-CSRF del panel: Host local y JSON.
+pub fn post_local(port: u16, path: &str) -> Option<String> {
+    use std::time::Duration;
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let mut s = TcpStream::connect_timeout(&addr, Duration::from_millis(700)).ok()?;
+    let _ = s.set_read_timeout(Some(Duration::from_millis(2500)));
+    let _ = s.set_write_timeout(Some(Duration::from_millis(700)));
+    let req = format!(
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+    );
+    s.write_all(req.as_bytes()).ok()?;
+    let mut buf = String::new();
+    let mut reader = BufReader::new(s);
+    reader.read_to_string(&mut buf).ok()?;
+    buf.split_once("\r\n\r\n").map(|(_, body)| body.to_string())
+}
+
 fn reason(status: u16) -> &'static str {
     match status {
         200 => "OK",

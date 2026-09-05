@@ -519,6 +519,13 @@
         <button class="btn" id="updApplyBtn2" style="display:none">⬇️ Actualizar ahora</button>
         <div class="status" id="updStatus2"></div>
         <p class="note" id="updDetail" style="margin-top:12px"></p>
+        <p class="note" id="updWhere" style="margin-top:6px"></p>
+        <div id="installBox" style="display:none;margin-top:10px;padding:12px 14px;border-radius:10px;background:rgba(255,196,0,.10);border:1px solid rgba(255,196,0,.35)">
+          <div style="font-weight:600;margin-bottom:6px">📦 Esta app no está instalada en Aplicaciones</div>
+          <div class="note" style="margin:0 0 10px" id="installMsg">Se está ejecutando desde el disco de instalación o desde Descargas. Para que se actualice sola y no desaparezca al expulsar el .dmg, instálala en Aplicaciones (si hay una versión anterior, se sustituye; tu monedero y tu cadena no se tocan).</div>
+          <button class="btn" id="installBtn">📦 Instalar en Aplicaciones y reabrir</button>
+          <div class="status" id="installStatus"></div>
+        </div>
         <div id="updNotesBox" style="display:none;margin-top:12px">
           <div class="lbl" style="margin-bottom:6px">📝 Novedades de <span id="updNotesVer"></span></div>
           <div id="updNotes" style="white-space:pre-wrap;font-size:13px;line-height:1.55;max-height:260px;overflow:auto;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:10px;padding:10px 12px"></div>
@@ -890,7 +897,7 @@
   }
 
   // ---------- render status ----------
-  var bootVersion = "";
+  var bootVersion = "", bootPid = 0;
   function renderStatus(s){
     document.getElementById("verTxt").textContent = s.version || "—";
     // Si el proceso que responde ya es OTRA versión (se actualizó), esta
@@ -899,6 +906,11 @@
       if(!bootVersion) bootVersion = s.version;
       else if(s.version !== bootVersion){ location.reload(); return; }
     }
+    if(s.pid){
+      if(!bootPid) bootPid = s.pid;
+      else if(s.pid !== bootPid){ location.reload(); return; }
+    }
+    if(s.install) renderInstall(s.install);
     // El nodo aún está cargando la cadena (el panel abre al instante).
     if(s.starting){
       document.getElementById("syncDot").className = "dot syncing";
@@ -1552,6 +1564,33 @@
       })
       .then(function(){ updApplying = false; });
   }
+  var installShown = null;
+  function renderInstall(i){
+    var where = document.getElementById("updWhere");
+    if(i.exe) where.textContent = "Ejecutando desde: " + (i.bundle || i.exe);
+    var box = document.getElementById("installBox");
+    var show = !!i.can_install;
+    if(installShown !== show){ box.style.display = show ? "" : "none"; installShown = show; }
+  }
+  document.getElementById("installBtn").addEventListener("click", function(){
+    if(!confirm("RAMI-Chain se copiará a Aplicaciones (sustituyendo la versión anterior si la hay), se cerrará y se volverá a abrir desde allí. ¿Continuar?")) return;
+    var btn = this, st = document.getElementById("installStatus");
+    btn.disabled = true;
+    showStatus(st, true, '<span class="k">Instalando…</span>');
+    jpost("/api/install", {})
+      .then(function(r){
+        if(r && r.ok){
+          showStatus(st, true, "✓ " + (r.message || "Instalada."));
+          waitForNewVersion("", r.message || "");
+          txt("updWaitVer", "Aplicaciones");
+          txt("updWaitMsg", "Instalando en Aplicaciones. El monedero se cierra y se vuelve a abrir desde allí; esta pestaña se recargará sola.");
+        }else{
+          btn.disabled = false;
+          showStatus(st, false, (r && r.error) || "no se pudo instalar");
+        }
+      })
+      .catch(function(e){ btn.disabled = false; showStatus(st, false, "error: " + e); });
+  });
   // Tras instalar: el proceso viejo se cierra y el nuevo abre el panel en el
   // mismo puerto. Sondea /api/status hasta ver la versión nueva y recarga.
   // Si en 3 minutos no aparece, explica qué hacer (sin tecnicismos).
@@ -1565,7 +1604,7 @@
       tries++;
       fetch("/api/status", {cache:"no-store"}).then(function(r){ return r.json(); })
         .then(function(d){
-          if(d && d.version && d.version !== bootVersion){ clearInterval(timer); location.reload(); }
+          if(d && ((d.version && d.version !== bootVersion) || (d.pid && bootPid && d.pid !== bootPid))){ clearInterval(timer); location.reload(); }
         })
         .catch(function(){ /* el proceso viejo se cerró; el nuevo aún arranca */ });
       if(Date.now() - started > 180000){

@@ -90,6 +90,34 @@ como cualquiera — no hay excepción a la cota de emisión.
 
 ## Lo más fácil: el monedero de escritorio
 
+**Sin terminal (para cualquier persona).** Descarga el instalador de tu sistema
+en [quantbot.army](https://quantbot.army/#descargas) (o en las
+[releases](https://github.com/baydounr01-blip/RAMI-Ledger/releases/latest)):
+
+- **macOS:** abre el `.dmg` y haz doble clic en RAMI-Chain. La app **se instala
+  sola en Aplicaciones** (sustituyendo la versión anterior) y se abre desde
+  allí. Apple Silicon (M1–M4) → `macos-arm64`; Intel → `macos-x64`.
+- **Windows:** ejecuta el instalador `-setup.exe` (cierra el monedero si está
+  abierto y lo sustituye).
+- **Linux:** da permiso de ejecución al `.AppImage` y ábrelo.
+
+**Actualizar:** el panel avisa cuando hay versión nueva → «Actualizar ahora».
+La app descarga el instalador oficial, **verifica su SHA-256** contra
+`SHA256SUMS.txt`, instala la versión nueva encima, **se cierra y se vuelve a
+abrir sola**; el panel se recarga. A mano: descarga el archivo nuevo y ábrelo
+igual que la primera vez; si la versión anterior sigue abierta, la nueva le
+pide que se cierre y ocupa su sitio. Cada paso queda en
+`~/.rami/gui-launch.log`.
+
+**Estado de la firma:** hasta que el proyecto tenga certificados Developer ID /
+Authenticode (ver `SIGNING.md`; el pipeline ya está listo), macOS y Windows
+muestran un aviso en la **primera** apertura de una build descargada con el
+navegador. Nunca pedimos saltarse un aviso: verifica el SHA-256 y abre de forma
+consciente (clic derecho → Abrir). Las actualizaciones hechas desde la app no
+vuelven a pasar por ese aviso.
+
+**Desde el código:**
+
 ```bash
 cd chain && cargo build --release        # o descarga el binario de las releases
 ./target/release/rami-gui --network testnet
@@ -341,6 +369,22 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
   sistema: es el esquema habitual de los actualizadores de escritorio
   (verificación criptográfica y sustitución de una app ya instalada por el
   usuario). Las notas del release salen de `RELEASE_NOTES.md`.
+- **v0.5.2: actualización de un clic.** «Actualizar ahora» descarga, verifica
+  el SHA-256, instala la versión nueva en el sitio de la actual (macOS: copia
+  con `ditto` y verificación de firma; Windows: instalador oficial en
+  silencio; Linux: AppImage atómico), se cierra y **se vuelve a abrir sola**.
+  El panel espera y se recarga; pestaña Actualizar con «Novedades». Antes, en
+  macOS/Windows solo se abría el instalador y había que terminar a mano.
+- **v0.5.3 (esto): instalación sin terminal, como Bitcoin Core.** La app de
+  macOS, abierta desde el `.dmg` (o Descargas), **se instala sola en
+  Aplicaciones** con un diálogo nativo, cierra la versión anterior y se reabre
+  desde allí (`/api/install` y aviso en la pestaña Actualizar si no está
+  instalada). Una versión nueva que encuentra a la anterior abierta **le pide
+  que se cierre y ocupa su sitio** (antes abría el panel viejo y salía:
+  parecía que «no se actualizaba»). El instalador de Windows cierra el
+  monedero abierto antes de sustituirlo. `/api/status` incluye `pid` y desde
+  dónde corre la app; el panel se recarga si el proceso cambia. Web/README
+  con los pasos para novatos y para avanzados (terminal).
 - **v0.5.x (siguiente):** instantáneas de cadena re-verificables para el explorador
   web, seeds comunitarios, endurecimiento P2P (puntuación de pares, límites por
   IP) y IPC dedicado faucet↔nodo.

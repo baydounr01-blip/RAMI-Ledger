@@ -456,7 +456,7 @@ fn apply_inner(current: &str, relaunch: bool) -> Result<ApplyResult, String> {
 }
 
 /// Salida limpia diferida: da tiempo a que la respuesta HTTP llegue al panel.
-fn exit_soon() {
+pub fn exit_soon() {
     std::thread::spawn(|| {
         std::thread::sleep(Duration::from_millis(2500));
         ulog("cerrando este proceso para dejar paso a la versión nueva");
@@ -563,24 +563,121 @@ fn apply_linux(bytes: &[u8], relaunch: bool) -> Result<ApplyResult, String> {
     })
 }
 
-/// macOS: bundle `.app` que contiene a este ejecutable, si está instalado en
-/// un sitio «de verdad» (no dentro del .dmg montado ni en la cuarentena de
-/// traslocación de macOS, donde no se puede/debe escribir).
-#[cfg(target_os = "macos")]
-fn installed_bundle() -> Option<PathBuf> {
+/// Bundle `.app` que contiene a este ejecutable (esté donde esté).
+pub fn current_bundle() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let mut p: &Path = &exe;
     while let Some(parent) = p.parent() {
         if parent.extension().and_then(|e| e.to_str()) == Some("app") {
-            let s = parent.to_string_lossy();
-            if s.starts_with("/Volumes/") || s.contains("/AppTranslocation/") {
-                return None;
-            }
             return Some(parent.to_path_buf());
         }
         p = parent;
     }
     None
+}
+
+/// Dónde se está ejecutando la app. `installed` = en un sitio estable donde
+/// las actualizaciones pueden sustituirla (macOS: Aplicaciones; en Windows y
+/// Linux siempre, porque el instalador/AppImage ya son el sitio estable).
+/// `can_install` = macOS, es un bundle y NO está en Aplicaciones: la app puede
+/// instalarse a sí misma con un clic (como al abrirla desde el .dmg).
+#[derive(Serialize, Clone, Default)]
+pub struct InstallInfo {
+    pub exe: String,
+    pub bundle: String,
+    pub location: String,
+    pub installed: bool,
+    pub can_install: bool,
+}
+
+pub fn install_info() -> InstallInfo {
+    let exe = std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    let mut info = InstallInfo { exe, installed: true, ..Default::default() };
+    if !cfg!(target_os = "macos") {
+        info.location = "installed".into();
+        return info;
+    }
+    let Some(b) = current_bundle() else {
+        // Binario suelto (tar.gz / compilado): no hay bundle que instalar.
+        info.location = "binary".into();
+        info.installed = false;
+        return info;
+    };
+    let s = b.to_string_lossy().to_string();
+    let home = home_dir().map(|h| h.to_string_lossy().to_string()).unwrap_or_default();
+    let in_apps = s.starts_with("/Applications/")
+        || (!home.is_empty() && s.starts_with(&format!("{home}/Applications/")));
+    info.location = if s.starts_with("/Volumes/") {
+        "dmg"
+    } else if s.contains("/AppTranslocation/") {
+        "translocated"
+    } else if in_apps {
+        "applications"
+    } else {
+        "other"
+    }
+    .into();
+    info.installed = in_apps;
+    info.can_install = !in_apps;
+    info.bundle = s;
+    info
+}
+
+/// macOS: bundle `.app` que contiene a este ejecutable, si está instalado en
+/// un sitio «de verdad» (no dentro del .dmg montado ni en la cuarentena de
+/// traslocación de macOS, donde no se puede/debe escribir).
+#[cfg(target_os = "macos")]
+fn installed_bundle() -> Option<PathBuf> {
+    let b = current_bundle()?;
+    let s = b.to_string_lossy();
+    if s.starts_with("/Volumes/") || s.contains("/AppTranslocation/") {
+        return None;
+    }
+    Some(b)
+}
+
+/// Destinos de instalación en macOS, por orden: /Applications y ~/Applications.
+#[cfg(target_os = "macos")]
+fn app_destinations() -> Vec<PathBuf> {
+    let mut v = vec![PathBuf::from("/Applications").join(MAC_APP_NAME)];
+    if let Some(h) = home_dir() {
+        v.push(h.join("Applications").join(MAC_APP_NAME));
+    }
+    v
+}
+
+/// macOS: instala ESTA app (tal como está, p. ej. abierta desde el .dmg o desde
+/// Descargas) en Aplicaciones, sustituyendo la versión anterior si la hay.
+/// Devuelve la ruta instalada. No cierra ni relanza nada: ver
+/// [`relaunch_after_exit`] y [`exit_soon`].
+#[cfg(target_os = "macos")]
+pub fn self_install() -> Result<PathBuf, String> {
+    let src = current_bundle().ok_or("esta copia no es una app (.app); no se puede instalar")?;
+    let mut errs = Vec::new();
+    for dest in app_destinations() {
+        if dest == src {
+            return Ok(dest);
+        }
+        match install_bundle(&src, &dest) {
+            Ok(()) => {
+                ulog(&format!("app instalada desde {} en {}", src.display(), dest.display()));
+                return Ok(dest);
+            }
+            Err(e) => errs.push(format!("{}: {e}", dest.display())),
+        }
+    }
+    Err(errs.join(" | "))
+}
+#[cfg(not(target_os = "macos"))]
+pub fn self_install() -> Result<PathBuf, String> {
+    Err("solo macOS".into())
+}
+
+/// Programa la apertura de `target` (una app o ejecutable) en cuanto ESTE
+/// proceso termine, conservando los argumentos de arranque.
+pub fn relaunch_after_exit(target: &Path) -> Result<(), String> {
+    let open_cmd = if cfg!(target_os = "macos") { "open" } else { "" };
+    spawn_relauncher_unix(open_cmd, target)
 }
 
 /// macOS: instala la app del `.dmg` VERIFICADO en el sitio de la actual (o en
@@ -595,10 +692,7 @@ fn apply_macos(bytes: &[u8], asset_name: &str, relaunch: bool) -> Result<ApplyRe
     if let Some(b) = installed_bundle() {
         dests.push(b);
     }
-    dests.push(PathBuf::from("/Applications").join(MAC_APP_NAME));
-    if let Some(h) = home_dir() {
-        dests.push(h.join("Applications").join(MAC_APP_NAME));
-    }
+    dests.extend(app_destinations());
 
     // Monta el .dmg en un punto conocido (sin abrir ventana del Finder).
     let mnt = std::env::temp_dir().join(format!("rami-update-{}", std::process::id()));

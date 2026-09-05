@@ -250,21 +250,39 @@
   </p>
   <div id="dl-todas" class="grid3" style="margin:8px 0 4px">
     <div class="card"><div class="tag">🍎 MACOS</div><h3>.dmg file</h3>
-      <p style="font-size:13px;color:var(--mut)">Open it and drag to Applications.</p>
+      <p style="font-size:13px;color:var(--mut)">Open it and double-click RAMI-Chain: <b>it installs itself into
+      Applications</b> (replacing the previous version). No terminal.</p>
       <a class="btn btn-primary" href="/descargas/rami-chain-macos-arm64.dmg" download>⬇ Apple Silicon</a>
       <a class="btn btn-ghost" href="/descargas/rami-chain-macos-intel.dmg" download>Intel</a>
       <p style="font-size:12px;color:var(--mut);margin:8px 0 0">Not sure which one?  menu → "About This
       Mac": <b>Apple M1/M2/M3/M4 chip</b> = Apple Silicon; <b>Intel</b> = Intel.
       <b>With the wrong .dmg the app won't open.</b></p></div>
     <div class="card"><div class="tag">🪟 WINDOWS</div><h3>.exe installer</h3>
-      <p style="font-size:13px;color:var(--mut)">An installation wizard with an icon.</p>
+      <p style="font-size:13px;color:var(--mut)">An installation wizard with an icon. To update, run the new
+      installer: it closes the wallet and replaces it.</p>
       <a class="btn btn-primary" href="/descargas/rami-chain-windows-setup.exe" download>⬇ Windows</a></div>
     <div class="card"><div class="tag">🐧 LINUX</div><h3>AppImage</h3>
-      <p style="font-size:13px;color:var(--mut)">Give it execute permission and you're done.</p>
+      <p style="font-size:13px;color:var(--mut)">Give it execute permission and you're done. To update, replace
+      the file (or let the app do it for you).</p>
       <a class="btn btn-primary" href="/descargas/rami-chain-linux.AppImage" download>⬇ Linux</a></div>
   </div>
+  <div class="card" style="margin:14px 0 10px">
+    <div class="tag">HOW UPDATES WORK · like Bitcoin Core, but one click</div>
+    <p style="font-size:13.5px;color:var(--mut);margin:8px 0 0;line-height:1.6">
+      <b>From the app (the normal way):</b> when a new version is out, the dashboard tells you; press
+      <b>"Update now"</b>. The app downloads the official installer, <b>verifies its SHA-256</b> against the
+      published one, installs the new version over the current one, <b>quits and relaunches itself</b>. Your wallet
+      and chain are untouched.<br>
+      <b>By hand (if you prefer):</b> download the new file above and open it. macOS: double-click RAMI-Chain inside
+      the .dmg → "Install" (replaces the previous version and closes the running one). Windows: run the installer
+      (closes the open wallet and replaces it). Linux: replace the .AppImage. If you open a new version while the old
+      one is still running, the new one asks it to quit and takes its place.<br>
+      <b>If something looks off:</b> <code>~/.rami/gui-launch.log</code> records every step (starting version,
+      download, verification, install); the Update tab shows <b>where the app is running from</b>.
+    </p>
+  </div>
   <details style="margin:16px 0 26px;color:var(--mut);font-size:13.5px">
-    <summary style="cursor:pointer;color:#cfd3e6"><b>Advanced users only</b> · verifying and opening an unsigned build</summary>
+    <summary style="cursor:pointer;color:#cfd3e6"><b>Advanced users only</b> · verify, open and install from the terminal</summary>
     <div style="margin-top:10px;line-height:1.6">
       <b>1 · ALWAYS verify before opening.</b> Check that your download's SHA-256 matches
       <a href="/descargas/SHA256SUMS.txt">SHA256SUMS.txt</a>:
@@ -272,7 +290,23 @@
       If it doesn't match, delete it.<br>
       <b>2 · Open only if you understand the risk.</b> macOS: right-click → Open (or System Settings →
       Privacy &amp; Security → "Open Anyway"). Windows: More info → Run anyway. You are taking on the
-      verification the platform would normally do for you.
+      verification the platform would normally do for you.<br>
+      <b>3 · Terminal install</b> (same result as the installer; <code>$TAG</code> is the version, e.g. <code>v0.5.3</code>):<br>
+      <code style="display:block;white-space:pre-wrap;margin:6px 0;padding:8px 10px;background:rgba(255,255,255,.05);border-radius:8px">TAG=$(curl -sIL -o /dev/null -w '%{url_effective}' https://github.com/baydounr01-blip/RAMI-Ledger/releases/latest | sed 's#.*/tag/##')
+# macOS (Apple Silicon; Intel: macos-x64)
+curl -fLO https://github.com/baydounr01-blip/RAMI-Ledger/releases/download/$TAG/RAMI-Chain-$TAG-macos-arm64.dmg
+curl -fLO https://github.com/baydounr01-blip/RAMI-Ledger/releases/download/$TAG/SHA256SUMS.txt
+shasum -a 256 -c &lt;(grep macos-arm64.dmg SHA256SUMS.txt)          # must print OK
+hdiutil attach -nobrowse -mountpoint /tmp/rami-dmg RAMI-Chain-$TAG-macos-arm64.dmg
+rm -rf /Applications/RAMI-Chain.app &amp;&amp; ditto /tmp/rami-dmg/RAMI-Chain.app /Applications/RAMI-Chain.app
+hdiutil detach /tmp/rami-dmg &amp;&amp; open /Applications/RAMI-Chain.app
+# Linux
+curl -fLO https://github.com/baydounr01-blip/RAMI-Ledger/releases/download/$TAG/RAMI-Chain-$TAG-x86_64.AppImage
+sha256sum -c &lt;(grep AppImage SHA256SUMS.txt) &amp;&amp; chmod +x RAMI-Chain-$TAG-x86_64.AppImage &amp;&amp; ./RAMI-Chain-$TAG-x86_64.AppImage
+# Windows (PowerShell): silent install
+(Get-FileHash .\RAMI-Chain-$TAG-setup.exe).Hash   # compare with SHA256SUMS.txt
+.\RAMI-Chain-$TAG-setup.exe /S</code>
+      Loose binaries (<code>.tar.gz</code>/<code>.zip</code>, for <code>rami-node</code>/<code>rami-wallet</code> on servers): in the same release.
     </div>
   </details>
   <p style="color:var(--mut);font-size:13px;margin:6px 0 26px">
