@@ -306,6 +306,17 @@
   <span class="updmsg" id="updMsg"></span>
   <button class="x" id="updClose" title="cerrar" aria-label="cerrar">×</button>
 </div>
+<!-- pantalla de espera durante la actualización -->
+<div id="updWait" style="display:none;position:fixed;inset:0;z-index:60;background:rgba(8,12,20,.94);align-items:center;justify-content:center;text-align:center;padding:24px">
+  <div style="max-width:520px">
+    <div style="font-size:44px;margin-bottom:10px">⏳</div>
+    <h2 style="margin:0 0 8px">Actualizando a <span id="updWaitVer"></span>…</h2>
+    <p id="updWaitMsg" style="color:var(--muted);line-height:1.6;margin:0 0 14px">Instalando la versión nueva. El monedero se cierra y se vuelve a abrir solo;
+      esta pestaña se recargará automáticamente. No cierres el ordenador.</p>
+    <p id="updWaitHelp" style="display:none;color:var(--muted);line-height:1.6;font-size:13px"></p>
+    <button class="btn ghost small" id="updWaitReload" style="display:none">🔄 Recargar el panel</button>
+  </div>
+</div>
 <!-- aviso: monedero sin cifrar (estado plain) -->
 <div class="plainwarn" id="plainBanner">
   <span>⚠️ Tu monedero no está cifrado.</span>
@@ -508,8 +519,15 @@
         <button class="btn" id="updApplyBtn2" style="display:none">⬇️ Actualizar ahora</button>
         <div class="status" id="updStatus2"></div>
         <p class="note" id="updDetail" style="margin-top:12px"></p>
-        <p class="note">Descarga manual desde la web oficial:
-          <a href="https://quantbot.army/#descargas" target="_blank" rel="noopener">quantbot.army/#descargas</a>.
+        <div id="updNotesBox" style="display:none;margin-top:12px">
+          <div class="lbl" style="margin-bottom:6px">📝 Novedades de <span id="updNotesVer"></span></div>
+          <div id="updNotes" style="white-space:pre-wrap;font-size:13px;line-height:1.55;max-height:260px;overflow:auto;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:10px;padding:10px 12px"></div>
+        </div>
+        <p class="note">Cómo funciona: se descarga el instalador oficial, se comprueba su <b>SHA-256</b> contra el publicado,
+          se instala la versión nueva en el sitio de la actual, el monedero se cierra y <b>se vuelve a abrir solo</b>;
+          esta pestaña se recarga con la versión nueva. Tu monedero y tu cadena no se tocan.</p>
+        <p class="note">Enlaces: <a id="updGhLink" href="https://github.com/baydounr01-blip/RAMI-Ledger/releases/latest" target="_blank" rel="noopener">release en GitHub</a>
+          · <a href="https://quantbot.army/#descargas" target="_blank" rel="noopener">descarga manual en quantbot.army</a>.
           La comprobación automática se repite cada 10 minutos y avisa arriba si aparece una versión nueva.</p>
       </div>
     </section>
@@ -872,8 +890,15 @@
   }
 
   // ---------- render status ----------
+  var bootVersion = "";
   function renderStatus(s){
     document.getElementById("verTxt").textContent = s.version || "—";
+    // Si el proceso que responde ya es OTRA versión (se actualizó), esta
+    // pestaña muestra un panel viejo: recárgala para ver el nuevo.
+    if(s.version){
+      if(!bootVersion) bootVersion = s.version;
+      else if(s.version !== bootVersion){ location.reload(); return; }
+    }
     // El nodo aún está cargando la cadena (el panel abre al instante).
     if(s.starting){
       document.getElementById("syncDot").className = "dot syncing";
@@ -1474,6 +1499,13 @@
       ? ("Instalador para tu sistema ("+d.platform+"): "+d.asset_name+
          (d.sha256 ? " · SHA-256 "+d.sha256.slice(0,16)+"…" : " · sin hash publicado"))
       : (d.note||""));
+    if(d.html_url) document.getElementById("updGhLink").href = d.html_url;
+    var nb = document.getElementById("updNotesBox");
+    if(d.notes){
+      txt("updNotesVer", "v"+d.latest+(d.published ? " · "+d.published.slice(0,10) : ""));
+      txt("updNotes", d.notes);
+      nb.style.display = "";
+    } else nb.style.display = "none";
     // Aviso automático de arriba: solo con versión nueva y si no se descartó.
     if(d.newer && updDismissed !== d.latest){
       txt("updVer", "v"+d.latest);
@@ -1495,7 +1527,7 @@
   }
   function applyUpdate(btn, msg){
     if(updApplying) return;
-    if(!confirm("Se descargará el instalador oficial, se comprobará su SHA-256 y se aplicará la actualización. ¿Continuar?")) return;
+    if(!confirm("Se descargará el instalador oficial, se comprobará su SHA-256, se instalará la versión nueva y el monedero se cerrará y volverá a abrirse solo. Tu monedero y tu cadena no se tocan. ¿Continuar?")) return;
     updApplying = true;
     btn.disabled = true; btn.textContent = "Descargando y verificando…";
     msg.textContent = "";
@@ -1504,6 +1536,11 @@
         if(r && r.ok){
           btn.style.display = "none";
           msg.textContent = "✓ " + (r.message || "Actualización aplicada.");
+          if(r.relaunch) waitForNewVersion(r.new_version || "", r.message || "");
+          else if(r.needs_restart){
+            waitForNewVersion(r.new_version || "", r.message || "");
+            txt("updWaitMsg", r.message || "Cierra el monedero y vuelve a abrir la app para usar la versión nueva.");
+          }
         }else{
           btn.disabled = false; btn.textContent = "⬇️ Actualizar ahora";
           msg.textContent = "✗ " + ((r && r.message) || (r && r.error) || "no se pudo actualizar");
@@ -1515,6 +1552,34 @@
       })
       .then(function(){ updApplying = false; });
   }
+  // Tras instalar: el proceso viejo se cierra y el nuevo abre el panel en el
+  // mismo puerto. Sondea /api/status hasta ver la versión nueva y recarga.
+  // Si en 3 minutos no aparece, explica qué hacer (sin tecnicismos).
+  function waitForNewVersion(newVer, message){
+    var box = document.getElementById("updWait");
+    txt("updWaitVer", newVer ? "v"+newVer : "la versión nueva");
+    box.style.display = "flex";
+    updApplying = true;
+    var started = Date.now(), tries = 0;
+    var timer = setInterval(function(){
+      tries++;
+      fetch("/api/status", {cache:"no-store"}).then(function(r){ return r.json(); })
+        .then(function(d){
+          if(d && d.version && d.version !== bootVersion){ clearInterval(timer); location.reload(); }
+        })
+        .catch(function(){ /* el proceso viejo se cerró; el nuevo aún arranca */ });
+      if(Date.now() - started > 180000){
+        clearInterval(timer);
+        var help = document.getElementById("updWaitHelp");
+        help.style.display = "";
+        help.textContent = "La versión nueva no ha vuelto a abrirse sola. Abre RAMI-Chain como siempre " +
+          "(Aplicaciones / menú Inicio / tu AppImage). Si al abrirla sigue apareciendo la versión antigua, " +
+          "descárgala desde quantbot.army/#descargas e instálala encima. Detalle: " + (message || "");
+        document.getElementById("updWaitReload").style.display = "";
+      }
+    }, 1500);
+  }
+  document.getElementById("updWaitReload").addEventListener("click", function(){ location.reload(); });
   document.getElementById("updApplyBtn").addEventListener("click", function(){
     applyUpdate(this, document.getElementById("updMsg"));
   });

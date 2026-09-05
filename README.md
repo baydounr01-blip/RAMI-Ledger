@@ -323,6 +323,24 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
   app (clic en el icono), **abre el panel en el navegador**. El servidor del
   panel pasa a un hilo. Desde una terminal se comporta como siempre. Se retira
   la lanzadera de v0.4.2 (ya innecesaria).
+- **v0.5.2 (esto): actualización de UN clic, para expertos y novatos.** Hasta
+  ahora, en macOS y Windows «Actualizar ahora» solo descargaba el instalador
+  verificado, lo abría y cerraba la app: si el usuario no arrastraba la app a
+  Aplicaciones (o no terminaba el instalador), **seguía con la versión vieja**
+  — por eso la Ciudad RAMI «no aparecía» tras actualizar. Ahora el monedero
+  descarga, **verifica el SHA-256**, **instala la versión nueva en el sitio de
+  la actual** (macOS: monta el .dmg sin ventana y copia la app con `ditto`
+  sobre el bundle instalado, con verificación de firma y vuelta atrás si
+  falla; Windows: instalador oficial en modo silencioso sobre la misma
+  carpeta; Linux: AppImage sustituido de forma atómica), **se cierra y se
+  vuelve a abrir sola**; la pestaña del panel espera y **se recarga** con la
+  versión nueva (también si estaba abierta de antes: al detectar otra versión
+  se recarga sola). La pestaña Actualizar muestra las **Novedades** del
+  release y enlaza al release de GitHub y a la web. Cada paso queda en la caja
+  negra `~/.rami/gui-launch.log`. No se salta ninguna comprobación del
+  sistema: es el esquema habitual de los actualizadores de escritorio
+  (verificación criptográfica y sustitución de una app ya instalada por el
+  usuario). Las notas del release salen de `RELEASE_NOTES.md`.
 - **v0.5.x (siguiente):** instantáneas de cadena re-verificables para el explorador
   web, seeds comunitarios, endurecimiento P2P (puntuación de pares, límites por
   IP) y IPC dedicado faucet↔nodo.

@@ -52,6 +52,9 @@ done
 printf '{"version":"%s"}\n' "$tag" > "${OUT}/version.json"
 # Espejo del release con la MISMA forma que la API de GitHub (subconjunto):
 # el auto-actualizador del monedero lo parsea igual que el release oficial.
-jq -n --arg tag "$tag" --arg site "$SITE" --argjson assets "$assets" \
-  '{tag_name:$tag, html_url:($site + "/#descargas"), assets:$assets}' > "${OUT}/latest.json"
+# Incluye también las notas («Novedades») y la fecha, que el panel muestra.
+body="$(printf '%s' "$json" | jq -r '.body // ""')"
+published="$(printf '%s' "$json" | jq -r '.published_at // ""')"
+jq -n --arg tag "$tag" --arg site "$SITE" --arg body "$body" --arg published "$published" --argjson assets "$assets" \
+  '{tag_name:$tag, html_url:($site + "/#descargas"), body:$body, published_at:$published, assets:$assets}' > "${OUT}/latest.json"
 echo "✓ descargas listas en ${OUT} (release ${tag}; espejo latest.json para el auto-actualizador)"

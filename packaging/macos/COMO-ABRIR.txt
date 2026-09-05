@@ -47,6 +47,11 @@ El monedero vive en tu navegador (panel local en http://127.0.0.1:8645).
   • Para cerrarla del todo: botón «⏻ Salir» del panel (arriba a la derecha).
   • Si algún día ves «no responde»: abre http://127.0.0.1:8645 — el nodo sigue
     funcionando — y actualiza a la última versión desde la pestaña Actualizar.
+  • ACTUALIZAR (desde v0.5.2): pestaña «Actualizar» → «Actualizar ahora». La app
+    descarga el .dmg oficial, comprueba su SHA-256, instala la versión nueva
+    encima de la actual, se cierra y se vuelve a abrir sola; el panel se
+    recarga. No hay que arrastrar nada. Si algo falla, se abre el .dmg
+    verificado para hacerlo a mano y el motivo queda en ~/.rami/gui-launch.log.
 
 RAMI-Chain es una TESTNET experimental, sin valor monetario. No es una inversión.
 

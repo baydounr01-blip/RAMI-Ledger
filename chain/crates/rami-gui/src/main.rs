@@ -489,10 +489,12 @@ fn route(g: &Gui, req: Request) -> Response {
             Err(e) => err(e),
         },
 
-        // Descarga el instalador oficial, VERIFICA su SHA-256 y lo aplica.
-        // Nunca ejecuta ni sobrescribe nada cuyo hash no coincida.
+        // Descarga el instalador oficial, VERIFICA su SHA-256, instala la
+        // versión nueva y programa su reapertura (este proceso se cierra en
+        // unos segundos). Nunca ejecuta ni sobrescribe nada cuyo hash no coincida.
         ("POST", "/api/update/apply") => {
-            let r = rami_node::update::apply(env!("CARGO_PKG_VERSION"));
+            dlog("actualización solicitada desde el panel");
+            let r = rami_node::update::apply_and_relaunch(env!("CARGO_PKG_VERSION"));
             let mut v = serde_json::to_value(&r).unwrap_or_else(|_| json!({}));
             v["ok"] = json!(r.ok);
             Response::json(&v)

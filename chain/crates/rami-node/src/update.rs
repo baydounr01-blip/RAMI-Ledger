@@ -7,15 +7,22 @@
 //!
 //! Propiedad de seguridad clave: nunca ejecutamos ni sobrescribimos nada cuyo
 //! hash no coincida exactamente con el publicado. Si falta el hash o no cuadra,
-//! se aborta. La descarga va por HTTPS (TLS con rustls). En macOS/Windows el
-//! instalador descargado, cuando esté firmado, sigue pasando el filtro del
-//! sistema operativo al ejecutarse: NO nos saltamos ninguna comprobación.
+//! se aborta. La descarga va por HTTPS (TLS con rustls).
+//!
+//! Desde v0.5.2 la actualización es de UN clic en los tres sistemas: se
+//! instala la versión nueva en el sitio de la actual (macOS: se copia la app
+//! del .dmg verificado sobre el bundle instalado; Windows: el instalador
+//! oficial en modo silencioso; Linux: el AppImage se reemplaza de forma
+//! atómica), el monedero se cierra y **se vuelve a abrir solo** con la versión
+//! nueva. No se salta ninguna comprobación del sistema: es el mismo esquema que
+//! usan los actualizadores de escritorio habituales (verificación criptográfica
+//! del paquete y sustitución de una app que el usuario ya había instalado).
 //!
 //! Testnet experimental, sin valor monetario.
 
 use std::io::Read;
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -30,12 +37,19 @@ const DEFAULT_RELEASE_URL: &str =
 /// pocos MB; esto acota un servidor malicioso o un archivo corrupto enorme.
 const MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
 
+/// Tope de las notas del release que se muestran en el panel.
+const MAX_NOTES_CHARS: usize = 6000;
+
 /// Página web oficial del proyecto (sin barra final). La web publica en
 /// `/descargas/latest.json` un espejo del release (mismos nombres de archivo,
 /// servidos desde el propio dominio de la web), así que el monedero queda
 /// «anclado» a la página: si la API de GitHub no responde, se usa la web.
 /// Se puede sobrescribir con `RAMI_WEB_URL`.
 const DEFAULT_WEB_URL: &str = "https://quantbot.army";
+
+/// Nombre del bundle de macOS que publica release.yml / package.sh.
+#[allow(dead_code)]
+const MAC_APP_NAME: &str = "RAMI-Chain.app";
 
 fn release_url() -> String {
     std::env::var("RAMI_UPDATE_RELEASE_URL").unwrap_or_else(|_| DEFAULT_RELEASE_URL.to_string())
@@ -48,6 +62,35 @@ fn web_base() -> Option<String> {
         None
     } else {
         Some(v)
+    }
+}
+
+fn home_dir() -> Option<PathBuf> {
+    for var in ["HOME", "USERPROFILE"] {
+        if let Ok(h) = std::env::var(var) {
+            if !h.is_empty() {
+                return Some(PathBuf::from(h));
+            }
+        }
+    }
+    None
+}
+
+/// Caja negra compartida con la app de escritorio (`~/.rami/gui-launch.log`):
+/// cada paso de la actualización queda registrado para poder diagnosticar un
+/// fallo aunque la app se haya cerrado y no haya terminal.
+fn ulog(msg: &str) {
+    let line = format!("[{} pid {}] update: {msg}\n", crate::now_secs(), std::process::id());
+    eprint!("{line}");
+    if let Some(h) = home_dir() {
+        let p = h.join(".rami").join("gui-launch.log");
+        if let Some(parent) = p.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
+            let _ = f.write_all(line.as_bytes());
+        }
     }
 }
 
@@ -66,6 +109,11 @@ pub struct UpdateInfo {
     pub supported: bool,
     pub html_url: String,
     pub note: String,
+    /// Notas del release («Novedades»), texto plano/markdown tal cual se
+    /// publicó; vacío si la fuente consultada no las incluye.
+    pub notes: String,
+    /// Fecha de publicación (ISO 8601) si la fuente la incluye.
+    pub published: String,
 }
 
 /// Resultado de aplicar la actualización.
@@ -74,6 +122,11 @@ pub struct ApplyResult {
     pub ok: bool,
     pub stage: String,
     pub needs_restart: bool,
+    /// true: este proceso se cerrará en unos segundos y la versión nueva se
+    /// abrirá sola (el panel puede esperar y recargarse).
+    pub relaunch: bool,
+    /// Versión que se ha instalado (para que el panel sepa a qué esperar).
+    pub new_version: String,
     pub message: String,
 }
 
@@ -277,6 +330,10 @@ pub fn check(current: &str) -> Result<UpdateInfo, String> {
     info.latest = norm(tag);
     info.html_url = v.get("html_url").and_then(|t| t.as_str()).unwrap_or("").to_string();
     info.newer = is_newer(&info.latest, &info.current);
+    info.published = v.get("published_at").and_then(|t| t.as_str()).unwrap_or("").to_string();
+    if let Some(body) = v.get("body").and_then(|b| b.as_str()) {
+        info.notes = body.chars().take(MAX_NOTES_CHARS).collect::<String>().trim().to_string();
+    }
 
     let assets = v.get("assets").and_then(|a| a.as_array()).cloned().unwrap_or_default();
     let mut sums_url = String::new();
@@ -316,33 +373,45 @@ pub fn check(current: &str) -> Result<UpdateInfo, String> {
 }
 
 /// Directorio donde guardar el instalador descargado (macOS/Windows).
+#[allow(dead_code)]
 fn save_dir() -> PathBuf {
-    for var in ["HOME", "USERPROFILE"] {
-        if let Ok(h) = std::env::var(var) {
-            let d = PathBuf::from(&h).join("Downloads");
-            if d.is_dir() {
-                return d;
-            }
+    if let Some(h) = home_dir() {
+        let d = h.join("Downloads");
+        if d.is_dir() {
+            return d;
         }
     }
     std::env::temp_dir()
 }
 
-/// Descarga, VERIFICA el SHA-256 y aplica la actualización.
-///
-/// - Linux (AppImage): reemplaza el propio ejecutable de forma atómica; basta
-///   con reiniciar el monedero.
-/// - macOS (.dmg) / Windows (.exe): guarda el instalador **verificado** y lo
-///   abre; el instalador firmado del sistema completa la instalación (y pasa el
-///   filtro de Gatekeeper/SmartScreen al ejecutarse).
+/// Descarga, VERIFICA el SHA-256 e instala la actualización SIN reabrir la
+/// app ni cerrar este proceso (pruebas y uso desde scripts). El monedero de
+/// escritorio usa [`apply_and_relaunch`].
 pub fn apply(current: &str) -> ApplyResult {
-    match apply_inner(current) {
-        Ok(r) => r,
-        Err(message) => ApplyResult { ok: false, stage: "error".into(), needs_restart: false, message },
+    apply_with(current, false)
+}
+
+/// Descarga, VERIFICA el SHA-256, instala la versión nueva, programa su
+/// reapertura automática y cierra este proceso en unos segundos (tiempo para
+/// que la respuesta llegue al panel). Es la actualización «de un clic».
+pub fn apply_and_relaunch(current: &str) -> ApplyResult {
+    apply_with(current, true)
+}
+
+fn apply_with(current: &str, relaunch: bool) -> ApplyResult {
+    match apply_inner(current, relaunch) {
+        Ok(r) => {
+            ulog(&format!("{}: {}", r.stage, r.message));
+            r
+        }
+        Err(message) => {
+            ulog(&format!("ERROR: {message}"));
+            ApplyResult { ok: false, stage: "error".into(), message, ..Default::default() }
+        }
     }
 }
 
-fn apply_inner(current: &str) -> Result<ApplyResult, String> {
+fn apply_inner(current: &str, relaunch: bool) -> Result<ApplyResult, String> {
     // Re-comprueba en el momento de aplicar (no confíes en un estado viejo).
     let info = check(current)?;
     if !info.supported {
@@ -357,6 +426,7 @@ fn apply_inner(current: &str) -> Result<ApplyResult, String> {
     if info.sha256.is_empty() {
         return Err("no puedo verificar la descarga (falta el hash SHA-256): se aborta".into());
     }
+    ulog(&format!("v{} → v{}: descargando {}", info.current, info.latest, info.asset_name));
 
     // Descarga y VERIFICA antes de tocar nada.
     let bytes = http_get_bytes(&info.asset_url)?;
@@ -370,28 +440,95 @@ fn apply_inner(current: &str) -> Result<ApplyResult, String> {
             &got[..16]
         ));
     }
+    ulog(&format!("SHA-256 verificado ({} bytes)", bytes.len()));
 
-    match platform() {
-        "linux" => apply_linux(&bytes),
-        "macos-arm64" | "macos-x64" => apply_open(&bytes, &info.asset_name, "macOS"),
-        "windows" => apply_open(&bytes, &info.asset_name, "Windows"),
-        _ => Err("plataforma no soportada".into()),
+    let mut r = match platform() {
+        "linux" => apply_linux(&bytes, relaunch)?,
+        "macos-arm64" | "macos-x64" => apply_macos(&bytes, &info.asset_name, relaunch)?,
+        "windows" => apply_windows(&bytes, &info.asset_name, relaunch)?,
+        _ => return Err("plataforma no soportada".into()),
+    };
+    r.new_version = info.latest.clone();
+    if r.relaunch {
+        exit_soon();
     }
+    Ok(r)
+}
+
+/// Salida limpia diferida: da tiempo a que la respuesta HTTP llegue al panel.
+fn exit_soon() {
+    std::thread::spawn(|| {
+        std::thread::sleep(Duration::from_millis(2500));
+        ulog("cerrando este proceso para dejar paso a la versión nueva");
+        std::process::exit(0);
+    });
+}
+
+#[allow(dead_code)]
+fn run(cmd: &mut Command, what: &str) -> Result<String, String> {
+    let out = cmd
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("{what}: no se pudo ejecutar: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("{what}: falló ({}): {}", out.status, err.trim()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
 #[cfg(unix)]
-fn make_executable(path: &std::path::Path) -> std::io::Result<()> {
+fn make_executable(path: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
 }
 #[cfg(not(unix))]
-fn make_executable(_path: &std::path::Path) -> std::io::Result<()> {
+fn make_executable(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Unix: proceso auxiliar desacoplado que espera a que ESTE proceso termine y
+/// entonces abre la versión nueva. Así la app nueva nunca encuentra el puerto
+/// del panel ocupado por la vieja (que la haría salir creyendo que ya hay un
+/// monedero abierto).
+fn spawn_relauncher_unix(open_cmd: &str, target: &Path) -> Result<(), String> {
+    // Se conservan los argumentos con los que se abrió esta instancia
+    // (--network, --port, --chain…): la versión nueva arranca igual que la vieja.
+    let user_args: Vec<String> = std::env::args().skip(1).collect();
+    let pass_args = if user_args.is_empty() {
+        ""
+    } else if open_cmd.is_empty() {
+        " \"$@\""
+    } else {
+        " --args \"$@\"" // `open <app> --args …` en macOS
+    };
+    let script = format!(
+        "while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done; sleep 0.3; t=\"$2\"; shift 2; exec {open_cmd} \"$t\"{pass_args}"
+    );
+    Command::new("/bin/sh")
+        .arg("-c")
+        .arg(script)
+        .arg("rami-relaunch")
+        .arg(std::process::id().to_string())
+        .arg(target)
+        .args(&user_args)
+        // Sin herencia del entorno del AppImage/bundle viejo.
+        .env_remove("APPIMAGE")
+        .env_remove("APPDIR")
+        .env_remove("ARGV0")
+        .env_remove("OWD")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("no pude programar la reapertura: {e}"))
+}
+
 /// AppImage: escribe el nuevo binario junto al actual y lo renombra encima
-/// (atómico en el mismo sistema de archivos). Reiniciar aplica la versión nueva.
-fn apply_linux(bytes: &[u8]) -> Result<ApplyResult, String> {
+/// (atómico en el mismo sistema de archivos). Con `relaunch`, la versión
+/// nueva se abre sola al cerrarse esta.
+fn apply_linux(bytes: &[u8], relaunch: bool) -> Result<ApplyResult, String> {
     let target = std::env::var("APPIMAGE")
         .ok()
         .map(PathBuf::from)
@@ -404,44 +541,256 @@ fn apply_linux(bytes: &[u8]) -> Result<ApplyResult, String> {
         let _ = std::fs::remove_file(&tmp);
         format!("no pude sustituir el ejecutable: {e}")
     })?;
+    ulog(&format!("AppImage sustituido: {}", target.display()));
+    let mut relaunched = false;
+    if relaunch {
+        relaunched = spawn_relauncher_unix("", &target).map(|_| true).unwrap_or_else(|e| {
+            ulog(&e);
+            false
+        });
+    }
     Ok(ApplyResult {
         ok: true,
         stage: "installed".into(),
         needs_restart: true,
-        message: "Actualización aplicada. Cierra y vuelve a abrir el monedero para usar la nueva versión.".into(),
+        relaunch: relaunched,
+        message: if relaunched {
+            "Actualización instalada. El monedero se cierra y se vuelve a abrir solo con la versión nueva.".into()
+        } else {
+            "Actualización aplicada. Cierra y vuelve a abrir el monedero para usar la nueva versión.".into()
+        },
+        ..Default::default()
     })
 }
 
-/// macOS/Windows: guarda el instalador verificado, lo abre y CIERRA esta app
-/// tras unos segundos — con la app vieja viva, el instalador no puede
-/// reemplazar el ejecutable en uso y la versión nueva no podría abrir el panel.
-fn apply_open(bytes: &[u8], asset_name: &str, os: &str) -> Result<ApplyResult, String> {
-    let path = save_dir().join(asset_name);
-    std::fs::write(&path, bytes).map_err(|e| format!("no pude guardar el instalador: {e}"))?;
-    let spawned = if cfg!(target_os = "macos") {
-        // El .dmg no necesita permisos de ejecución; `open` lo monta.
-        Command::new("open").arg(&path).spawn()
-    } else {
-        // Windows: ejecuta el instalador .exe (verificado).
-        Command::new(&path).spawn()
+/// macOS: bundle `.app` que contiene a este ejecutable, si está instalado en
+/// un sitio «de verdad» (no dentro del .dmg montado ni en la cuarentena de
+/// traslocación de macOS, donde no se puede/debe escribir).
+#[cfg(target_os = "macos")]
+fn installed_bundle() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let mut p: &Path = &exe;
+    while let Some(parent) = p.parent() {
+        if parent.extension().and_then(|e| e.to_str()) == Some("app") {
+            let s = parent.to_string_lossy();
+            if s.starts_with("/Volumes/") || s.contains("/AppTranslocation/") {
+                return None;
+            }
+            return Some(parent.to_path_buf());
+        }
+        p = parent;
+    }
+    None
+}
+
+/// macOS: instala la app del `.dmg` VERIFICADO en el sitio de la actual (o en
+/// Aplicaciones si la actual no está instalada) y la reabre.
+#[cfg(target_os = "macos")]
+fn apply_macos(bytes: &[u8], asset_name: &str, relaunch: bool) -> Result<ApplyResult, String> {
+    let dmg = save_dir().join(asset_name);
+    std::fs::write(&dmg, bytes).map_err(|e| format!("no pude guardar el instalador: {e}"))?;
+
+    // Destinos por orden: el bundle en uso; /Applications; ~/Applications.
+    let mut dests: Vec<PathBuf> = Vec::new();
+    if let Some(b) = installed_bundle() {
+        dests.push(b);
+    }
+    dests.push(PathBuf::from("/Applications").join(MAC_APP_NAME));
+    if let Some(h) = home_dir() {
+        dests.push(h.join("Applications").join(MAC_APP_NAME));
+    }
+
+    // Monta el .dmg en un punto conocido (sin abrir ventana del Finder).
+    let mnt = std::env::temp_dir().join(format!("rami-update-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&mnt);
+    std::fs::create_dir_all(&mnt).map_err(|e| format!("no pude crear el punto de montaje: {e}"))?;
+    run(
+        Command::new("hdiutil")
+            .args(["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint"])
+            .arg(&mnt)
+            .arg(&dmg),
+        "montar el .dmg",
+    )?;
+    let result = install_from_mounted_dmg(&mnt, &dests);
+    let _ = Command::new("hdiutil").args(["detach", "-force"]).arg(&mnt).stdin(Stdio::null()).output();
+    let _ = std::fs::remove_dir(&mnt);
+
+    let dest = match result {
+        Ok(d) => d,
+        Err(e) => {
+            // Último recurso: deja el .dmg verificado abierto para que el
+            // usuario arrastre la app a Aplicaciones (el método clásico).
+            ulog(&format!("instalación automática fallida: {e}; abro el .dmg"));
+            let _ = Command::new("open").arg(&dmg).stdin(Stdio::null()).spawn();
+            return Ok(ApplyResult {
+                ok: true,
+                stage: "downloaded".into(),
+                needs_restart: true,
+                relaunch: false,
+                message: format!(
+                    "No pude instalar la app automáticamente ({e}). He abierto el instalador verificado: \
+                     arrastra RAMI-Chain a Aplicaciones (sustituye la actual), cierra este monedero con \
+                     «Salir» y vuelve a abrir la app. (Instalador guardado en {})",
+                    dmg.display()
+                ),
+                ..Default::default()
+            });
+        }
     };
-    spawned.map_err(|e| format!("descargado y verificado, pero no pude abrir el instalador: {e}"))?;
-    // Salida limpia diferida: da tiempo a que la respuesta HTTP llegue al panel.
-    std::thread::spawn(|| {
-        std::thread::sleep(std::time::Duration::from_millis(2500));
-        std::process::exit(0);
-    });
+    let _ = std::fs::remove_file(&dmg);
+    ulog(&format!("app instalada en {}", dest.display()));
+
+    let mut relaunched = false;
+    if relaunch {
+        relaunched = spawn_relauncher_unix("open", &dest).map(|_| true).unwrap_or_else(|e| {
+            ulog(&e);
+            false
+        });
+    }
     Ok(ApplyResult {
         ok: true,
-        stage: "downloaded".into(),
+        stage: "installed".into(),
         needs_restart: true,
-        message: format!(
-            "Instalador verificado y abierto ({os}). Este monedero se cerrará ahora para que el \
-             instalador pueda reemplazarlo; sigue sus pasos y vuelve a abrir la app. \
-             (Instalador guardado en {})",
-            path.display()
-        ),
+        relaunch: relaunched,
+        message: if relaunched {
+            format!(
+                "Versión nueva instalada en {}. El monedero se cierra y se vuelve a abrir solo.",
+                dest.display()
+            )
+        } else {
+            format!("Versión nueva instalada en {}. Cierra este monedero y vuelve a abrir la app.", dest.display())
+        },
+        ..Default::default()
     })
+}
+
+/// macOS: copia la app del .dmg montado al primer destino donde se pueda,
+/// con verificación de la firma del bundle copiado y vuelta atrás si falla.
+#[cfg(target_os = "macos")]
+fn install_from_mounted_dmg(mnt: &Path, dests: &[PathBuf]) -> Result<PathBuf, String> {
+    let src = std::fs::read_dir(mnt)
+        .map_err(|e| format!("no pude leer el .dmg montado: {e}"))?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.is_dir() && p.extension().and_then(|e| e.to_str()) == Some("app"))
+        .ok_or("el .dmg no contiene ninguna app")?;
+    let mut errs: Vec<String> = Vec::new();
+    for dest in dests {
+        match install_bundle(&src, dest) {
+            Ok(()) => return Ok(dest.clone()),
+            Err(e) => errs.push(format!("{}: {e}", dest.display())),
+        }
+    }
+    Err(errs.join(" | "))
+}
+
+#[cfg(target_os = "macos")]
+fn install_bundle(src: &Path, dest: &Path) -> Result<(), String> {
+    let parent = dest.parent().ok_or("destino sin carpeta")?;
+    std::fs::create_dir_all(parent).map_err(|e| format!("no pude crear la carpeta: {e}"))?;
+    let staged = parent.join("RAMI-Chain.app.actualizando");
+    let old = parent.join("RAMI-Chain.app.anterior");
+    let _ = std::fs::remove_dir_all(&staged);
+    // `ditto` conserva firma, atributos y permisos del bundle (lo que Apple
+    // recomienda para copiar apps).
+    run(Command::new("ditto").arg(src).arg(&staged), "copiar la app")?;
+    if let Err(e) = run(Command::new("codesign").args(["--verify", "--deep", "--strict"]).arg(&staged), "verificar la firma") {
+        let _ = std::fs::remove_dir_all(&staged);
+        return Err(e);
+    }
+    // Intercambio: la app en uso pasa a .anterior (el proceso vivo sigue
+    // funcionando: macOS mantiene el ejecutable abierto), la nueva ocupa su sitio.
+    let _ = std::fs::remove_dir_all(&old);
+    let had_old = dest.exists();
+    if had_old {
+        std::fs::rename(dest, &old).map_err(|e| {
+            let _ = std::fs::remove_dir_all(&staged);
+            format!("no pude apartar la app actual: {e}")
+        })?;
+    }
+    if let Err(e) = std::fs::rename(&staged, dest) {
+        if had_old {
+            let _ = std::fs::rename(&old, dest);
+        }
+        let _ = std::fs::remove_dir_all(&staged);
+        return Err(format!("no pude colocar la app nueva: {e}"));
+    }
+    let _ = std::fs::remove_dir_all(&old);
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_macos(_bytes: &[u8], _asset_name: &str, _relaunch: bool) -> Result<ApplyResult, String> {
+    Err("no es macOS".into())
+}
+
+/// Windows: guarda el instalador oficial VERIFICADO y, tras cerrarse este
+/// proceso, lo ejecuta en modo silencioso sobre la carpeta actual y vuelve a
+/// abrir el monedero. Sin `relaunch`, solo deja el instalador descargado.
+#[cfg(target_os = "windows")]
+fn apply_windows(bytes: &[u8], asset_name: &str, relaunch: bool) -> Result<ApplyResult, String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let setup = save_dir().join(asset_name);
+    std::fs::write(&setup, bytes).map_err(|e| format!("no pude guardar el instalador: {e}"))?;
+    if !relaunch {
+        return Ok(ApplyResult {
+            ok: true,
+            stage: "downloaded".into(),
+            needs_restart: true,
+            message: format!("Instalador verificado guardado en {}. Ejecútalo para actualizar.", setup.display()),
+            ..Default::default()
+        });
+    }
+    let exe = std::env::current_exe().map_err(|e| format!("no sé dónde está el monedero: {e}"))?;
+    let dir = exe.parent().ok_or("carpeta del monedero desconocida")?.to_path_buf();
+    let ps = |p: &Path| p.to_string_lossy().replace('\'', "''");
+    // Wait-Process: espera a que ESTE proceso termine (el instalador no puede
+    // sustituir un .exe en uso). /S = instalación silenciosa de NSIS; /D= (sin
+    // comillas, siempre el último) instala en la carpeta actual del monedero.
+    // Se conservan los argumentos de esta instancia (p. ej. «--network testnet»
+    // del acceso directo) para que la versión nueva arranque igual.
+    let user_args: Vec<String> = std::env::args().skip(1).collect();
+    let relaunch_args = if user_args.is_empty() {
+        String::new()
+    } else {
+        let quoted: Vec<String> = user_args.iter().map(|a| format!("'{}'", a.replace('\'', "''"))).collect();
+        format!(" -ArgumentList @({})", quoted.join(", "))
+    };
+    let script = format!(
+        "Wait-Process -Id {pid} -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; \
+         Start-Process -FilePath '{setup}' -ArgumentList @('/S', '/D={dir}') -Wait; \
+         Start-Process -FilePath '{exe}'{relaunch_args}",
+        pid = std::process::id(),
+        setup = ps(&setup),
+        dir = dir.to_string_lossy(),
+        exe = ps(&exe),
+    );
+    Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("descargado y verificado, pero no pude programar la instalación: {e}"))?;
+    Ok(ApplyResult {
+        ok: true,
+        stage: "installing".into(),
+        needs_restart: true,
+        relaunch: true,
+        message: format!(
+            "Instalador verificado. El monedero se cierra, se instala la versión nueva en {} y se vuelve a abrir solo.",
+            dir.display()
+        ),
+        ..Default::default()
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_windows(_bytes: &[u8], _asset_name: &str, _relaunch: bool) -> Result<ApplyResult, String> {
+    Err("no es Windows".into())
 }
 
 #[cfg(test)]
@@ -453,6 +802,7 @@ mod tests {
         assert!(is_newer("0.4.1", "0.4.0"));
         assert!(is_newer("v0.5.0", "0.4.9"));
         assert!(is_newer("1.0.0", "0.9.9"));
+        assert!(is_newer("0.5.10", "0.5.2"));
         assert!(!is_newer("0.4.0", "0.4.0"));
         assert!(!is_newer("0.4.0", "0.4.1"));
         assert!(!is_newer("0.3.9", "0.4.0"));
