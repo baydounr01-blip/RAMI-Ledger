@@ -455,13 +455,30 @@ fn apply_inner(current: &str, relaunch: bool) -> Result<ApplyResult, String> {
     Ok(r)
 }
 
-/// Salida limpia diferida: da tiempo a que la respuesta HTTP llegue al panel.
+/// Salida diferida: da tiempo a que la respuesta HTTP llegue al panel y
+/// entonces termina el proceso EN EL ACTO con `_exit`. Nunca `exit()` desde un
+/// hilo secundario: en macOS, con el hilo principal en el bucle de Cocoa, los
+/// manejadores atexit de AppKit se quedaban esperando y el proceso no moría
+/// (el relanzador esperaba para siempre y la app aparecía «no responde»).
 pub fn exit_soon() {
     std::thread::spawn(|| {
         std::thread::sleep(Duration::from_millis(2500));
-        ulog("cerrando este proceso para dejar paso a la versión nueva");
-        std::process::exit(0);
+        ulog("cerrando este proceso en el acto para dejar paso a la versión nueva");
+        hard_exit(0);
     });
+}
+
+/// Termina el proceso inmediatamente desde cualquier hilo (ver `exit_soon`).
+pub fn hard_exit(code: i32) -> ! {
+    #[cfg(unix)]
+    unsafe {
+        extern "C" {
+            fn _exit(code: i32) -> !;
+        }
+        _exit(code)
+    }
+    #[cfg(not(unix))]
+    std::process::exit(code)
 }
 
 #[allow(dead_code)]
@@ -507,8 +524,11 @@ fn spawn_relauncher_unix_with(open_cmd: &str, target: &Path, extra: &[&str]) -> 
     } else {
         " --args \"$@\"" // `open <app> --args …` en macOS
     };
+    // Espera a que ESTE proceso muera; si en 10 s no lo ha hecho (una salida
+    // colgada), lo termina a la fuerza: la reapertura nunca debe quedarse
+    // esperando para siempre.
     let script = format!(
-        "while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done; sleep 0.3; t=\"$2\"; shift 2; exec {open_cmd} \"$t\"{pass_args}"
+        "n=0; while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; n=$((n+1)); if [ $n -ge 50 ]; then kill -9 \"$1\" 2>/dev/null; fi; done; sleep 0.3; t=\"$2\"; shift 2; exec {open_cmd} \"$t\"{pass_args}"
     );
     Command::new("/bin/sh")
         .arg("-c")

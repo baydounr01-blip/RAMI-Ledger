@@ -1,0 +1,7 @@
+[1788698111 pid 4270] monedero v0.6.1 abierto en 8762; le pido que se cierre y tomo su sitio
+[1788698115 pid 4270] la instancia anterior (pid 4269) no termina; se fuerza su cierre
+[1788698116 pid 4270] v0.6.2 panel escuchando en http://127.0.0.1:8762 (regtest)
+[1788698116 pid 4270] (--no-open) no se abre el navegador: http://127.0.0.1:8762
+[1788698116 pid 4270] nodo listo: altura 0, P2P :30362
+[1788698119 pid 4270] salida solicitada desde el panel («Salir»)
+[1788698119 pid 4270] salida inmediata del proceso (código 0)

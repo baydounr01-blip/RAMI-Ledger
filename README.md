@@ -449,6 +449,25 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
   las operaciones aún en el mempool se muestran como **pendientes** (`pending`
   en `/api/city`) en el panel, el 2D y el 3D, con sondeo rápido tras cada
   acción y aviso si nadie está minando.
+- **v0.6.2 (esto): «la aplicación no responde», causa raíz y garantía.**
+  Diagnóstico de por qué reaparecía tras CADA actualización desde v0.5.2:
+  (1) la salida del proceso se pedía con `exit()` desde un hilo secundario
+  (el de «Actualizar ahora» o «Salir») con el hilo principal dentro del bucle
+  de Cocoa; los manejadores atexit de AppKit esperan al hilo principal y el
+  proceso no moría: el relanzador esperaba a un PID inmortal y el siguiente
+  clic en el icono encontraba un proceso «no responde». (2) Todo el arranque
+  (sondeo de puertos, espera a otra instancia hasta 10 s, diálogos) corría en
+  el hilo principal ANTES de entrar en el bucle de eventos. Arreglos: toda
+  salida usa `_exit()` (inmediata desde cualquier hilo, sin destructores de
+  AppKit); en macOS el hilo principal entra en el bucle de Cocoa en el primer
+  instante y TODO el arranque va en un hilo (un panic ahí muestra diálogo y
+  sale); el relanzador mata la instancia vieja si no muere en 10 s; al tomar
+  el relevo de una versión antigua colgada se fuerza su cierre a los 4 s.
+  Garantía para futuros deploys: **prueba de humo en CI** sobre el instalador
+  real de cada sistema (`packaging/smoke.sh`, `smoke.ps1`): arranque a través
+  de `open` en macOS, panel en < 20 s, AppleEvent «reopen» con timeout de 10 s
+  (si el hilo principal no atiende eventos, falla), y «Salir» debe cerrar el
+  proceso en < 5 s. Si falla, el release no se publica.
 - **v0.6.x (siguiente):** instantáneas de cadena re-verificables para el explorador
   web, seeds comunitarios, endurecimiento P2P (puntuación de pares, límites por
   IP) y IPC dedicado faucet↔nodo.

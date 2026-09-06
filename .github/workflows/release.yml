@@ -102,6 +102,25 @@ jobs:
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: bash packaging/package.sh "${{ matrix.kind }}" "${{ matrix.target }}" "${{ matrix.arch }}"
 
+      # Prueba de humo sobre lo que se va a publicar: arranca, responde,
+      # atiende eventos (macOS) y «Salir» cierra el proceso. Si falla, NO se
+      # publica el release («la aplicación no responde» nunca más llega al
+      # usuario).
+      - name: Prueba de humo (arranque, respuesta, salida)
+        if: matrix.kind != 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.kind }}" = macos ]; then
+            packaging/smoke.sh macos "$PWD/stage/RAMI-Chain.app"
+          else
+            packaging/smoke.sh linux "$PWD/chain/target/${{ matrix.target }}/release/rami-gui"
+          fi
+      - name: Prueba de humo (Windows)
+        if: matrix.kind == 'windows'
+        shell: pwsh
+        run: packaging/smoke.ps1 -Exe "$PWD/chain/target/${{ matrix.target }}/release/rami-gui.exe"
+
       - name: Subir artefacto
         uses: actions/upload-artifact@v4
         with:

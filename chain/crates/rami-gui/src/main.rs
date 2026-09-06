@@ -537,7 +537,7 @@ fn route(g: &Gui, req: Request) -> Response {
             dlog("salida solicitada desde el panel («Salir»)");
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_millis(400));
-                std::process::exit(0);
+                safe_exit(0);
             });
             Response::json(&json!({"ok": true, "bye": true}))
         }
@@ -592,7 +592,44 @@ fn route(g: &Gui, req: Request) -> Response {
     }
 }
 
+/// `--no-open`: nunca abrir el navegador (pruebas, CI, reapertura por icono).
+static NO_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Salida INMEDIATA y segura desde CUALQUIER hilo.
+///
+/// Causa raíz de «la aplicación no responde» tras cada actualización (v0.5.2 a
+/// v0.6.1): la salida se pedía con `std::process::exit` desde un hilo
+/// secundario (el que atendía «Actualizar ahora» o «Salir») mientras el hilo
+/// principal estaba dentro del bucle de eventos de Cocoa. `exit()` ejecuta los
+/// manejadores atexit y los destructores de AppKit, que esperan al hilo
+/// principal: el proceso se quedaba colgado sin terminar nunca, el relanzador
+/// esperaba a un PID que no moría, y el siguiente clic en el icono encontraba
+/// un proceso «no responde». `_exit()` termina el proceso en el acto (el
+/// núcleo cierra descriptores y conserva lo ya escrito en disco: la cadena y el
+/// mempool se escriben con append+write_all, no hay búferes propios pendientes).
+fn safe_exit(code: i32) -> ! {
+    dlog(&format!("salida inmediata del proceso (código {code})"));
+    {
+        use std::io::Write as _;
+        let _ = std::io::stderr().flush();
+        let _ = std::io::stdout().flush();
+    }
+    #[cfg(unix)]
+    unsafe {
+        extern "C" {
+            fn _exit(code: i32) -> !;
+        }
+        _exit(code)
+    }
+    #[cfg(not(unix))]
+    std::process::exit(code)
+}
+
 fn open_browser(url: &str) {
+    if NO_OPEN.load(std::sync::atomic::Ordering::Relaxed) {
+        dlog(&format!("(--no-open) no se abre el navegador: {url}"));
+        return;
+    }
     if cfg!(target_os = "macos") {
         if Command::new("open").arg(url).spawn().is_ok() {
             return;
@@ -676,16 +713,22 @@ mod cocoa {
     /// `- (BOOL)applicationShouldHandleReopen:(NSApplication*)app hasVisibleWindows:(BOOL)v`
     /// Clic en el icono con la app ya abierta => reabrir el panel en el navegador.
     extern "C" fn reopen(_this: Id, _sel: Sel, _app: Id, _visible: bool) -> bool {
-        if let Some(u) = PANEL_URL.get() {
-            super::dlog("reabrir: abriendo el panel en el navegador");
-            super::open_browser(u);
-        }
+        let u = PANEL_URL.get().cloned().unwrap_or_else(|| "http://127.0.0.1:8645".to_string());
+        super::dlog("reabrir: abriendo el panel en el navegador");
+        super::open_browser(&u);
         false
     }
 
-    /// No vuelve: ejecuta el bucle de eventos en el hilo actual (debe ser el principal).
-    pub fn run_app_loop(url: String) {
+    /// URL del panel para el clic en el icono (se fija cuando se conoce el puerto).
+    pub fn set_panel_url(url: String) {
         let _ = PANEL_URL.set(url);
+    }
+
+    /// No vuelve: ejecuta el bucle de eventos en el hilo actual (debe ser el
+    /// principal). El hilo principal NO hace nada más: cualquier trabajo
+    /// (puertos, nodo, diálogos) va en otros hilos, así macOS siempre recibe
+    /// respuesta a sus eventos y la app nunca aparece como «no responde».
+    pub fn run_app_loop() {
         unsafe {
             let app = msg0(objc_getClass(c"NSApplication".as_ptr()), sel(c"sharedApplication"));
             if app.is_null() {
@@ -853,24 +896,70 @@ fn native_ask(_title: &str, _msg: &str, _no: &str, _yes: &str) -> bool {
 
 /// Pide a OTRA instancia del monedero (puerto `port`) que se cierre y espera
 /// a que libere el puerto (hasta ~10 s). true si quedó libre.
-fn ask_other_to_quit(port: u16) -> bool {
+fn ask_other_to_quit(port: u16, other_pid: Option<u32>) -> bool {
     let _ = http::post_local(port, "/api/quit");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
+    let t0 = std::time::Instant::now();
+    let mut killed = false;
+    while t0.elapsed() < std::time::Duration::from_secs(10) {
         std::thread::sleep(std::time::Duration::from_millis(300));
         if TcpListener::bind(("127.0.0.1", port)).is_ok() {
             return true;
+        }
+        // Las versiones ≤ 0.6.1 salían con exit() desde un hilo secundario y
+        // en macOS podían quedarse colgadas sin morir («no responde»). Si tras
+        // 4 s la otra instancia sigue con el puerto, se termina a la fuerza:
+        // es nuestro propio monedero (misma red, mismo puerto) y su cadena y
+        // mempool ya están en disco.
+        if !killed && t0.elapsed() > std::time::Duration::from_secs(4) {
+            if let Some(pid) = other_pid {
+                if pid != std::process::id() {
+                    dlog(&format!("la instancia anterior (pid {pid}) no termina; se fuerza su cierre"));
+                    force_kill(pid);
+                    killed = true;
+                }
+            }
         }
     }
     false
 }
 
+/// Termina a la fuerza OTRO proceso de este monedero (ver ask_other_to_quit).
+fn force_kill(pid: u32) {
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill").args(["-9", &pid.to_string()]).stdin(std::process::Stdio::null()).output();
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/F"]).output();
+    }
+}
+
 /// Versión que declara un `/api/status` ajeno (`"version":"x.y.z"`).
 fn version_in(body: &str) -> Option<String> {
-    let i = body.find("\"version\":\"")? + 11;
-    let rest = &body[i..];
-    let j = rest.find('"')?;
-    Some(rest[..j].to_string())
+    json_field(body, "version").and_then(|v| v.strip_prefix('"').map(|r| r.split('"').next().unwrap_or("").to_string()))
+}
+
+/// PID que declara un `/api/status` ajeno (`"pid":123`, desde v0.5.3).
+fn pid_in(body: &str) -> Option<u32> {
+    let v = json_field(body, "pid")?;
+    let digits: String = v.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+/// Texto que sigue a `"clave":` (tolera espacios) en un JSON plano.
+fn json_field<'a>(body: &'a str, key: &str) -> Option<&'a str> {
+    let pat = format!("\"{key}\"");
+    let mut from = 0;
+    while let Some(i) = body[from..].find(&pat) {
+        let after = &body[from + i + pat.len()..];
+        let after = after.trim_start();
+        if let Some(rest) = after.strip_prefix(':') {
+            return Some(rest.trim_start());
+        }
+        from += i + pat.len();
+    }
+    None
 }
 
 /// Error fatal VISIBLE: en macOS/Windows la app se lanza sin consola, así que
@@ -917,16 +1006,51 @@ fn fail_page(title: &str, detail: &str) {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if has(&args, "--no-open") {
+        NO_OPEN.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 
     // Caja negra: cualquier panic de cualquier hilo queda registrado en disco.
     std::panic::set_hook(Box::new(|info| {
         dlog(&format!("PANIC: {info}"));
     }));
 
-    // macOS: la app corre como una app de verdad — con bucle de eventos Cocoa en
-    // el hilo principal (ver `cocoa` y el final de main). Sin él, macOS mostraba
-    // «La aplicación RAMI-Chain no responde» al hacer clic en el icono, aunque el
-    // nodo funcionara. `--foreground` se acepta por compatibilidad (v0.4.2–0.5.0).
+    // macOS lanzada desde el Finder (sin terminal): el hilo principal ejecuta
+    // SOLO el bucle de eventos de Cocoa desde el primer instante, y TODO el
+    // arranque (puertos, otra instancia, instalación, nodo, panel) corre en un
+    // hilo de trabajo. Antes el arranque iba en el hilo principal y el bucle
+    // se entraba al final: cualquier espera previa (otra instancia que tarda
+    // en cerrarse, un diálogo, el sondeo de puertos) dejaba a la app sin
+    // atender eventos y macOS la marcaba como «no responde». Desde una
+    // terminal (stdin es TTY) o con --no-cocoa se comporta como siempre.
+    #[cfg(target_os = "macos")]
+    {
+        use std::io::IsTerminal;
+        if !std::io::stdin().is_terminal() && !has(&args, "--no-cocoa") {
+            let args2 = args.clone();
+            std::thread::spawn(move || {
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| real_main(args2)));
+                match r {
+                    Ok(code) => safe_exit(if code == ExitCode::SUCCESS { 0 } else { 1 }),
+                    Err(_) => {
+                        fail_page(
+                            "el monedero falló al arrancar (panic)",
+                            &format!("Mira el registro: {}", log_path().display()),
+                        );
+                        safe_exit(2)
+                    }
+                }
+            });
+            cocoa::run_app_loop(); // no vuelve
+        }
+    }
+    real_main(args)
+}
+
+/// Arranque completo del monedero (puertos, nodo, panel). Solo vuelve si la
+/// app decide salir (p. ej. ya hay otra instancia abierta) o si el servidor
+/// del panel termina. `--foreground` se acepta por compatibilidad (v0.4.2–0.5.0).
+fn real_main(args: Vec<String>) -> ExitCode {
 
     let is_testnet = arg(&args, "--network").as_deref() != Some("regtest"); // testnet por defecto
     let params = if is_testnet { Params::testnet() } else { Params::regtest() };
@@ -989,7 +1113,7 @@ fn main() -> ExitCode {
                     if let Some(body) = http::probe_local(p) {
                         if body.contains("network_id") || body.contains("starting") {
                             dlog(&format!("cierro el monedero anterior del puerto {p}"));
-                            ask_other_to_quit(p);
+                            ask_other_to_quit(p, pid_in(&body));
                         }
                     }
                 }
@@ -1035,7 +1159,7 @@ fn main() -> ExitCode {
                             // toma su sitio. Antes, la nueva abría el panel
                             // viejo y salía: parecía que «no se actualizaba».
                             dlog(&format!("monedero v{other} abierto en {p}; le pido que se cierre y tomo su sitio"));
-                            if ask_other_to_quit(p) {
+                            if ask_other_to_quit(p, pid_in(&body)) {
                                 if let Ok(l) = TcpListener::bind(("127.0.0.1", p)) {
                                     bound = Some((l, p));
                                     break;
@@ -1169,25 +1293,10 @@ fn main() -> ExitCode {
         });
     }
 
-    if !has(&args, "--no-open") {
-        open_browser(&url);
-    }
-
-    // macOS lanzada desde el Finder (sin terminal): el panel se sirve en un
-    // hilo y el hilo principal ejecuta el bucle de eventos Cocoa, para que
-    // macOS nunca marque la app como «no responde» y el clic en el icono
-    // reabra el panel. Desde una terminal (stdin es TTY) se sirve en primer
-    // plano, como siempre.
     #[cfg(target_os = "macos")]
-    {
-        use std::io::IsTerminal;
-        if !std::io::stdin().is_terminal() {
-            let gui2 = gui.clone();
-            std::thread::spawn(move || http::serve(listener, move |req| route(&gui2, req)));
-            cocoa::run_app_loop(url.clone());
-            return ExitCode::SUCCESS;
-        }
-    }
+    cocoa::set_panel_url(url.clone());
+    open_browser(&url);
+
     http::serve(listener, move |req| route(&gui, req));
     ExitCode::SUCCESS
 }
