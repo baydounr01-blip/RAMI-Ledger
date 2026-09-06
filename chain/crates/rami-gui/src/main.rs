@@ -42,7 +42,7 @@ const I18N_JS: &str = include_str!("i18n.js");
 /// Cliente 3D de la Ciudad RAMI (Three.js r150, licencia MIT, empaquetado en
 /// el binario: el panel no necesita internet para renderizar).
 const THREE_JS: &[u8] = include_bytes!("vendor/three.min.js");
-const CITY3D_JS: &str = include_str!("city3d-stub.js");
+const CITY3D_JS: &str = include_str!("city3d.js");
 /// Terreno de Tenerife (datos abiertos: Mapzen/AWS Terrain Tiles; ver
 /// tools/geo/README.md). Mapa de alturas PNG de 16 bits + metadatos.
 const GEO_HGT: &[u8] = include_bytes!("geo/tenerife.hgt.png");

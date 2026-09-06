@@ -1444,12 +1444,14 @@
   // donde está de verdad. (0,0) = esquina noroeste.
   var CITY_ANCHOR = { lat: 28.675, lon: -16.95, cellMeters: 2600, rotationDeg: 0 };
   function latLonToParcel(lat, lon){
+    if(c3d.handle && c3d.handle.latLonToCell) return c3d.handle.latLonToCell(lat, lon); // misma fórmula que el 3D
     var mx = 111320*Math.cos(CITY_ANCHOR.lat*Math.PI/180), n = (city.data && city.data.size) || 32;
     var dx = (lon - CITY_ANCHOR.lon)*mx, dy = (CITY_ANCHOR.lat - lat)*110574;
     var x = Math.floor(dx/CITY_ANCHOR.cellMeters), y = Math.floor(dy/CITY_ANCHOR.cellMeters);
     return { x:x, y:y, inside:(x>=0 && y>=0 && x<n && y<n) };
   }
   function parcelToLatLon(x, y){
+    if(c3d.handle && c3d.handle.cellLatLon) return c3d.handle.cellLatLon(x, y);
     var mx = 111320*Math.cos(CITY_ANCHOR.lat*Math.PI/180);
     return { lat: CITY_ANCHOR.lat - (y+0.5)*CITY_ANCHOR.cellMeters/110574, lon: CITY_ANCHOR.lon + (x+0.5)*CITY_ANCHOR.cellMeters/mx };
   }
