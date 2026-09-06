@@ -47,6 +47,8 @@ const CITY3D_JS: &str = include_str!("city3d.js");
 /// tools/geo/README.md). Mapa de alturas PNG de 16 bits + metadatos.
 const GEO_HGT: &[u8] = include_bytes!("geo/tenerife.hgt.png");
 const GEO_META: &str = include_str!("geo/tenerife.json");
+/// Icono del panel (pestaña del navegador): el logo del proyecto.
+const FAVICON_SVG: &str = include_str!("../../../../packaging/icon/rami.svg");
 
 /// Estado del monedero en memoria. `pubkey` se conoce aunque esté bloqueado
 /// (para minar y ver saldo); `kp` solo está presente cuando se puede FIRMAR.
@@ -181,6 +183,11 @@ fn route(g: &Gui, req: Request) -> Response {
     }
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/") | ("GET", "/index.html") => Response::html(DASHBOARD),
+        ("GET", "/favicon.ico") | ("GET", "/favicon.svg") => Response {
+            status: 200,
+            content_type: "image/svg+xml".into(),
+            body: FAVICON_SVG.as_bytes().to_vec(),
+        },
         ("GET", "/vendor/three.min.js") => Response {
             status: 200,
             content_type: "application/javascript; charset=utf-8".into(),

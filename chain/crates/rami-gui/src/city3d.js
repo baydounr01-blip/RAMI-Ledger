@@ -10,23 +10,35 @@
  * API pública: window.RamiCity3D.mount(container, opts) -> handle
  *   handle.setCity(city) / select(x,y|null) / flyTo(x,y) / flyToIsland() /
  *   flyToCity() / resize() / setVisible(bool) / dispose() / xrSupported() /
- *   enterVR() / stats()
+ *   enterVR() / stats() / latLonToCell(lat,lon) / cellLatLon(x,y) /
+ *   cellWorld(x,y) / project(x,y) / heightAt(lat,lon) / ready (Promise)
  *
  * Arquitectura (de abajo arriba):
- *   1. Utilidades: hash FNV-1a, inflate (zlib) propio, decodificador PNG de
- *      16 bits, proyección Web-Mercator (contrato de datos geo), rampa de color.
+ *   1. Utilidades: hash FNV-1a, inflate (zlib) propio (respaldo de
+ *      DecompressionStream), decodificador PNG de 16 bits, proyección
+ *      Web-Mercator (contrato de datos geo), rampa de color.
  *   2. Terreno: malla fina (<= 512x512 vértices) + malla gruesa (LOD lejano),
  *      colores por vértice según altura y pendiente, mar animado (shader),
- *      cúpula de cielo, niebla, carreteras y etiquetas de pueblos en un único
- *      "atlas" de texto (una sola llamada de dibujo, tamaño en píxeles fijo).
- *   3. Ciudad: cuadrícula 32x32 anclada al terreno (parche "aterrazado" bajo
- *      la ciudad), todo con InstancedMesh: baldosas libres, solares, edificios
- *      por tipo, marco de parcelas propias, activos (plantas/cajas) y anillos
- *      de alquiler. Hover/selección por raycast sobre las mallas instanciadas.
+ *      cúpula de cielo centrada en la cámara, niebla, carreteras y etiquetas
+ *      de pueblos en atlas de texto (dos llamadas de dibujo, tamaño en píxeles
+ *      fijo, rechazo de solapes en pantalla).
+ *   3. Ciudad: cuadrícula NxN "drapeada" sobre el terreno (una sola geometría
+ *      con colores por celda; setCity sólo toca el atributo de color), bordes
+ *      de celda, hover/selección drapeados, edificios-hito e inventario con
+ *      InstancedMesh. Selección por raycast contra el TERRENO (no contra la
+ *      capa) e inversa de la transformación de la cuadrícula.
  *   4. Cámara orbital propia (sin OrbitControls), vuelos suaves, VR opcional.
  *
  * Convenciones: unidades del mundo en metros; X crece hacia el este,
  * Z hacia el sur, Y es la altura. El nivel del mar es Y = 0.
+ *
+ * Anclaje de la cuadrícula: `anchor` es la esquina NOROESTE de la celda (0,0);
+ * x crece hacia el este e y hacia el sur; `rotationDeg` gira la cuadrícula en
+ * sentido horario (vista desde arriba) pivotando sobre el anclaje. La
+ * correspondencia lat/lon <-> celda usa la MISMA aproximación equirectangular
+ * que el panel 2D (dx = Δlon·111320·cos(lat0), dy = -Δlat·110574) para que
+ * ambas vistas coincidan siempre; la proyección Mercator sólo interviene al
+ * situar un punto lat/lon sobre el mapa de alturas.
  */
 (function (global) {
   'use strict';
@@ -57,9 +69,9 @@
   function smoothstep(t) { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); }
 
   // ---- Inflate (RFC 1950/1951) ------------------------------------------
-  // Implementación propia y compacta (estilo "tinf") para no depender de
-  // DecompressionStream ni de librerías externas. Descomprime el flujo zlib
-  // de los trozos IDAT de un PNG.
+  // Implementación propia y compacta (estilo "tinf"): respaldo cuando el
+  // navegador no ofrece DecompressionStream. Descomprime el flujo zlib de los
+  // trozos IDAT de un PNG.
   var LEN_BASE = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
   var LEN_BITS = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
   var DIST_BASE = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
@@ -152,9 +164,34 @@
     return out.subarray(0, outLen);
   }
 
+  /** Inflate nativo (DecompressionStream 'deflate' = formato zlib). Devuelve Promise<Uint8Array>. */
+  function inflateStream(z) {
+    return new Promise(function (resolve, reject) {
+      try {
+        var ds = new DecompressionStream('deflate');
+        var writer = ds.writable.getWriter();
+        writer.write(z).then(null, reject);
+        writer.close().then(null, reject);
+        var reader = ds.readable.getReader(), chunks = [], total = 0;
+        function pump() {
+          return reader.read().then(function (r) {
+            if (r.done) {
+              var out = new Uint8Array(total), o = 0;
+              for (var i = 0; i < chunks.length; i++) { out.set(chunks[i], o); o += chunks[i].length; }
+              resolve(out); return null;
+            }
+            chunks.push(r.value); total += r.value.length;
+            return pump();
+          });
+        }
+        pump().then(null, reject);
+      } catch (e) { reject(e); }
+    });
+  }
+
   // ---- Decodificador PNG (escala de grises 8/16 bits, sin entrelazado) ----
-  /** Devuelve {width, height, depth, data: Uint16Array|Uint8Array} o lanza. */
-  function decodePngGray(buf) {
+  /** Lee los trozos del PNG: {width, height, depth, z (zlib concatenado), stride, bpp}. */
+  function parsePng(buf) {
     var u8 = new Uint8Array(buf);
     var sig = [137, 80, 78, 71, 13, 10, 26, 10], i;
     for (i = 0; i < 8; i++) if (u8[i] !== sig[i]) throw new Error('PNG: firma inválida');
@@ -175,9 +212,13 @@
     }
     var z = new Uint8Array(idatLen), off = 0;
     for (i = 0; i < idat.length; i++) { z.set(idat[i], off); off += idat[i].length; }
-    var bpp = depth === 16 ? 2 : 1, stride = width * bpp;
-    var raw = inflate(z, height * (stride + 1));
-    // Desfiltrado (None/Sub/Up/Average/Paeth)
+    var bpp = depth === 16 ? 2 : 1;
+    return { width: width, height: height, depth: depth, z: z, bpp: bpp, stride: width * bpp };
+  }
+  /** Desfiltrado (None/Sub/Up/Average/Paeth) -> {width, height, depth, data}. */
+  function unfilterPng(raw, info) {
+    var width = info.width, height = info.height, depth = info.depth, bpp = info.bpp, stride = info.stride;
+    if (raw.length < height * (stride + 1)) throw new Error('PNG: datos incompletos');
     var line = new Uint8Array(stride), prevLine = new Uint8Array(stride), y, x;
     var samples = depth === 16 ? new Uint16Array(width * height) : new Uint8Array(width * height);
     var rp = 0;
@@ -200,6 +241,19 @@
       var tmp = prevLine; prevLine = line; line = tmp;
     }
     return { width: width, height: height, depth: depth, data: samples };
+  }
+  /** Decodificación síncrona (inflate propio). Devuelve {width, height, depth, data} o lanza. */
+  function decodePngGray(buf) {
+    var info = parsePng(buf);
+    return unfilterPng(inflate(info.z, info.height * (info.stride + 1)), info);
+  }
+  /** Decodificación asíncrona: DecompressionStream si existe, si no (o si falla) el inflate propio. -> Promise<{img, path}> */
+  function decodePngGrayAsync(buf) {
+    var info;
+    try { info = parsePng(buf); } catch (e) { return Promise.reject(e); }
+    function custom() { return { img: unfilterPng(inflate(info.z, info.height * (info.stride + 1)), info), path: 'custom' }; }
+    if (typeof DecompressionStream === 'undefined') return Promise.resolve().then(custom);
+    return inflateStream(info.z).then(function (raw) { return { img: unfilterPng(raw, info), path: 'stream' }; }, function () { return custom(); });
   }
 
   // ---- Carga por XHR --------------------------------------------------------
@@ -233,6 +287,8 @@
     var r = lat * Math.PI / 180;
     return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * TILE_WORLD;
   }
+  function tilePxToLon(px) { return px / TILE_WORLD * 360 - 180; }
+  function tilePxToLat(py) { var n = Math.PI * (1 - 2 * py / TILE_WORLD); return Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))) * 180 / Math.PI; }
   /** Crea el "geo": mapeo lat/lon <-> píxel de salida <-> metros del mundo. */
   function makeGeo(meta) {
     var ds = meta.downsample || 1, ox = meta.origin_px.x, oy = meta.origin_px.y, mpp = meta.meters_per_pixel;
@@ -242,7 +298,8 @@
       width: meta.width, height: meta.height,
       worldW: (meta.width - 1) * mpp, worldH: (meta.height - 1) * mpp,
       toPx: function (lat, lon) { return { x: (lonToTilePx(lon) - ox) / ds, y: (latToTilePx(lat) - oy) / ds }; },
-      toWorld: function (lat, lon) { var p = this.toPx(lat, lon); return { x: p.x * mpp, z: p.y * mpp }; }
+      toWorld: function (lat, lon) { var p = this.toPx(lat, lon); return { x: p.x * mpp, z: p.y * mpp }; },
+      toLatLon: function (wx, wz) { return { lat: tilePxToLat(wz / mpp * ds + oy), lon: tilePxToLon(wx / mpp * ds + ox) }; }
     };
   }
 
@@ -335,13 +392,7 @@
     }
     return {
       width: w, height: h, at: at, atPx: atPx,
-      atWorld: function (wx, wz) { return atPx(wx / mpp, wz / mpp); },
-      /** Altura suavizada (media de 9 muestras en un radio r metros). */
-      smoothWorld: function (wx, wz, r) {
-        var s = 0;
-        for (var j = -1; j <= 1; j++) for (var i = -1; i <= 1; i++) s += atPx((wx + i * r) / mpp, (wz + j * r) / mpp);
-        return s / 9;
-      }
+      atWorld: function (wx, wz) { return atPx(wx / mpp, wz / mpp); }
     };
   }
 
@@ -351,20 +402,23 @@
 
   /**
    * Construye una malla de terreno muestreando el campo de alturas con
-   * `segs` segmentos en el eje mayor. Devuelve {mesh, grid, sx, sz, dx, dz}
+   * `segs` segmentos en el eje mayor. Devuelve {mesh, grid, sx, sz, dx, dz, maxH}
    * donde `grid` son las alturas muestreadas (para consultar la superficie
-   * visible exactamente, triángulo a triángulo).
+   * visible exactamente, triángulo a triángulo). El 2 % exterior del mapa se
+   * funde con el color del fondo marino (bedH) para ocultar el borde del bbox.
    */
-  function buildTerrain(field, geo, segs, material) {
+  function buildTerrain(field, geo, segs, material, bedH) {
     var W = geo.worldW, H = geo.worldH;
     var sx = W >= H ? segs : Math.max(8, Math.round(segs * W / H));
     var sz = W >= H ? Math.max(8, Math.round(segs * H / W)) : segs;
     sx = Math.min(sx, field.width - 1); sz = Math.min(sz, field.height - 1);
     var nx = sx + 1, nz = sz + 1, dx = W / sx, dz = H / sz;
-    var grid = new Float32Array(nx * nz), i, j;
+    var grid = new Float32Array(nx * nz), i, j, maxH = -1e9;
     for (j = 0; j < nz; j++) for (i = 0; i < nx; i++) {
-      grid[j * nx + i] = field.atPx(i * dx / geo.mpp, j * dz / geo.mpp);
+      var hv = field.atPx(i * dx / geo.mpp, j * dz / geo.mpp);
+      grid[j * nx + i] = hv; if (hv > maxH) maxH = hv;
     }
+    var bed = new Uint8Array(3); terrainColor(bedH, 0, 0, bed, 0);
     var pos = new Float32Array(nx * nz * 3), col = new Uint8Array(nx * nz * 3);
     for (j = 0; j < nz; j++) for (i = 0; i < nx; i++) {
       var k = j * nx + i, h = grid[k];
@@ -373,6 +427,11 @@
       var hu = grid[(j > 0 ? j - 1 : j) * nx + i], hd = grid[(j < sz ? j + 1 : j) * nx + i];
       var gx = (hr - hl) / (2 * dx), gz = (hd - hu) / (2 * dz);
       terrainColor(h, Math.sqrt(gx * gx + gz * gz), hash2(i, j) * 2 - 1, col, k * 3);
+      var e = Math.min(i / sx, 1 - i / sx, j / sz, 1 - j / sz); // distancia normalizada al borde
+      if (e < 0.02) {
+        var te = 1 - e / 0.02;
+        col[k * 3] = lerp(col[k * 3], bed[0], te); col[k * 3 + 1] = lerp(col[k * 3 + 1], bed[1], te); col[k * 3 + 2] = lerp(col[k * 3 + 2], bed[2], te);
+      }
     }
     var idx = new Uint32Array(sx * sz * 6), q = 0;
     for (j = 0; j < sz; j++) for (i = 0; i < sx; i++) {
@@ -388,7 +447,7 @@
     g.computeBoundingSphere();
     var mesh = new THREE.Mesh(g, material);
     mesh.frustumCulled = false;
-    return { mesh: mesh, grid: grid, nx: nx, nz: nz, sx: sx, sz: sz, dx: dx, dz: dz };
+    return { mesh: mesh, grid: grid, nx: nx, nz: nz, sx: sx, sz: sz, dx: dx, dz: dz, maxH: maxH };
   }
 
   /** Altura exacta de la superficie de la malla (usa la triangulación real). */
@@ -413,20 +472,25 @@
       uniforms: uniforms,
       transparent: true, depthWrite: false, fog: true,
       vertexShader: [
+        '#include <common>',
         '#include <fog_pars_vertex>',
+        '#include <logdepthbuf_pars_vertex>',
         'varying vec3 vWorld;',
         'void main(){',
         '  vec4 wp = modelMatrix * vec4(position, 1.0);',
         '  vWorld = wp.xyz;',
         '  vec4 mvPosition = viewMatrix * wp;',
         '  gl_Position = projectionMatrix * mvPosition;',
+        '  #include <logdepthbuf_vertex>',
         '  #include <fog_vertex>',
         '}'].join('\n'),
       fragmentShader: [
         '#include <fog_pars_fragment>',
+        '#include <logdepthbuf_pars_fragment>',
         'uniform float uTime; uniform vec3 uSun, uDeep, uShallow, uSky;',
         'varying vec3 vWorld;',
         'void main(){',
+        '  #include <logdepthbuf_fragment>',
         '  float t = uTime;',
         '  vec2 p = vWorld.xz;',
         '  float att = 1.0 / (1.0 + length(cameraPosition - vWorld) / 12000.0);',
@@ -446,80 +510,117 @@
     return mat;
   }
 
-  /** Cúpula de cielo con degradado (sin niebla), centrada en la cámara. */
-  function makeSky(radius) {
+  /**
+   * Cúpula de cielo con degradado (sin niebla). El color del horizonte es el de
+   * la niebla, así el mar lejano se funde con el cielo sin costura. Se dibuja SIEMPRE de fondo:
+   * sin test ni escritura de profundidad, renderOrder muy bajo y recentrada en
+   * la cámara cada fotograma, así nunca queda recortada por near/far.
+   */
+  function makeSky(radius, horizonColor) {
     var mat = new THREE.ShaderMaterial({
-      side: THREE.BackSide, depthWrite: false, fog: false,
-      uniforms: { uTop: { value: new THREE.Color(0x3f7cc9) }, uHorizon: { value: new THREE.Color(0xd6e6f2) } },
+      side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false,
+      uniforms: { uTop: { value: new THREE.Color(0x3f7cc9) }, uHorizon: { value: new THREE.Color(horizonColor) } },
       vertexShader: 'varying float vY; void main(){ vY = normalize(position).y; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
       fragmentShader: 'uniform vec3 uTop, uHorizon; varying float vY; void main(){ float t = pow(clamp(vY, 0.0, 1.0), 0.55); gl_FragColor = vec4(mix(uHorizon, uTop, t), 1.0); }'
     });
-    var m = new THREE.Mesh(new THREE.SphereGeometry(radius, 28, 14), mat);
-    m.frustumCulled = false; m.renderOrder = -10;
+    var m = new THREE.Mesh(new THREE.SphereGeometry(radius, 32, 16), mat);
+    m.frustumCulled = false; m.renderOrder = -1000;
     return m;
   }
 
-  /** Carreteras: un único LineSegments con todas las polilíneas. */
-  function buildRoads(roads, geo, surfaceH) {
-    var pts = [], r, i;
-    for (r = 0; r < roads.length; r++) {
-      var line = roads[r];
-      if (!line || line.length < 2) continue;
-      var prev = null;
-      for (i = 0; i < line.length; i++) {
-        var w = geo.toWorld(line[i][1], line[i][0]);
-        if (w.x < 0 || w.z < 0 || w.x > geo.worldW || w.z > geo.worldH) { prev = null; continue; }
-        var p = [w.x, Math.max(surfaceH(w.x, w.z), 0) + 4, w.z];
-        if (prev) pts.push(prev[0], prev[1], prev[2], p[0], p[1], p[2]);
-        prev = p;
-      }
-    }
-    if (!pts.length) return null;
-    var g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
-    var m = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x5a4a3c, fog: true }));
-    m.frustumCulled = false;
-    return m;
+  // ---- Material "drapeado" ---------------------------------------------------
+  // Geometrías que siguen el relieve: cada vértice lleva su altura sobre la
+  // malla fina (position.y) y sobre la gruesa (atributo hc); el uniforme
+  // compartido uLod (0/1) elige una u otra según el LOD del terreno visible,
+  // de modo que la capa nunca se hunde bajo el terreno dibujado.
+  var DRAPE_VS = [
+    '#include <common>',
+    '#include <fog_pars_vertex>',
+    '#include <logdepthbuf_pars_vertex>',
+    'attribute float hc; uniform float uLod;',
+    '#ifdef CELL_COLOR', 'attribute vec4 cellColor; varying vec4 vColor;', '#endif',
+    'void main(){',
+    '  vec3 p = position; p.y = mix(position.y, hc, uLod);',
+    '  #ifdef CELL_COLOR', '  vColor = cellColor;', '  #endif',
+    '  vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);',
+    '  gl_Position = projectionMatrix * mvPosition;',
+    '  #include <logdepthbuf_vertex>',
+    '  #include <fog_vertex>',
+    '}'].join('\n');
+  var DRAPE_FS = [
+    '#include <fog_pars_fragment>',
+    '#include <logdepthbuf_pars_fragment>',
+    'uniform vec4 uColor;',
+    '#ifdef CELL_COLOR', 'varying vec4 vColor;', '#endif',
+    'void main(){',
+    '  #include <logdepthbuf_fragment>',
+    '  vec4 c = uColor;',
+    '  #ifdef CELL_COLOR', '  c *= vColor;', '  #endif',
+    '  if (c.a < 0.004) discard;',
+    '  gl_FragColor = c;',
+    '  #include <fog_fragment>',
+    '}'].join('\n');
+  function makeDrapeMaterial(lodUniform, color, alpha, cellColor) {
+    var u = THREE.UniformsUtils.clone(THREE.UniformsLib.fog);
+    u.uLod = lodUniform;
+    var c = new THREE.Color(color);
+    u.uColor = { value: new THREE.Vector4(c.r, c.g, c.b, alpha) };
+    return new THREE.ShaderMaterial({
+      uniforms: u, vertexShader: DRAPE_VS, fragmentShader: DRAPE_FS,
+      defines: cellColor ? { CELL_COLOR: 1 } : {},
+      transparent: true, depthWrite: false, fog: true, side: THREE.DoubleSide
+    });
   }
 
-  // ---- Etiquetas: atlas de texto en canvas + una sola malla ------------------
+  // ---- Etiquetas: atlas de texto en canvas + una malla por conjunto ------------
   // Cada etiqueta es un cuadrilátero anclado a un punto 3D cuyo tamaño se fija
   // en píxeles en el vertex shader (siempre legible, no depende de la
   // distancia). Todas las etiquetas del conjunto se dibujan en UNA llamada.
+  // `lvis` (por vértice) lo rellena el rechazo de solapes en pantalla.
   var LABEL_VS = [
-    'attribute vec2 corner; attribute vec2 lsize; attribute float lmax;',
+    '#include <common>',
+    '#include <logdepthbuf_pars_vertex>',
+    'attribute vec2 corner; attribute vec2 lsize; attribute float lmax; attribute float lvis;',
     'uniform vec2 uViewport; varying vec2 vUv; varying float vVis;',
     'void main(){',
     '  vec4 mv = modelViewMatrix * vec4(position, 1.0);',
     '  float d = length(mv.xyz);',
     '  vec4 clip = projectionMatrix * mv;',
-    '  vVis = (d < lmax && clip.w > 0.0) ? 1.0 : 0.0;',
+    '  vVis = (d < lmax && clip.w > 0.0) ? lvis : 0.0;',
     '  clip.xy += corner * lsize / uViewport * 2.0 * clip.w;',
     '  gl_Position = clip; vUv = uv;',
+    '  #include <logdepthbuf_vertex>',
     '}'].join('\n');
   var LABEL_FS = [
+    '#include <logdepthbuf_pars_fragment>',
     'uniform sampler2D uMap; varying vec2 vUv; varying float vVis;',
-    'void main(){ vec4 c = texture2D(uMap, vUv); if (c.a * vVis < 0.03) discard; gl_FragColor = vec4(c.rgb, c.a * vVis); }'
+    'void main(){',
+    '  #include <logdepthbuf_fragment>',
+    '  vec4 c = texture2D(uMap, vUv); if (c.a * vVis < 0.03) discard; gl_FragColor = vec4(c.rgb, c.a * vVis);',
+    '}'
   ].join('\n');
 
-  function LabelSet(viewportUniform) {
+  function LabelSet(viewportUniform, depthTest) {
     this.viewport = viewportUniform;
     this.texture = null;
+    this.items = [];
     this.material = new THREE.ShaderMaterial({
       uniforms: { uMap: { value: null }, uViewport: viewportUniform },
       vertexShader: LABEL_VS, fragmentShader: LABEL_FS,
-      transparent: true, depthTest: false, depthWrite: false
+      transparent: true, depthTest: !!depthTest, depthWrite: false
     });
     this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.material);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 50;
     this.mesh.visible = false;
+    this.lvis = null;
   }
   /**
-   * items: [{x,y,z, text, color, size (px), maxDist, pin (bool), bold}]
-   * Reconstruye el atlas y la geometría.
+   * items: [{x,y,z, text, color, size (px), maxDist, pin (bool), bold, priority}]
+   * Reconstruye el atlas y la geometría (ordena por prioridad ascendente).
    */
   LabelSet.prototype.set = function (items) {
+    items = items.slice().sort(function (a, b) { return (a.priority || 0) - (b.priority || 0); });
     var SS = 2; // sobre-muestreo del canvas para nitidez
     var canvas = document.createElement('canvas'), ctx = canvas.getContext('2d');
     var boxes = [], i, atlasW = 1024, x = 0, y = 0, rowH = 0;
@@ -552,10 +653,11 @@
         ctx.fillStyle = item.color || '#ffffff'; ctx.fill();
         ctx.lineWidth = 1.2 * SS; ctx.strokeStyle = 'rgba(10,16,24,0.9)'; ctx.stroke();
       }
+      item.pw = b.w / SS; item.ph = b.h / SS; // tamaño en píxeles (para el rechazo de solapes)
     }
     var n = items.length;
     var pos = new Float32Array(n * 12), corner = new Float32Array(n * 8), uv = new Float32Array(n * 8);
-    var lsize = new Float32Array(n * 8), lmax = new Float32Array(n * 4), idx = new Uint16Array(n * 6);
+    var lsize = new Float32Array(n * 8), lmax = new Float32Array(n * 4), lvis = new Float32Array(n * 4), idx = new Uint16Array(n * 6);
     var CORNERS = [[-0.5, 0], [0.5, 0], [0.5, 1], [-0.5, 1]];
     for (i = 0; i < n; i++) {
       var bb = boxes[i], itm = items[i];
@@ -568,6 +670,7 @@
         uv[vi * 2 + 1] = 1 - (bb.y + (1 - v) * bb.h) / atlasH;
         lsize[vi * 2] = bb.w / SS; lsize[vi * 2 + 1] = bb.h / SS;
         lmax[vi] = itm.maxDist || 1e12;
+        lvis[vi] = 1;
       }
       idx[i * 6] = i * 4; idx[i * 6 + 1] = i * 4 + 1; idx[i * 6 + 2] = i * 4 + 2;
       idx[i * 6 + 3] = i * 4; idx[i * 6 + 4] = i * 4 + 2; idx[i * 6 + 5] = i * 4 + 3;
@@ -578,6 +681,8 @@
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     g.setAttribute('lsize', new THREE.BufferAttribute(lsize, 2));
     g.setAttribute('lmax', new THREE.BufferAttribute(lmax, 1));
+    var lv = new THREE.BufferAttribute(lvis, 1); lv.setUsage(THREE.DynamicDrawUsage);
+    g.setAttribute('lvis', lv);
     g.setIndex(new THREE.BufferAttribute(idx, 1));
     if (this.mesh.geometry) this.mesh.geometry.dispose();
     this.mesh.geometry = g;
@@ -587,6 +692,37 @@
     this.texture.generateMipmaps = false;
     this.material.uniforms.uMap.value = this.texture;
     this.mesh.visible = n > 0;
+    this.items = items; this.lvis = lvis; this.lvisAttr = lv;
+  };
+  var _lv = new THREE.Vector3();
+  /**
+   * Rechazo de solapes en pantalla: recorre las etiquetas por prioridad y
+   * oculta las que intersecan un rectángulo ya aceptado. `rects` es un
+   * acumulador compartido entre conjuntos ({arr: Float32Array, n}) que se
+   * reinicia cada fotograma. Sin reservas de memoria por fotograma.
+   */
+  LabelSet.prototype.cull = function (camera, camPos, W, H, rects) {
+    var items = this.items, lvis = this.lvis, changed = false, i, k;
+    for (i = 0; i < items.length; i++) {
+      var it = items[i], vis = 0;
+      _lv.set(it.x, it.y, it.z);
+      if (_lv.distanceTo(camPos) < (it.maxDist || 1e12)) {
+        _lv.project(camera);
+        if (_lv.z < 1 && _lv.x > -1.3 && _lv.x < 1.3 && _lv.y > -1.3 && _lv.y < 1.3) {
+          var sx = (_lv.x + 1) / 2 * W, sy = (1 - _lv.y) / 2 * H;
+          var x0 = sx - it.pw / 2, x1 = sx + it.pw / 2, y0 = sy - it.ph, y1 = sy, free = true, a = rects.arr;
+          for (k = 0; k < rects.n; k++) {
+            if (x0 < a[k * 4 + 2] && x1 > a[k * 4] && y0 < a[k * 4 + 3] && y1 > a[k * 4 + 1]) { free = false; break; }
+          }
+          if (free) {
+            vis = 1;
+            if (rects.n * 4 + 4 <= a.length) { a[rects.n * 4] = x0; a[rects.n * 4 + 1] = y0; a[rects.n * 4 + 2] = x1; a[rects.n * 4 + 3] = y1; rects.n++; }
+          }
+        }
+      }
+      if (lvis[i * 4] !== vis) { lvis[i * 4] = lvis[i * 4 + 1] = lvis[i * 4 + 2] = lvis[i * 4 + 3] = vis; changed = true; }
+    }
+    if (changed) this.lvisAttr.needsUpdate = true;
   };
   LabelSet.prototype.dispose = function () {
     if (this.mesh.geometry) this.mesh.geometry.dispose();
@@ -594,30 +730,14 @@
     this.material.dispose();
   };
 
-  /** Construye la geometría combinada (posiciones+colores+índices) de cuadriláteros. */
-  function MeshBuilder() { this.pos = []; this.col = []; this.idx = []; this.n = 0; }
-  MeshBuilder.prototype.vertex = function (x, y, z, r, g, b) {
-    this.pos.push(x, y, z); this.col.push(r, g, b); return this.n++;
-  };
-  /** Cuadrilátero p0..p3 en orden antihorario visto desde el frente. */
-  MeshBuilder.prototype.quad = function (a, b, c, d) { this.idx.push(a, b, c, a, c, d); };
-  MeshBuilder.prototype.build = function () {
-    var g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.pos), 3));
-    g.setAttribute('color', new THREE.BufferAttribute(new Uint8Array(this.col), 3, true));
-    g.setIndex(new THREE.BufferAttribute(this.n > 65535 ? new Uint32Array(this.idx) : new Uint16Array(this.idx), 1));
-    g.computeVertexNormals();
-    return g;
-  };
-
   // ---------------------------------------------------------------------
-  // 3. CIUDAD (cuadrícula instanciada) + 4. CÁMARA, BUCLE Y API PÚBLICA
+  // 3. CIUDAD (capa drapeada + instancias) + 4. CÁMARA, BUCLE Y API PÚBLICA
   // ---------------------------------------------------------------------
 
   var KIND_KEYS = ['Empresa', 'Granja', 'Tienda', 'Oficina'];
   var DEFAULT_COLORS = {
     kinds: ['#4f8cff', '#4ccf6e', '#f2b84b', '#c77dff'],
-    accent: '#7ef0c0', select: '#ffffff', hover: '#ffffff', tileFree: '#eaf3ff', lease: '#4fd8ff',
+    accent: '#7ef0c0', select: '#7ef0c0', hover: '#ffffff', tileFree: '#eaf3ff', tileSea: '#d2ebff', border: '#0c1a26', lease: '#4fd8ff',
     sky: '#a9cdea', fog: '#b9d3e6', plant: '#3fa34d', crate: '#a8783f', road: '#5a4a3c',
     labelCity: '#ffffff', labelTown: '#ffe9b0', labelPeak: '#ffffff', labelAirport: '#bfe6ff',
     labelBeach: '#ffd9a8', labelPort: '#c9f0ff', cityLabel: '#7ef0c0'
@@ -642,38 +762,37 @@
     out.computeBoundingSphere();
     return out;
   }
-  /** Geometrías de edificio por tipo (0 Empresa, 1 Granja, 2 Tienda, 3 Oficina). */
+  /**
+   * Geometrías de edificio-hito por tipo (0 Empresa, 1 Granja, 2 Tienda, 3 Oficina),
+   * escaladas con la celda: huella ~0.28·CELL, alturas 0.10/0.035/0.06/0.18·CELL
+   * (acotadas a [8, 600] m) y una "cimentación" que baja bajo el suelo para no
+   * flotar en laderas.
+   */
   function makeBuildingGeometries(c) {
+    var f = c * 0.28, fd = clamp(c * 0.12, 3, 400);
+    var hE = clamp(c * 0.10, 8, 600), hG = clamp(c * 0.035, 8, 600), hT = clamp(c * 0.06, 8, 600), hO = clamp(c * 0.18, 8, 600);
     return [
       buildingGeometry([ // Empresa: bloque de altura media con cornisa y marquesina
-        { w: c * 0.62, h: 26, d: c * 0.50, s: [0.95, 0.95, 1.0] },
-        { w: c * 0.66, h: 1.5, d: c * 0.54, y: 26, s: [0.45, 0.45, 0.5] },
-        { w: c * 0.30, h: 1.0, d: c * 0.12, y: 5, z: c * 0.30, s: [0.6, 0.6, 0.65] }
+        { w: f, h: hE + fd, d: f * 0.8, y: -fd, s: [0.95, 0.95, 1.0] },
+        { w: f * 1.06, h: hE * 0.06, d: f * 0.86, y: hE, s: [0.45, 0.45, 0.5] },
+        { w: f * 0.5, h: hE * 0.04, d: f * 0.2, y: hE * 0.2, z: f * 0.48, s: [0.6, 0.6, 0.65] }
       ]),
-      buildingGeometry([ // Granja: nave baja tipo invernadero con techo verde
-        { w: c * 0.78, h: 5.5, d: c * 0.62, s: [1.0, 1.0, 0.94] },
-        { w: c * 0.82, h: 1.4, d: c * 0.66, y: 5.5, s: [0.55, 1.0, 0.55] },
-        { w: c * 0.10, h: 3.0, d: c * 0.10, x: c * 0.30, z: c * 0.24, y: 6.9, s: [0.7, 0.7, 0.75] }
+      buildingGeometry([ // Granja: nave baja tipo invernadero con techo verde y silo
+        { w: f * 1.2, h: hG + fd, d: f, y: -fd, s: [1.0, 1.0, 0.94] },
+        { w: f * 1.26, h: hG * 0.25, d: f * 1.06, y: hG, s: [0.55, 1.0, 0.55] },
+        { w: f * 0.16, h: hG * 0.55, d: f * 0.16, x: f * 0.5, z: f * 0.4, y: hG * 1.2, s: [0.7, 0.7, 0.75] }
       ]),
-      buildingGeometry([ // Tienda: caja pequeña con toldo y rótulo
-        { w: c * 0.50, h: 8, d: c * 0.42, s: [1.0, 1.0, 1.0] },
-        { w: c * 0.56, h: 0.5, d: c * 0.16, y: 4.5, z: c * 0.27, s: [1.0, 0.72, 0.42] },
-        { w: c * 0.30, h: 1.6, d: 0.6, y: 8, z: c * 0.20, s: [1.0, 1.0, 0.6] }
+      buildingGeometry([ // Tienda: caja con toldo y rótulo
+        { w: f * 0.8, h: hT + fd, d: f * 0.7, y: -fd, s: [1.0, 1.0, 1.0] },
+        { w: f * 0.9, h: hT * 0.06, d: f * 0.25, y: hT * 0.55, z: f * 0.45, s: [1.0, 0.72, 0.42] },
+        { w: f * 0.5, h: hT * 0.2, d: f * 0.03, y: hT, z: f * 0.3, s: [1.0, 1.0, 0.6] }
       ]),
       buildingGeometry([ // Oficina: torre alta con coronamiento y antena
-        { w: c * 0.44, h: 55, d: c * 0.44, s: [0.92, 0.95, 1.0] },
-        { w: c * 0.30, h: 6, d: c * 0.30, y: 55, s: [0.7, 0.72, 0.82] },
-        { w: 0.7, h: 10, d: 0.7, y: 61, s: [0.4, 0.4, 0.45] }
+        { w: f * 0.7, h: hO + fd, d: f * 0.7, y: -fd, s: [0.92, 0.95, 1.0] },
+        { w: f * 0.48, h: hO * 0.1, d: f * 0.48, y: hO, s: [0.7, 0.72, 0.82] },
+        { w: f * 0.03, h: hO * 0.18, d: f * 0.03, y: hO * 1.1, s: [0.4, 0.4, 0.45] }
       ])
     ];
-  }
-  /** Marco cuadrado (4 listones) para resaltar parcelas. */
-  function frameGeometry(size, thick, height) {
-    var h = size / 2, t = thick / 2;
-    return buildingGeometry([
-      { w: size, h: height, d: thick, z: -h + t, s: [1, 1, 1] }, { w: size, h: height, d: thick, z: h - t, s: [1, 1, 1] },
-      { w: thick, h: height, d: size - thick * 2, x: -h + t, s: [1, 1, 1] }, { w: thick, h: height, d: size - thick * 2, x: h - t, s: [1, 1, 1] }
-    ]);
   }
 
   // ---------------------------------------------------------------------
@@ -683,6 +802,14 @@
     var N = opts.gridSize || 32;
     var anchor = opts.anchor || { lat: 28.085, lon: -16.505, cellMeters: 60, rotationDeg: 0 };
     var CELL = anchor.cellMeters || 60;
+    var SUB = CELL >= 500 ? 6 : 1;                 // subdivisión de cada celda en la capa drapeada
+    var VPC = (SUB + 1) * (SUB + 1);               // vértices por celda
+    var LIFT = clamp(CELL * 0.01, 1.5, 40);        // elevación de la capa sobre el terreno (m)
+    var ASSET = clamp(CELL * 0.04, 1.2, 250);      // tamaño de los activos (m)
+    // Aproximación equirectangular compartida con el panel 2D
+    var MX = 111320 * Math.cos(anchor.lat * Math.PI / 180), MY = 110574;
+    var rotR = -(anchor.rotationDeg || 0) * Math.PI / 180; // horario visto desde arriba
+    var sinR = Math.sin(rotR), cosR = Math.cos(rotR);
     var colors = {}, key;
     for (key in DEFAULT_COLORS) colors[key] = DEFAULT_COLORS[key];
     if (opts.theme && opts.theme.colors) for (key in opts.theme.colors) colors[key] = opts.theme.colors[key];
@@ -694,10 +821,10 @@
     try {
       gl = canvas.getContext('webgl2', glAttrs) || canvas.getContext('webgl', glAttrs) || canvas.getContext('experimental-webgl', glAttrs);
     } catch (e) { gl = null; }
-    if (!gl) throw new Error('WebGL no disponible en este navegador/webview; se usará la vista 2D.');
+    if (!gl) throw new Error(t('WebGL no disponible en este navegador/webview; se usará la vista 2D.'));
 
     // --- Renderer, escena, cámara ----------------------------------------------
-    var renderer = new THREE.WebGLRenderer({ canvas: canvas, context: gl, antialias: true, alpha: false });
+    var renderer = new THREE.WebGLRenderer({ canvas: canvas, context: gl, antialias: true, alpha: false, logarithmicDepthBuffer: true });
     renderer.setPixelRatio(Math.min(global.devicePixelRatio || 1, 1.5));
     renderer.info.autoReset = true;
     canvas.style.display = 'block'; canvas.style.width = '100%'; canvas.style.height = '100%';
@@ -715,232 +842,259 @@
     var hemi = new THREE.HemisphereLight(0xcfe3ff, 0x6b5a48, 0.62); scene.add(hemi);
     var sun = new THREE.DirectionalLight(0xfff1d6, 1.15); sun.position.copy(sunDir).multiplyScalar(1000); scene.add(sun);
     var viewportUniform = { value: new THREE.Vector2(1, 1) };
+    var lodUniform = { value: 0 }; // 0 = malla fina, 1 = malla gruesa (compartido por todo lo drapeado)
     var terrainMat = new THREE.MeshLambertMaterial({ vertexColors: true });
-    var patchMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
 
     // Estado global del visor
     var S = {
-      ready: false, disposed: false, visible: true, docHidden: !!document.hidden, xr: false,
+      ready: false, disposed: false, visible: true, docHidden: !!document.hidden, xr: false, lod: 0,
       field: null, geo: null, fine: null, coarse: null, L: 60000, center: new THREE.Vector3(),
-      sea: null, sky: null, roads: null, towns: null, patch: null, outline: null,
-      city: null, cityHash: null, cellH: null, gridCenter: new THREE.Vector3(),
-      sel: null, hover: null, frame: 0, fps: 60, lastT: 0, raf: 0
+      sea: null, seabed: null, sky: null, roads: null, towns: null, townsTop: null,
+      city: null, cityHash: null, cellH: null, cellTop: null, cellSea: null, cellState: null, parcelAt: null,
+      gridCenter: new THREE.Vector3(), lift: LIFT, sub: SUB, counts: null, inflatePath: null,
+      sel: null, hover: null, frame: 0, fps: 0, fpsN: 0, fpsT: 0, lastT: 0, raf: 0
     };
     var gridGroup = new THREE.Group(); scene.add(gridGroup);
-    var sinR = 0, cosR = 1; // rotación de la cuadrícula
-    var pending = null;     // ciudad recibida antes de que el terreno esté listo
+    var pending = null;        // ciudad recibida antes de que el terreno esté listo
+    var pendingFlight = null;  // vuelo solicitado antes de que el terreno esté listo
 
-    // --- Altura de la superficie visible del terreno (metros del mundo) ---------
+    // --- Alturas de la superficie visible del terreno (metros del mundo) --------
     function surfaceH(wx, wz) { return S.fine ? meshSurfaceHeight(S.fine, wx, wz) : 0; }
+    function coarseH(wx, wz) { return S.coarse ? meshSurfaceHeight(S.coarse, wx, wz) : 0; }
+    function insideMap(wx, wz) { return S.geo && wx >= 0 && wz >= 0 && wx <= S.geo.worldW && wz <= S.geo.worldH; }
 
-    // --- Cuadrícula: coordenadas locales <-> mundo --------------------------
-    function cellLocal(x, y) { return { x: (x + 0.5 - N / 2) * CELL, z: (y + 0.5 - N / 2) * CELL }; }
-    function localToWorld(lx, lz) {
-      return { x: gridGroup.position.x + lx * cosR + lz * sinR, z: gridGroup.position.z - lx * sinR + lz * cosR };
+    // --- Cuadrícula: celda <-> local (m desde el anclaje) <-> lat/lon <-> mundo ---
+    function cellLocal(x, y) { return { x: (x + 0.5) * CELL, z: (y + 0.5) * CELL }; }
+    /** Local (este/sur de la cuadrícula girada) -> lat/lon (equirectangular, como el panel 2D). */
+    function localToLatLon(lx, lz) {
+      var dx = lx * cosR + lz * sinR, dz = -lx * sinR + lz * cosR;
+      return { lat: anchor.lat - dz / MY, lon: anchor.lon + dx / MX };
     }
+    function latLonToLocal(lat, lon) {
+      var dx = (lon - anchor.lon) * MX, dz = (anchor.lat - lat) * MY;
+      return { x: dx * cosR - dz * sinR, z: dx * sinR + dz * cosR };
+    }
+    function latLonToCell(lat, lon) {
+      var l = latLonToLocal(lat, lon), x = Math.floor(l.x / CELL), y = Math.floor(l.z / CELL);
+      return { x: x, y: y, inside: (x >= 0 && y >= 0 && x < N && y < N) };
+    }
+    function cellLatLon(x, y) { var l = cellLocal(x, y); return localToLatLon(l.x, l.z); }
+    function localToWorld(lx, lz) { var ll = localToLatLon(lx, lz); return S.geo.toWorld(ll.lat, ll.lon); }
+    function worldToLocal(wx, wz) { var ll = S.geo.toLatLon(wx, wz); return latLonToLocal(ll.lat, ll.lon); }
+    function worldToCell(wx, wz) {
+      var l = worldToLocal(wx, wz), x = Math.floor(l.x / CELL), y = Math.floor(l.z / CELL);
+      return (x >= 0 && y >= 0 && x < N && y < N) ? { x: x, y: y } : null;
+    }
+    /** Centro de la celda en el mundo; y = altura del terreno (>= 0) + elevación de la capa. */
     function cellWorld(x, y) {
       var l = cellLocal(x, y), w = localToWorld(l.x, l.z);
-      return new THREE.Vector3(w.x, S.cellH ? S.cellH[y * N + x] : 0, w.z);
+      return new THREE.Vector3(w.x, (S.cellH ? S.cellH[y * N + x] : 0) + LIFT, w.z);
     }
+    /** Desplazamiento local (m) -> desplazamiento en el mundo (giro de la cuadrícula). */
+    function rotOff(dlx, dlz) { return { x: dlx * cosR + dlz * sinR, z: -dlx * sinR + dlz * cosR }; }
 
-    // --- Construcción del parche aterrazado bajo la ciudad -------------------
-    function buildPatch() {
-      var M = 8, i, j, x, y, tmp = new Uint8Array(3);
-      var field = S.field, half = N / 2 * CELL;
-      // Alturas por celda (suavizadas; nunca bajo el nivel del mar: plataforma)
-      S.cellH = new Float32Array(N * N);
+    // --- Capa drapeada de la cuadrícula ------------------------------------------
+    var C = {}; // mallas de la ciudad
+    function drapedH(hf) { return Math.max(hf, 0) + LIFT; } // sobre el mar la capa flota en la superficie
+    function buildTileLayer() {
+      var nV = N * N * VPC, pos = new Float32Array(nV * 3), hc = new Float32Array(nV), col = new Uint8Array(nV * 4);
+      var idx = nV > 65535 ? new Uint32Array(N * N * SUB * SUB * 6) : new Uint16Array(N * N * SUB * SUB * 6), q = 0;
+      S.cellH = new Float32Array(N * N); S.cellTop = new Float32Array(N * N); S.cellSea = new Uint8Array(N * N);
+      var x, y, i, j;
       for (y = 0; y < N; y++) for (x = 0; x < N; x++) {
-        var l = cellLocal(x, y), w = localToWorld(l.x, l.z);
-        S.cellH[y * N + x] = Math.max(field.smoothWorld(w.x, w.z, CELL * 1.5), 1.0);
-      }
-      // Alturas de las esquinas del anillo exterior (mezcla suave hacia el terreno base)
-      var R = N + 2 * M + 1, corner = new Float32Array(R * R);
-      function cornerH(i, j) { return corner[(j + M) * R + (i + M)]; }
-      for (j = -M; j <= N + M; j++) for (i = -M; i <= N + M; i++) {
-        var lx = (i - N / 2) * CELL, lz = (j - N / 2) * CELL, wp = localToWorld(lx, lz);
-        var dO = Math.max(0, -i, i - N, -j, j - N), wgt = smoothstep(dO / (M - 3));
-        var hs = Math.max(field.smoothWorld(wp.x, wp.z, CELL * 1.5), wgt < 1 ? 1.0 : -1e9);
-        corner[(j + M) * R + (i + M)] = wgt >= 1 ? surfaceH(wp.x, wp.z) : lerp(hs, surfaceH(wp.x, wp.z), wgt);
-      }
-      var mb = new MeshBuilder();
-      function tc(h, s, n) { terrainColor(h, s, n, tmp, 0); return tmp; }
-      // Anillo exterior (vértices compartidos, celdas fuera de la cuadrícula)
-      var ringIdx = new Int32Array(R * R);
-      for (j = -M; j <= N + M; j++) for (i = -M; i <= N + M; i++) {
-        var h0 = cornerH(i, j), sl = Math.abs(cornerH(Math.min(i + 1, N + M), j) - cornerH(Math.max(i - 1, -M), j)) / (2 * CELL);
-        var c0 = tc(h0, sl, hash2(i + 77, j + 33) * 2 - 1);
-        ringIdx[(j + M) * R + (i + M)] = mb.vertex((i - N / 2) * CELL, h0, (j - N / 2) * CELL, c0[0], c0[1], c0[2]);
-      }
-      for (j = -M; j < N + M; j++) for (i = -M; i < N + M; i++) {
-        if (i >= 0 && i < N && j >= 0 && j < N) continue;
-        var a = ringIdx[(j + M) * R + (i + M)], b = ringIdx[(j + M + 1) * R + (i + M)];
-        var c = ringIdx[(j + M + 1) * R + (i + M + 1)], d = ringIdx[(j + M) * R + (i + M + 1)];
-        mb.quad(a, b, c, d);
-      }
-      // Faldón exterior (oculta el terreno base rebajado bajo el parche)
-      var SK = 60;
-      function skirt(i0, j0, i1, j1) {
-        var p0 = ringIdx[(j0 + M) * R + (i0 + M)], p1 = ringIdx[(j1 + M) * R + (i1 + M)];
-        var q0 = mb.vertex(mb.pos[p0 * 3], mb.pos[p0 * 3 + 1] - SK, mb.pos[p0 * 3 + 2], mb.col[p0 * 3], mb.col[p0 * 3 + 1], mb.col[p0 * 3 + 2]);
-        var q1 = mb.vertex(mb.pos[p1 * 3], mb.pos[p1 * 3 + 1] - SK, mb.pos[p1 * 3 + 2], mb.col[p1 * 3], mb.col[p1 * 3 + 1], mb.col[p1 * 3 + 2]);
-        mb.quad(p0, p1, q1, q0);
-      }
-      for (i = -M; i < N + M; i++) { skirt(i, -M, i + 1, -M); skirt(i, N + M, i + 1, N + M); }
-      for (j = -M; j < N + M; j++) { skirt(-M, j, -M, j + 1); skirt(N + M, j, N + M, j + 1); }
-      // Terrazas (una plataforma plana por parcela) y "muros" entre ellas
-      var ground = [0.46, 0.43, 0.37];
-      function cellCol(h, x, y) {
-        var cc = tc(h, 0, hash2(x + 5, y + 9) * 2 - 1);
-        return [lerp(cc[0], ground[0] * 255, 0.7), lerp(cc[1], ground[1] * 255, 0.7), lerp(cc[2], ground[2] * 255, 0.7)];
-      }
-      function riser(x0, z0, x1, z1, top, b0, b1, cl) {
-        if (Math.abs(top - b0) < 0.05 && Math.abs(top - b1) < 0.05) return;
-        var r = [cl[0] * 0.75, cl[1] * 0.72, cl[2] * 0.7];
-        var v0 = mb.vertex(x0, top, z0, r[0], r[1], r[2]), v1 = mb.vertex(x1, top, z1, r[0], r[1], r[2]);
-        var v2 = mb.vertex(x1, b1, z1, r[0], r[1], r[2]), v3 = mb.vertex(x0, b0, z0, r[0], r[1], r[2]);
-        mb.quad(v0, v1, v2, v3);
-      }
-      for (y = 0; y < N; y++) for (x = 0; x < N; x++) {
-        var h = S.cellH[y * N + x], x0 = (x - N / 2) * CELL, x1 = x0 + CELL, z0 = (y - N / 2) * CELL, z1 = z0 + CELL;
-        var cl = cellCol(h, x, y);
-        var v0 = mb.vertex(x0, h, z0, cl[0], cl[1], cl[2]), v1 = mb.vertex(x0, h, z1, cl[0], cl[1], cl[2]);
-        var v2 = mb.vertex(x1, h, z1, cl[0], cl[1], cl[2]), v3 = mb.vertex(x1, h, z0, cl[0], cl[1], cl[2]);
-        mb.quad(v0, v1, v2, v3);
-        // este
-        if (x + 1 < N) { var he = S.cellH[y * N + x + 1]; riser(x1, z0, x1, z1, h, he, he, cl); }
-        else riser(x1, z0, x1, z1, h, cornerH(x + 1, y), cornerH(x + 1, y + 1), cl);
-        // sur
-        if (y + 1 < N) { var hs2 = S.cellH[(y + 1) * N + x]; riser(x0, z1, x1, z1, h, hs2, hs2, cl); }
-        else riser(x0, z1, x1, z1, h, cornerH(x, y + 1), cornerH(x + 1, y + 1), cl);
-        if (x === 0) riser(x0, z0, x0, z1, h, cornerH(0, y), cornerH(0, y + 1), cl);
-        if (y === 0) riser(x0, z0, x1, z0, h, cornerH(x, 0), cornerH(x + 1, 0), cl);
-      }
-      if (S.patch) { gridGroup.remove(S.patch); S.patch.geometry.dispose(); }
-      S.patch = new THREE.Mesh(mb.build(), patchMat);
-      S.patch.position.y = 1.5; S.patch.frustumCulled = false;
-      gridGroup.add(S.patch);
-      // Rebajar el terreno base bajo el parche (queda oculto por él y su faldón)
-      var lim = half + M * CELL, meshes = [S.fine, S.coarse], m, k;
-      for (m = 0; m < meshes.length; m++) {
-        var tm = meshes[m], pa = tm.mesh.geometry.attributes.position, lower = lim - Math.max(tm.dx, tm.dz) * 1.05;
-        if (lower <= 0) continue;
-        for (k = 0; k < pa.count; k++) {
-          var dxw = pa.getX(k) - gridGroup.position.x, dzw = pa.getZ(k) - gridGroup.position.z;
-          var lx2 = dxw * cosR - dzw * sinR, lz2 = dxw * sinR + dzw * cosR; // rotación inversa
-          if (Math.abs(lx2) < lower && Math.abs(lz2) < lower) pa.setY(k, pa.getY(k) - 25);
+        var ci = y * N + x, base = ci * VPC, top = -1e9;
+        for (j = 0; j <= SUB; j++) for (i = 0; i <= SUB; i++) {
+          var w = localToWorld((x + i / SUB) * CELL, (y + j / SUB) * CELL), hf = surfaceH(w.x, w.z);
+          if (hf > top) top = hf;
+          var v = base + j * (SUB + 1) + i;
+          pos[v * 3] = w.x; pos[v * 3 + 1] = drapedH(hf); pos[v * 3 + 2] = w.z;
+          hc[v] = drapedH(coarseH(w.x, w.z));
         }
-        pa.needsUpdate = true;
+        var wc = localToWorld((x + 0.5) * CELL, (y + 0.5) * CELL);
+        S.cellH[ci] = Math.max(surfaceH(wc.x, wc.z), 0); S.cellTop[ci] = top; S.cellSea[ci] = top < 0.5 ? 1 : 0;
+        for (j = 0; j < SUB; j++) for (i = 0; i < SUB; i++) {
+          var a = base + j * (SUB + 1) + i, b = a + 1, c = a + SUB + 1, d = c + 1;
+          idx[q++] = a; idx[q++] = c; idx[q++] = b; idx[q++] = b; idx[q++] = c; idx[q++] = d;
+        }
       }
-      // Contorno de la cuadrícula
-      var op = [];
-      for (i = 0; i < N; i++) op.push((i - N / 2) * CELL, cornerH(i, 0) + 1.6, -half);
-      for (j = 0; j < N; j++) op.push(half, cornerH(N, j) + 1.6, (j - N / 2) * CELL);
-      for (i = N; i > 0; i--) op.push((i - N / 2) * CELL, cornerH(i, N) + 1.6, half);
-      for (j = N; j > 0; j--) op.push(-half, cornerH(0, j) + 1.6, (j - N / 2) * CELL);
-      if (S.outline) { gridGroup.remove(S.outline); S.outline.geometry.dispose(); }
-      var og = new THREE.BufferGeometry(); og.setAttribute('position', new THREE.Float32BufferAttribute(op, 3));
-      S.outline = new THREE.LineLoop(og, new THREE.LineBasicMaterial({ color: new THREE.Color(colors.accent), transparent: true, opacity: 0.6 }));
-      S.outline.position.y = 1.5; S.outline.frustumCulled = false;
-      gridGroup.add(S.outline);
+      var g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.setAttribute('hc', new THREE.BufferAttribute(hc, 1));
+      var ca = new THREE.BufferAttribute(col, 4, true); ca.setUsage(THREE.DynamicDrawUsage);
+      g.setAttribute('cellColor', ca);
+      g.setIndex(new THREE.BufferAttribute(idx, 1));
+      C.tiles = new THREE.Mesh(g, makeDrapeMaterial(lodUniform, '#ffffff', 1, true));
+      C.tiles.frustumCulled = false; C.tiles.renderOrder = 2;
+      gridGroup.add(C.tiles);
+      // Bordes de celda (LineSegments drapeados, un poco por encima de las baldosas)
+      var M = N * SUB, nSeg = 2 * (N + 1) * M, bp = new Float32Array(nSeg * 6), bh = new Float32Array(nSeg * 2), o = 0, k, s;
+      function seg(l0x, l0z, l1x, l1z) {
+        var w0 = localToWorld(l0x, l0z), w1 = localToWorld(l1x, l1z);
+        bp[o * 3] = w0.x; bp[o * 3 + 1] = drapedH(surfaceH(w0.x, w0.z)) + LIFT * 0.2 + 0.2; bp[o * 3 + 2] = w0.z; bh[o] = drapedH(coarseH(w0.x, w0.z)) + LIFT * 0.2 + 0.2; o++;
+        bp[o * 3] = w1.x; bp[o * 3 + 1] = drapedH(surfaceH(w1.x, w1.z)) + LIFT * 0.2 + 0.2; bp[o * 3 + 2] = w1.z; bh[o] = drapedH(coarseH(w1.x, w1.z)) + LIFT * 0.2 + 0.2; o++;
+      }
+      for (k = 0; k <= N; k++) for (s = 0; s < M; s++) {
+        seg(k * CELL, s * CELL / SUB, k * CELL, (s + 1) * CELL / SUB);
+        seg(s * CELL / SUB, k * CELL, (s + 1) * CELL / SUB, k * CELL);
+      }
+      var bg = new THREE.BufferGeometry();
+      bg.setAttribute('position', new THREE.BufferAttribute(bp, 3));
+      bg.setAttribute('hc', new THREE.BufferAttribute(bh, 1));
+      C.borders = new THREE.LineSegments(bg, makeDrapeMaterial(lodUniform, colors.border, 0.38, false));
+      C.borders.frustumCulled = false; C.borders.renderOrder = 3;
+      gridGroup.add(C.borders);
+      // Hover / selección: una celda cada uno, reconstruidos (sin reservar memoria) al cambiar
+      C.hover = cellMesh(colors.hover, 0.3, 4); C.hover.renderOrder = 4;
+      C.selFill = cellMesh(colors.select, 0.22, 5); C.selFill.renderOrder = 5;
+      var lg = new THREE.BufferGeometry(), lp = new THREE.BufferAttribute(new Float32Array(4 * SUB * 3), 3), lh = new THREE.BufferAttribute(new Float32Array(4 * SUB), 1);
+      lp.setUsage(THREE.DynamicDrawUsage); lh.setUsage(THREE.DynamicDrawUsage);
+      lg.setAttribute('position', lp); lg.setAttribute('hc', lh);
+      C.selLoop = new THREE.LineLoop(lg, makeDrapeMaterial(lodUniform, colors.select, 1, false));
+      C.selLoop.frustumCulled = false; C.selLoop.renderOrder = 6; C.selLoop.visible = false;
+      gridGroup.add(C.selLoop);
+    }
+    function cellMesh(color, alpha) {
+      var g = new THREE.BufferGeometry();
+      var p = new THREE.BufferAttribute(new Float32Array(VPC * 3), 3), h = new THREE.BufferAttribute(new Float32Array(VPC), 1);
+      p.setUsage(THREE.DynamicDrawUsage); h.setUsage(THREE.DynamicDrawUsage);
+      g.setAttribute('position', p); g.setAttribute('hc', h);
+      var idx = new Uint16Array(SUB * SUB * 6), q = 0, i, j;
+      for (j = 0; j < SUB; j++) for (i = 0; i < SUB; i++) {
+        var a = j * (SUB + 1) + i, b = a + 1, c = a + SUB + 1, d = c + 1;
+        idx[q++] = a; idx[q++] = c; idx[q++] = b; idx[q++] = b; idx[q++] = c; idx[q++] = d;
+      }
+      g.setIndex(new THREE.BufferAttribute(idx, 1));
+      var m = new THREE.Mesh(g, makeDrapeMaterial(lodUniform, color, alpha, false));
+      m.frustumCulled = false; m.visible = false;
+      gridGroup.add(m);
+      return m;
+    }
+    /** Copia los vértices de la celda (x,y) de la capa a una malla de una celda, elevados `extra` m. */
+    function fillCell(mesh, x, y, extra) {
+      var tp = C.tiles.geometry.attributes.position.array, th = C.tiles.geometry.attributes.hc.array, base = (y * N + x) * VPC;
+      var p = mesh.geometry.attributes.position, h = mesh.geometry.attributes.hc, pa = p.array, ha = h.array, k;
+      for (k = 0; k < VPC; k++) {
+        pa[k * 3] = tp[(base + k) * 3]; pa[k * 3 + 1] = tp[(base + k) * 3 + 1] + extra; pa[k * 3 + 2] = tp[(base + k) * 3 + 2];
+        ha[k] = th[base + k] + extra;
+      }
+      p.needsUpdate = true; h.needsUpdate = true;
+    }
+    /** Contorno (LineLoop) de la celda (x,y) a partir de los vértices de la capa. */
+    function fillLoop(mesh, x, y, extra) {
+      var tp = C.tiles.geometry.attributes.position.array, th = C.tiles.geometry.attributes.hc.array, base = (y * N + x) * VPC;
+      var p = mesh.geometry.attributes.position, h = mesh.geometry.attributes.hc, pa = p.array, ha = h.array, n = 0, i, j;
+      function put(i, j) { var v = base + j * (SUB + 1) + i; pa[n * 3] = tp[v * 3]; pa[n * 3 + 1] = tp[v * 3 + 1] + extra; pa[n * 3 + 2] = tp[v * 3 + 2]; ha[n] = th[v] + extra; n++; }
+      for (i = 0; i < SUB; i++) put(i, 0);
+      for (j = 0; j < SUB; j++) put(SUB, j);
+      for (i = SUB; i > 0; i--) put(i, SUB);
+      for (j = SUB; j > 0; j--) put(0, j);
+      p.needsUpdate = true; h.needsUpdate = true;
     }
 
-    // --- Mallas instanciadas de la ciudad ---------------------------------------
-    var C = {}; // contenedor de mallas de la ciudad
+    // --- Mallas instanciadas (edificios-hito e inventario) -------------------------
     var dummy = new THREE.Object3D(), tmpColor = new THREE.Color();
     function inst(geometry, material, capacity, name) {
       var m = new THREE.InstancedMesh(geometry, material, capacity);
-      m.count = 0; m.frustumCulled = false; m.name = name; m.userData.cells = [];
+      m.count = 0; m.frustumCulled = false; m.name = name;
       for (var i = 0; i < capacity; i++) m.setColorAt(i, tmpColor.set(0xffffff));
       m.instanceColor.needsUpdate = true;
       gridGroup.add(m);
       return m;
     }
     function buildCityMeshes() {
-      var tileGeo = new THREE.BoxGeometry(CELL * 0.92, 0.3, CELL * 0.92);
-      C.tileFree = inst(tileGeo, new THREE.MeshLambertMaterial({ color: new THREE.Color(colors.tileFree), transparent: true, opacity: 0.5, depthWrite: false }), N * N, 'tileFree');
-      C.tilePlot = inst(tileGeo, new THREE.MeshLambertMaterial({ color: 0xffffff }), N * N, 'tilePlot');
       var bg = makeBuildingGeometries(CELL);
       C.buildings = [];
       for (var k = 0; k < 4; k++) C.buildings.push(inst(bg[k], new THREE.MeshLambertMaterial({ vertexColors: true }), N * N, 'building' + k));
-      C.own = inst(frameGeometry(CELL * 0.98, 1.6, 1.4), new THREE.MeshBasicMaterial({ color: new THREE.Color(colors.accent) }), N * N, 'own');
       C.assetCap = 0;
       buildAssetMeshes(256);
-      var hoverGeo = new THREE.PlaneGeometry(CELL * 1.02, CELL * 1.02); hoverGeo.rotateX(-Math.PI / 2);
-      C.hover = new THREE.Mesh(hoverGeo, new THREE.MeshBasicMaterial({ color: new THREE.Color(colors.hover), transparent: true, opacity: 0.28, depthWrite: false }));
-      C.hover.visible = false; C.hover.renderOrder = 5; gridGroup.add(C.hover);
-      C.selFrame = new THREE.Mesh(frameGeometry(CELL * 1.04, 2.4, 2.2), new THREE.MeshBasicMaterial({ color: new THREE.Color(colors.select) }));
-      C.selFrame.visible = false; gridGroup.add(C.selFrame);
-      C.selLabel = new LabelSet(viewportUniform); scene.add(C.selLabel.mesh);
-      C.pickables = [C.tileFree, C.tilePlot].concat(C.buildings);
+      C.selLabel = new LabelSet(viewportUniform, false); scene.add(C.selLabel.mesh);
     }
     function buildAssetMeshes(cap) {
       var old = [C.plants, C.crates, C.rings], i;
       for (i = 0; i < old.length; i++) if (old[i]) { gridGroup.remove(old[i]); old[i].geometry.dispose(); old[i].material.dispose(); old[i].dispose(); }
-      var cone = new THREE.ConeGeometry(2.4, 6.5, 7); cone.translate(0, 3.25, 0);
-      var crate = new THREE.BoxGeometry(3.4, 3.4, 3.4); crate.translate(0, 1.7, 0);
-      var ring = new THREE.TorusGeometry(3.8, 0.3, 6, 18); ring.rotateX(Math.PI / 2); ring.translate(0, 0.35, 0);
+      var a = ASSET;
+      var cone = new THREE.ConeGeometry(a * 0.45, a * 1.3, 7); cone.translate(0, a * 0.65, 0);
+      var crate = new THREE.BoxGeometry(a * 0.7, a * 0.7, a * 0.7); crate.translate(0, a * 0.35, 0);
+      var ring = new THREE.TorusGeometry(a * 0.8, a * 0.06, 6, 20); ring.rotateX(Math.PI / 2); ring.translate(0, a * 0.08, 0);
       C.plants = inst(cone, new THREE.MeshLambertMaterial({ color: 0xffffff }), cap, 'plants');
       C.crates = inst(crate, new THREE.MeshLambertMaterial({ color: 0xffffff }), cap, 'crates');
       C.rings = inst(ring, new THREE.MeshBasicMaterial({ color: new THREE.Color(colors.lease), transparent: true, opacity: 0.85 }), cap, 'rings');
       C.assetCap = cap;
     }
-    function place(mesh, idx, lx, ly, lz, sx, sy, sz, color, cellIndex) {
-      dummy.position.set(lx, ly, lz); dummy.rotation.set(0, 0, 0); dummy.scale.set(sx, sy, sz);
+    function place(mesh, idx, wx, wy, wz, sx, sy, sz, color) {
+      dummy.position.set(wx, wy, wz); dummy.rotation.set(0, rotR, 0); dummy.scale.set(sx, sy, sz);
       dummy.updateMatrix(); mesh.setMatrixAt(idx, dummy.matrix);
       if (color) mesh.setColorAt(idx, color);
-      mesh.userData.cells[idx] = cellIndex;
     }
     function finish(mesh, count) {
       mesh.count = count; mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
-    var kindColors = [];
-    for (var kc = 0; kc < 4; kc++) kindColors.push(new THREE.Color(colors.kinds[kc]));
+    var kindColors = [], kindRGB = [], ownRGB = [];
+    var accentC = new THREE.Color(colors.accent), freeC = new THREE.Color(colors.tileFree), seaC = new THREE.Color(colors.tileSea);
+    for (var kc = 0; kc < 4; kc++) {
+      kindColors.push(new THREE.Color(colors.kinds[kc]));
+      kindRGB.push([kindColors[kc].r * 255, kindColors[kc].g * 255, kindColors[kc].b * 255]);
+      tmpColor.copy(kindColors[kc]).lerp(accentC, 0.35).multiplyScalar(1.15);
+      ownRGB.push([clamp(tmpColor.r, 0, 1) * 255, clamp(tmpColor.g, 0, 1) * 255, clamp(tmpColor.b, 0, 1) * 255]);
+    }
     var plantColor = new THREE.Color(colors.plant), crateColor = new THREE.Color(colors.crate);
+    var FREE_RGBA = [freeC.r * 255, freeC.g * 255, freeC.b * 255, 46], SEA_RGBA = [seaC.r * 255, seaC.g * 255, seaC.b * 255, 10];
+    function paintCell(col, ci, rgb, a) {
+      var o = ci * VPC * 4;
+      for (var k = 0; k < VPC; k++) { col[o] = rgb[0]; col[o + 1] = rgb[1]; col[o + 2] = rgb[2]; col[o + 3] = a; o += 4; }
+    }
 
-    /** Vuelca los datos de la ciudad en las mallas instanciadas (sin recrear la escena). */
+    /** Vuelca los datos de la ciudad: colores de la capa (sin reconstruir geometría) + instancias. */
     function applyCity(d) {
-      var n = N, i, x, y, cnt = { free: 0, plot: 0, own: 0, b: [0, 0, 0, 0] };
+      var parcels = d.parcels || [], assets = d.assets || [];
+      var n = N, i, x, y, cnt = { free: 0, sea: 0, plot: 0, own: 0, b: [0, 0, 0, 0], plants: 0, crates: 0, rings: 0 };
       var parcelAt = new Int32Array(n * n); for (i = 0; i < n * n; i++) parcelAt[i] = -1;
-      for (i = 0; i < d.parcels.length; i++) {
-        var p = d.parcels[i];
+      for (i = 0; i < parcels.length; i++) {
+        var p = parcels[i];
         if (p.x >= 0 && p.x < n && p.y >= 0 && p.y < n) parcelAt[p.y * n + p.x] = i;
       }
       S.parcelAt = parcelAt;
-      var me = d.me || null;
+      var me = d.me || null, col = C.tiles.geometry.attributes.cellColor.array, state = S.cellState;
       for (y = 0; y < n; y++) for (x = 0; x < n; x++) {
-        var ci = y * n + x, l = cellLocal(x, y), h = S.cellH[ci], pi = parcelAt[ci];
-        if (pi < 0) { place(C.tileFree, cnt.free++, l.x, h + 1.75, l.z, 1, 1, 1, null, ci); continue; }
-        var pc = d.parcels[pi], kind = clamp(pc.kind | 0, 0, 3);
-        tmpColor.copy(kindColors[kind]).multiplyScalar(0.55);
-        place(C.tilePlot, cnt.plot++, l.x, h + 1.75, l.z, 1, 1, 1, tmpColor, ci);
+        var ci = y * n + x, pi = parcelAt[ci];
+        if (pi < 0) {
+          if (S.cellSea[ci]) { paintCell(col, ci, SEA_RGBA, SEA_RGBA[3]); cnt.sea++; state[ci] = 1; }
+          else { paintCell(col, ci, FREE_RGBA, FREE_RGBA[3]); cnt.free++; state[ci] = 0; }
+          continue;
+        }
+        var pc = parcels[pi], kind = clamp(pc.kind | 0, 0, 3), own = !!(me && pc.owner === me);
+        paintCell(col, ci, own ? ownRGB[kind] : kindRGB[kind], own ? 215 : 165);
+        state[ci] = own ? 3 : 2; cnt.plot++; if (own) cnt.own++;
+        var w = cellWorld(x, y);
         var v = 0.9 + 0.2 * hash2(x + 13, y + 29), sy = 0.85 + 0.3 * hash2(x + 3, y + 7) + Math.min(pc.assets | 0, 6) * 0.03;
         tmpColor.copy(kindColors[kind]).multiplyScalar(v);
-        place(C.buildings[kind], cnt.b[kind]++, l.x, h + 1.9, l.z, 1, sy, 1, tmpColor, ci);
-        if (me && pc.owner === me) place(C.own, cnt.own++, l.x, h + 1.92, l.z, 1, 1, 1, null, ci);
+        place(C.buildings[kind], cnt.b[kind]++, w.x, S.cellH[ci] + LIFT * 0.6, w.z, 1, sy, 1, tmpColor);
       }
-      finish(C.tileFree, cnt.free); finish(C.tilePlot, cnt.plot); finish(C.own, cnt.own);
+      C.tiles.geometry.attributes.cellColor.needsUpdate = true;
       for (i = 0; i < 4; i++) finish(C.buildings[i], cnt.b[i]);
-      // Activos: hasta 12 huecos por parcela alrededor del edificio (rejilla 4x4 sin el centro)
-      if (d.assets.length > C.assetCap) { var cap = 256; while (cap < d.assets.length) cap *= 2; buildAssetMeshes(cap); }
-      var slots = new Uint8Array(n * n), np = 0, nc = 0, nr = 0, SLOT = [];
-      for (y = 0; y < 4; y++) for (x = 0; x < 4; x++) if (!((x === 1 || x === 2) && (y === 1 || y === 2))) SLOT.push([(x - 1.5) * CELL * 0.235, (y - 1.5) * CELL * 0.235]);
-      for (i = 0; i < d.assets.length; i++) {
-        var a = d.assets[i];
+      // Activos: anillos de 12 huecos alrededor del edificio (radio ~0.36·CELL; el 2º anillo más afuera)
+      if (assets.length > C.assetCap) { var cap = 256; while (cap < assets.length) cap *= 2; buildAssetMeshes(cap); }
+      var slots = new Uint16Array(n * n);
+      for (i = 0; i < assets.length; i++) {
+        var a = assets[i];
         if (!(a.x >= 0 && a.x < n && a.y >= 0 && a.y < n)) continue;
-        var cj = a.y * n + a.x, lc = cellLocal(a.x, a.y), s = SLOT[slots[cj]++ % 12], hh = S.cellH[cj] + 1.9;
-        var ax = lc.x + s[0], az = lc.z + s[1];
+        var cj = a.y * n + a.x, si = slots[cj]++, ringI = (si / 12) | 0, ang = (si % 12) / 12 * Math.PI * 2 + ringI * 0.26;
+        var rad = CELL * (0.34 + 0.08 * (ringI % 2)), off = rotOff(Math.cos(ang) * rad, Math.sin(ang) * rad);
+        var wcen = cellWorld(a.x, a.y), ax = wcen.x + off.x, az = wcen.z + off.z;
+        var hh = drapedH(surfaceH(ax, az)) + LIFT * 0.1; // cada activo sigue el relieve local
         if ((a.kind | 0) === 1) {
           tmpColor.copy(crateColor).multiplyScalar(0.85 + 0.3 * hash2(i, 11));
-          place(C.crates, nc++, ax, hh, az, 1, 1, 1, tmpColor, cj);
+          place(C.crates, cnt.crates++, ax, hh, az, 1, 1, 1, tmpColor);
         } else {
           var gsc = 0.8 + 0.5 * hash2(i, 5);
           tmpColor.copy(plantColor).offsetHSL(0.03 * (hash2(i, 17) - 0.5), 0, 0.1 * (hash2(i, 19) - 0.5));
-          place(C.plants, np++, ax, hh, az, gsc, gsc, gsc, tmpColor, cj);
+          place(C.plants, cnt.plants++, ax, hh, az, gsc, gsc, gsc, tmpColor);
         }
-        if (a.lease && a.lease.active) place(C.rings, nr++, ax, hh, az, 1, 1, 1, null, cj);
+        if (a.lease && a.lease.active) place(C.rings, cnt.rings++, ax, hh, az, 1, 1, 1, null);
       }
-      finish(C.plants, np); finish(C.crates, nc); finish(C.rings, nr);
+      finish(C.plants, cnt.plants); finish(C.crates, cnt.crates); finish(C.rings, cnt.rings);
+      S.counts = cnt;
       refreshSelection();
     }
 
@@ -952,17 +1106,18 @@
     }
     function refreshSelection() {
       if (!S.ready) return;
-      if (!S.sel) { C.selFrame.visible = false; C.selLabel.mesh.visible = false; return; }
-      var x = S.sel.x, y = S.sel.y, l = cellLocal(x, y), h = S.cellH[y * N + x];
-      C.selFrame.position.set(l.x, h + 1.95, l.z); C.selFrame.visible = true;
+      if (!S.sel) { C.selFill.visible = false; C.selLoop.visible = false; C.selLabel.mesh.visible = false; return; }
+      var x = S.sel.x, y = S.sel.y;
+      fillCell(C.selFill, x, y, LIFT * 0.45); fillLoop(C.selLoop, x, y, LIFT * 0.55);
+      C.selFill.visible = true; C.selLoop.visible = true;
       var p = parcelInfo(x, y), txt;
       if (p) {
         txt = t(KIND_KEYS[clamp(p.kind | 0, 0, 3)]) + ' (' + x + ', ' + y + ')';
         if (p.name) txt += ' · ' + p.name;
         if (S.city && S.city.me && p.owner === S.city.me) txt += ' · ' + t('Mía');
-      } else txt = t('Parcela libre') + ' (' + x + ', ' + y + ')';
+      } else txt = t(S.cellSea[y * N + x] ? 'Parcela libre (mar)' : 'Parcela libre') + ' (' + x + ', ' + y + ')';
       var w = cellWorld(x, y);
-      C.selLabel.set([{ x: w.x, y: h + 8, z: w.z, text: txt, color: colors.select, size: 13, bold: true, pin: true }]);
+      C.selLabel.set([{ x: w.x, y: w.y + LIFT * 2 + 6, z: w.z, text: txt, color: colors.accent, size: 13, bold: true, pin: true }]);
       C.selLabel.mesh.visible = true;
     }
     function setHover(cell) {
@@ -970,22 +1125,48 @@
       if (same) return;
       S.hover = cell;
       if (cell) {
-        var l = cellLocal(cell.x, cell.y);
-        C.hover.position.set(l.x, S.cellH[cell.y * N + cell.x] + 2.1, l.z); C.hover.visible = true;
+        fillCell(C.hover, cell.x, cell.y, LIFT * 0.3); C.hover.visible = true;
         canvas.style.cursor = 'pointer';
       } else { C.hover.visible = false; canvas.style.cursor = 'grab'; }
       onHover(cell ? cell.x : null, cell ? cell.y : null);
     }
-    var raycaster = new THREE.Raycaster(), ndc = new THREE.Vector2();
+    // Selección por rayo contra el TERRENO visible (marcha sobre la triangulación
+    // real del LOD activo + bisección). Fuera del mapa de alturas la superficie es
+    // el mar (y = 0); sobre el mar dentro del mapa también se usa la superficie del
+    // agua (la capa flota sobre ella). Las celdas ocultas tras una cresta no son
+    // seleccionables a través del terreno.
+    var raycaster = new THREE.Raycaster(), ndc = new THREE.Vector2(), _hit = new THREE.Vector3();
+    function pickSurf(wx, wz, tr) { return insideMap(wx, wz) ? Math.max(meshSurfaceHeight(tr, wx, wz), 0) : 0; }
+    function rayTerrain(o, d, out) {
+      var tr = S.lod ? S.coarse : S.fine, step = Math.min(tr.dx, tr.dz) * 0.6, maxH = Math.max(tr.maxH, 0);
+      var tt = 0, tEnd, i;
+      if (o.y > maxH) { if (d.y >= 0) return false; tt = (o.y - maxH) / -d.y; }
+      tEnd = d.y < 0 ? o.y / -d.y + step : S.L * 12;
+      if (o.y + d.y * tt < pickSurf(o.x + d.x * tt, o.z + d.z * tt, tr)) return false; // se parte bajo la superficie
+      var prev = tt;
+      for (tt += step; tt <= tEnd; tt += step) {
+        var px = o.x + d.x * tt, py = o.y + d.y * tt, pz = o.z + d.z * tt;
+        if (py < pickSurf(px, pz, tr)) {
+          var a = prev, b = tt;
+          for (i = 0; i < 12; i++) {
+            var m = (a + b) / 2;
+            if (o.y + d.y * m < pickSurf(o.x + d.x * m, o.z + d.z * m, tr)) b = m; else a = m;
+          }
+          out.set(o.x + d.x * b, o.y + d.y * b, o.z + d.z * b);
+          return true;
+        }
+        prev = tt;
+        if (py > maxH && d.y > 0) return false;
+      }
+      return false;
+    }
     function pick(clientX, clientY) {
       if (!S.ready) return null;
       var r = canvas.getBoundingClientRect();
       ndc.set(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
       raycaster.setFromCamera(ndc, camera);
-      var hits = raycaster.intersectObjects(C.pickables, false);
-      if (!hits.length || hits[0].instanceId === undefined) return null;
-      var ci = hits[0].object.userData.cells[hits[0].instanceId];
-      return ci === undefined ? null : { x: ci % N, y: Math.floor(ci / N) };
+      if (!rayTerrain(raycaster.ray.origin, raycaster.ray.direction, _hit)) return null;
+      return worldToCell(_hit.x, _hit.z);
     }
 
     // --- Cámara orbital propia --------------------------------------------------
@@ -997,13 +1178,14 @@
     var pointers = {}, nPointers = 0, drag = null, keys = {}, pointerPos = null, pointerDirty = false;
     function cancelFlight() { cam.flight = null; }
     function setGoalTarget(v) { cam.goal.target.copy(v); cam.goal.target.y = Math.max(surfaceH(v.x, v.z), 0); }
+    var _tg = new THREE.Vector3();
     function panBy(dx, dy) {
       var th = cam.cur.theta, k = cam.cur.radius * 0.0016;
       var rx = Math.cos(th), rz = -Math.sin(th), fx = -Math.sin(th), fz = -Math.cos(th);
-      var tg = cam.goal.target.clone();
-      tg.x += (-rx * dx - fx * dy) * k; tg.z += (-rz * dx - fz * dy) * k;
-      tg.x = clamp(tg.x, -S.L, S.geo ? S.geo.worldW + S.L : S.L); tg.z = clamp(tg.z, -S.L, S.geo ? S.geo.worldH + S.L : S.L);
-      setGoalTarget(tg);
+      _tg.copy(cam.goal.target);
+      _tg.x += (-rx * dx - fx * dy) * k; _tg.z += (-rz * dx - fz * dy) * k;
+      _tg.x = clamp(_tg.x, -S.L, S.geo ? S.geo.worldW + S.L : S.L); _tg.z = clamp(_tg.z, -S.L, S.geo ? S.geo.worldH + S.L : S.L);
+      setGoalTarget(_tg);
     }
     function zoomBy(f) { cam.goal.radius = clamp(cam.goal.radius * f, cam.minR, cam.maxR); }
     function pdist(a, b) { return Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)); }
@@ -1024,7 +1206,8 @@
       e.preventDefault();
     };
     L.pointermove = function (e) {
-      pointerPos = { x: e.clientX, y: e.clientY }; pointerDirty = true;
+      if (!pointerPos) pointerPos = { x: 0, y: 0 };
+      pointerPos.x = e.clientX; pointerPos.y = e.clientY; pointerDirty = true;
       var p = pointers[e.pointerId];
       if (!p || !drag) return;
       var dx = e.clientX - p.x, dy = e.clientY - p.y;
@@ -1053,8 +1236,8 @@
     L.pointerleave = function () { pointerPos = null; pointerDirty = true; };
     L.dblclick = function (e) {
       var c = pick(e.clientX, e.clientY);
-      if (c) { // el clic previo ya seleccionó la parcela: no repetir onSelect
-        if (!S.sel || S.sel.x !== c.x || S.sel.y !== c.y) doSelect(c, true);
+      if (c) { // los clics previos ya seleccionaron la parcela (doSelect no repite onSelect)
+        doSelect(c, true);
         flyTo(c.x, c.y);
       }
       e.preventDefault();
@@ -1067,13 +1250,15 @@
     };
     L.contextmenu = function (e) { e.preventDefault(); };
     L.keydown = function (e) {
+      if (typeof e.key !== 'string') return;
       var k = e.key.toLowerCase();
       if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd', '+', '-', 'escape'].indexOf(k) < 0) return;
       if (k === 'escape') { doSelect(null, true); return; }
       if (k === '+') zoomBy(0.8); else if (k === '-') zoomBy(1.25); else keys[k] = true;
       cancelFlight(); e.preventDefault();
     };
-    L.keyup = function (e) { delete keys[e.key.toLowerCase()]; };
+    L.keyup = function (e) { if (typeof e.key === 'string') delete keys[e.key.toLowerCase()]; };
+    L.blur = function () { keys = {}; };
     L.visibility = function () { S.docHidden = !!document.hidden; syncLoop(); };
     L.resize = function () { resize(); };
     canvas.addEventListener('pointerdown', L.pointerdown);
@@ -1086,13 +1271,17 @@
     canvas.addEventListener('contextmenu', L.contextmenu);
     canvas.addEventListener('keydown', L.keydown);
     canvas.addEventListener('keyup', L.keyup);
+    canvas.addEventListener('blur', L.blur);
     document.addEventListener('visibilitychange', L.visibility);
     global.addEventListener('resize', L.resize);
+    global.addEventListener('blur', L.blur);
     var ro = null;
     if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(function () { resize(); }); ro.observe(container); }
 
     function doSelect(cell, fromUser) {
       if (cell && !(cell.x >= 0 && cell.x < N && cell.y >= 0 && cell.y < N)) cell = null;
+      // Repetir la selección de la misma parcela (2º clic de un doble clic) no vuelve a avisar
+      if (fromUser && cell && S.sel && S.sel.x === cell.x && S.sel.y === cell.y) return;
       S.sel = cell ? { x: cell.x, y: cell.y } : null;
       refreshSelection();
       if (fromUser) onSelect(cell ? cell.x : null, cell ? cell.y : null);
@@ -1101,20 +1290,23 @@
     function fly(to, dur) {
       var from = { theta: cam.cur.theta, phi: cam.cur.phi, radius: cam.cur.radius, target: cam.cur.target.clone() };
       var dth = to.theta - from.theta; dth = Math.atan2(Math.sin(dth), Math.cos(dth)); // camino más corto
-      cam.flight = { t0: performance.now(), dur: dur, from: from, to: { theta: from.theta + dth, phi: to.phi, radius: to.radius, target: to.target.clone() } };
+      cam.flight = { t0: performance.now(), dur: dur, from: from, to: { theta: from.theta + dth, phi: to.phi, radius: clamp(to.radius, cam.minR, cam.maxR), target: to.target.clone() } };
     }
     function flyTo(x, y) {
-      if (!S.ready) return;
+      if (!S.ready) { pendingFlight = { fn: flyTo, args: [x, y] }; return; }
       x = clamp(x | 0, 0, N - 1); y = clamp(y | 0, 0, N - 1);
       fly({ theta: cam.cur.theta, phi: 0.95, radius: CELL * 5.5, target: cellWorld(x, y) }, 1200);
     }
-    function flyToCity() {
-      if (!S.ready) return;
+    function cityView() {
       var tg = S.gridCenter.clone(); tg.y = S.cellH[(N >> 1) * N + (N >> 1)];
-      fly({ theta: 0.55, phi: 0.78, radius: N * CELL * 1.5, target: tg }, 1400);
+      return { theta: 0.55, phi: 0.78, radius: N * CELL * 1.5, target: tg };
+    }
+    function flyToCity() {
+      if (!S.ready) { pendingFlight = { fn: flyToCity, args: [] }; return; }
+      fly(cityView(), 1400);
     }
     function flyToIsland() {
-      if (!S.ready) return;
+      if (!S.ready) { pendingFlight = { fn: flyToIsland, args: [] }; return; }
       fly({ theta: 0.35, phi: 0.72, radius: S.L * 1.15, target: S.center.clone() }, 1600);
     }
 
@@ -1122,8 +1314,9 @@
     function buildWorld(meta, img) {
       var geo = makeGeo(meta), field = makeHeightField(img, meta.offset || 0, meta.meters_per_pixel);
       S.geo = geo; S.field = field;
-      S.fine = buildTerrain(field, geo, 512, terrainMat);
-      S.coarse = buildTerrain(field, geo, 128, terrainMat);
+      var bedH = Math.min(meta.min_h || -1000, -1000) - 50;
+      S.fine = buildTerrain(field, geo, 512, terrainMat, bedH);
+      S.coarse = buildTerrain(field, geo, 256, terrainMat, bedH);
       S.coarse.mesh.visible = false;
       scene.add(S.fine.mesh); scene.add(S.coarse.mesh);
       S.L = Math.max(geo.worldW, geo.worldH);
@@ -1135,43 +1328,70 @@
       scene.add(S.sea);
       // Fondo marino uniforme bajo todo el mar (evita que se vea el borde del mapa de alturas)
       var bedGeo = new THREE.PlaneGeometry(S.L * 8, S.L * 8, 1, 1); bedGeo.rotateX(-Math.PI / 2);
-      var bedCol = new Uint8Array(3); terrainColor(Math.min(meta.min_h || -1000, -1000) - 50, 0, 0, bedCol, 0);
+      var bedCol = new Uint8Array(3); terrainColor(bedH, 0, 0, bedCol, 0);
       S.seabed = new THREE.Mesh(bedGeo, new THREE.MeshLambertMaterial({ color: new THREE.Color(bedCol[0] / 255, bedCol[1] / 255, bedCol[2] / 255) }));
-      S.seabed.position.set(S.center.x, Math.min(meta.min_h || -1000, -1000) - 40, S.center.z); S.seabed.frustumCulled = false;
+      S.seabed.position.set(S.center.x, bedH + 10, S.center.z); S.seabed.frustumCulled = false;
       scene.add(S.seabed);
-      S.sky = makeSky(camera.far * 0.8); scene.add(S.sky);
-      if (meta.roads && meta.roads.length) { S.roads = buildRoads(meta.roads, geo, surfaceH); if (S.roads) { S.roads.material.color.set(colors.road); scene.add(S.roads); } }
-      // Cuadrícula anclada
-      var g = geo.toWorld(anchor.lat, anchor.lon);
-      var rot = -(anchor.rotationDeg || 0) * Math.PI / 180;
-      gridGroup.position.set(g.x, 0, g.z); gridGroup.rotation.y = rot;
-      sinR = Math.sin(rot); cosR = Math.cos(rot);
-      S.gridCenter.set(g.x, 0, g.z);
-      buildPatch();
+      S.sky = makeSky(1000, colors.fog); scene.add(S.sky);
+      if (meta.roads && meta.roads.length) { S.roads = buildRoads(meta.roads, geo); if (S.roads) scene.add(S.roads); }
+      // Cuadrícula anclada (esquina NO en el anclaje) y su centro
+      var gc = localToWorld(N / 2 * CELL, N / 2 * CELL);
+      S.gridCenter.set(gc.x, 0, gc.z);
+      S.cellState = new Uint8Array(N * N);
+      buildTileLayer();
       buildCityMeshes();
-      // Etiquetas de pueblos + etiqueta de la ciudad (una sola llamada de dibujo)
-      var items = [], towns = meta.towns || [], i;
-      var STYLE = { city: [colors.labelCity, 14, 1e12, true], town: [colors.labelTown, 12, S.L * 3, false], airport: [colors.labelAirport, 12, S.L * 3, false],
-        peak: [colors.labelPeak, 13, 1e12, true], beach: [colors.labelBeach, 11, S.L * 1.6, false], port: [colors.labelPort, 11, S.L * 1.6, false] };
+      // Etiquetas: ciudades y cumbre siempre encima (sin test de profundidad); el resto
+      // con test de profundidad y menor alcance. Dos llamadas de dibujo.
+      var top = [], low = [], towns = meta.towns || [], i;
+      var STYLE = { city: [colors.labelCity, 14, 1e12, true, 0], peak: [colors.labelPeak, 13, 1e12, true, 1],
+        town: [colors.labelTown, 12, S.L * 1.3, false, 2], airport: [colors.labelAirport, 12, S.L * 1.3, false, 3],
+        port: [colors.labelPort, 11, S.L * 0.8, false, 4], beach: [colors.labelBeach, 11, S.L * 0.8, false, 5] };
       for (i = 0; i < towns.length; i++) {
         var tw = towns[i], w = geo.toWorld(tw.lat, tw.lon), st = STYLE[tw.kind] || STYLE.town;
         if (w.x < 0 || w.z < 0 || w.x > geo.worldW || w.z > geo.worldH) continue;
         var pre = tw.kind === 'peak' ? '▲ ' : (tw.kind === 'airport' ? '✈ ' : '');
-        items.push({ x: w.x, y: Math.max(surfaceH(w.x, w.z), 0) + 3, z: w.z, text: pre + t(tw.name), color: st[0], size: st[1], maxDist: st[2], bold: st[3], pin: true });
+        var hy = Math.max(surfaceH(w.x, w.z), coarseH(w.x, w.z), 0) + 6;
+        (tw.kind === 'city' || tw.kind === 'peak' ? top : low).push({ x: w.x, y: hy, z: w.z, text: pre + t(tw.name), color: st[0], size: st[1], maxDist: st[2], bold: st[3], pin: true, priority: st[4] });
       }
-      var gc = S.gridCenter;
-      items.push({ x: gc.x, y: S.cellH[(N >> 1) * N + (N >> 1)] + 40, z: gc.z, text: t('Ciudad RAMI'), color: colors.cityLabel, size: 15, maxDist: 1e12, bold: true, pin: false });
-      S.towns = new LabelSet(viewportUniform); S.towns.set(items); scene.add(S.towns.mesh);
+      if (N * CELL < S.L * 0.5) { // sólo si la ciudad es un "barrio" y no cubre la isla entera
+        top.push({ x: gc.x, y: S.cellH[(N >> 1) * N + (N >> 1)] + LIFT + 40, z: gc.z, text: t('Ciudad RAMI'), color: colors.cityLabel, size: 15, maxDist: 1e12, bold: true, pin: false, priority: 0 });
+      }
+      S.townsTop = new LabelSet(viewportUniform, false); S.townsTop.set(top); scene.add(S.townsTop.mesh);
+      S.towns = new LabelSet(viewportUniform, true); S.towns.set(low); scene.add(S.towns.mesh);
       // Cámara inicial: vista de la ciudad
-      var tg = gc.clone(); tg.y = S.cellH[(N >> 1) * N + (N >> 1)];
-      cam.cur.target.copy(tg); cam.goal.target.copy(tg);
-      cam.cur.radius = cam.goal.radius = N * CELL * 1.5; cam.cur.phi = cam.goal.phi = 0.78; cam.cur.theta = cam.goal.theta = 0.55;
       cam.maxR = S.L * 4;
+      var cv = cityView();
+      cam.cur.target.copy(cv.target); cam.goal.target.copy(cv.target);
+      cam.cur.radius = cam.goal.radius = clamp(cv.radius, cam.minR, cam.maxR); cam.cur.phi = cam.goal.phi = cv.phi; cam.cur.theta = cam.goal.theta = cv.theta;
       S.ready = true;
       if (pending) { applyCity(pending); pending = null; }
       else if (S.city) applyCity(S.city);
       refreshSelection();
       resize();
+      if (pendingFlight) { var pf = pendingFlight; pendingFlight = null; pf.fn.apply(null, pf.args); }
+    }
+    /** Carreteras: un único LineSegments drapeado con todas las polilíneas. */
+    function buildRoads(roads, geo) {
+      var pts = [], hcs = [], r, i;
+      for (r = 0; r < roads.length; r++) {
+        var line = roads[r];
+        if (!line || line.length < 2) continue;
+        var prev = null;
+        for (i = 0; i < line.length; i++) {
+          var w = geo.toWorld(line[i][1], line[i][0]);
+          if (w.x < 0 || w.z < 0 || w.x > geo.worldW || w.z > geo.worldH) { prev = null; continue; }
+          var p = [w.x, Math.max(surfaceH(w.x, w.z), 0) + 4, w.z, Math.max(coarseH(w.x, w.z), 0) + 4];
+          if (prev) { pts.push(prev[0], prev[1], prev[2], p[0], p[1], p[2]); hcs.push(prev[3], p[3]); }
+          prev = p;
+        }
+      }
+      if (!pts.length) return null;
+      var g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
+      g.setAttribute('hc', new THREE.BufferAttribute(new Float32Array(hcs), 1));
+      var m = new THREE.LineSegments(g, makeDrapeMaterial(lodUniform, colors.road, 1, false));
+      m.frustumCulled = false; m.renderOrder = 2;
+      return m;
     }
 
     function normalizeMeta(meta, img) {
@@ -1192,8 +1412,9 @@
       console.warn('city3d: no se pudo cargar el JSON geográfico (' + err.message + '); se usan metadatos por defecto.');
       return null;
     }).then(function (meta) {
-      return loadBinary(opts.heightUrl || '/geo/tenerife.hgt.png').then(function (buf) { return decodePngGray(buf); }).then(function (img) {
-        return [normalizeMeta(meta, img), img];
+      return loadBinary(opts.heightUrl || '/geo/tenerife.hgt.png').then(function (buf) { return decodePngGrayAsync(buf); }).then(function (r) {
+        S.inflatePath = r.path;
+        return [normalizeMeta(meta, r.img), r.img];
       }, function (err) {
         console.warn('city3d: no se pudo cargar el mapa de alturas (' + err.message + '); se genera una isla procedural.');
         var m = normalizeMeta(meta, null);
@@ -1213,7 +1434,8 @@
       if (want && !S.raf) { S.lastT = performance.now(); S.raf = requestAnimationFrame(frame); }
       else if (!want && S.raf) { cancelAnimationFrame(S.raf); S.raf = 0; }
     }
-    var _pos = new THREE.Vector3();
+    var _pos = new THREE.Vector3(), _cp = new THREE.Vector3();
+    var labelRects = { arr: new Float32Array(4 * 256), n: 0 };
     function updateCamera(dt) {
       var c = cam.cur, g = cam.goal, f = cam.flight;
       if (f) {
@@ -1224,10 +1446,10 @@
         if (s >= 1) cam.flight = null;
       } else {
         var kk = 1 - Math.exp(-dt * 9);
-        var sp = c.radius * 0.9 * dt, mv = { x: 0, y: 0 };
-        if (keys.arrowup || keys.w) mv.y -= 1; if (keys.arrowdown || keys.s) mv.y += 1;
-        if (keys.arrowleft || keys.a) mv.x -= 1; if (keys.arrowright || keys.d) mv.x += 1;
-        if (mv.x || mv.y) panBy(mv.x * sp / (c.radius * 0.0016), mv.y * sp / (c.radius * 0.0016));
+        var sp = c.radius * 0.9 * dt, mvx = 0, mvy = 0;
+        if (keys.arrowup || keys.w) mvy -= 1; if (keys.arrowdown || keys.s) mvy += 1;
+        if (keys.arrowleft || keys.a) mvx -= 1; if (keys.arrowright || keys.d) mvx += 1;
+        if (mvx || mvy) panBy(mvx * sp / (c.radius * 0.0016), mvy * sp / (c.radius * 0.0016));
         c.theta += (g.theta - c.theta) * kk; c.phi += (g.phi - c.phi) * kk; c.radius += (g.radius - c.radius) * kk;
         c.target.lerp(g.target, kk);
       }
@@ -1239,22 +1461,35 @@
       if (_pos.y < minY) { _pos.y = minY; if (!f) g.phi = Math.min(g.phi, c.phi - 0.01); }
       camera.position.copy(_pos);
       camera.lookAt(c.target);
-      camera.near = clamp(c.radius * 0.002, 1.5, 2000); camera.far = Math.max(c.radius * 8, S.L * 8);
+      camera.near = Math.max(0.5, c.radius * 0.001); camera.far = Math.max(c.radius * 8, S.L * 8);
       camera.updateProjectionMatrix();
+      camera.updateMatrixWorld();
+    }
+    function cullLabels() {
+      var W = viewportUniform.value.x, H = viewportUniform.value.y;
+      _cp.setFromMatrixPosition(camera.matrixWorld);
+      labelRects.n = 0;
+      S.townsTop.cull(camera, _cp, W, H, labelRects);
+      S.towns.cull(camera, _cp, W, H, labelRects);
     }
     function frame(now) {
       S.raf = 0;
       if (S.disposed) return;
       var dt = Math.min(0.1, (now - S.lastT) / 1000) || 0.016; S.lastT = now;
-      if (dt > 0) S.fps = S.fps * 0.9 + (1 / dt) * 0.1;
+      // fps reales: fotogramas contados en una ventana de 1 s
+      S.fpsN++;
+      if (!S.fpsT) S.fpsT = now;
+      else if (now - S.fpsT >= 1000) { S.fps = S.fpsN * 1000 / (now - S.fpsT); S.fpsN = 0; S.fpsT = now; }
       if (S.ready) {
         updateCamera(dt);
         var dist = camera.position.distanceTo(cam.cur.target);
         scene.fog.near = dist + S.L * 0.15; scene.fog.far = dist + S.L * 1.6;
         S.sky.position.copy(camera.position);
         S.sea.material.uniforms.uTime.value = now / 1000;
-        var far = camera.position.distanceTo(S.center) > S.L * 2.5;
+        var far = camera.position.distanceTo(S.center) > S.L;
+        S.lod = far ? 1 : 0; lodUniform.value = S.lod;
         S.fine.mesh.visible = !far; S.coarse.mesh.visible = far;
+        cullLabels();
         if (pointerDirty) { pointerDirty = false; setHover(pointerPos && !drag ? pick(pointerPos.x, pointerPos.y) : null); }
       }
       renderer.render(scene, camera);
@@ -1272,49 +1507,70 @@
     syncLoop();
 
     // --- VR ---------------------------------------------------------------------------
-    var xrSessionRef = null;
+    var xr = { session: null, entering: false, saved: null };
     function xrSupported() {
       if (!global.navigator || !navigator.xr || !navigator.xr.isSessionSupported) return Promise.resolve(false);
       return navigator.xr.isSessionSupported('immersive-vr').then(function (v) { return !!v; }, function () { return false; });
     }
+    /** Posición del visitante: de pie sobre la parcela seleccionada (o la central), mirando al edificio. */
+    function vrPlacement(out) {
+      var cell = S.sel || { x: N >> 1, y: N >> 1 }, w = cellWorld(cell.x, cell.y), off = rotOff(0, CELL * 0.42);
+      var x = w.x + off.x, z = w.z + off.z;
+      out.set(x, Math.max(surfaceH(x, z), 0) + LIFT + 1.6, z);
+      return out;
+    }
+    function restoreDesktop() {
+      renderer.setAnimationLoop(null);
+      renderer.xr.enabled = false;
+      xr.session = null; xr.entering = false;
+      rig.position.set(0, 0, 0); rig.rotation.set(0, 0, 0);
+      camera.position.set(0, 0, 0); camera.quaternion.set(0, 0, 0, 1);
+      if (xr.saved) { camera.near = xr.saved.near; camera.far = xr.saved.far; camera.updateProjectionMatrix(); xr.saved = null; }
+      S.xr = false; syncLoop();
+    }
+    function xrFrame(now) {
+      S.sea.material.uniforms.uTime.value = now / 1000;
+      S.sky.position.setFromMatrixPosition(camera.matrixWorld);
+      renderer.render(scene, camera); S.frame++;
+    }
     function enterVR() {
-      if (!navigator.xr) return Promise.reject(new Error('WebXR no disponible'));
-      var floor = true;
-      return navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] }).then(function (session) {
-        xrSessionRef = session;
-        renderer.xr.enabled = true;
-        try { renderer.xr.setReferenceSpaceType('local-floor'); } catch (e) { floor = false; }
-        return renderer.xr.setSession(session).then(function () { return session; });
+      if (!global.navigator || !navigator.xr) return Promise.reject(new Error(t('WebXR no disponible')));
+      if (xr.session || xr.entering) return Promise.resolve(xr.session); // sesión ya activa (o iniciándose): ignorar
+      if (!S.ready) return Promise.reject(new Error(t('El mapa 3D aún no está listo')));
+      xr.entering = true;
+      return xrSupported().then(function (ok) {
+        if (!ok) throw new Error(t('WebXR no disponible'));
+        return navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] });
       }).then(function (session) {
-        // Coloca al visitante a altura humana en la parcela seleccionada (o el centro)
-        var cell = S.sel || { x: N >> 1, y: N >> 1 }, w = cellWorld(cell.x, cell.y);
-        rig.position.set(w.x, w.y + 0.5 + (floor ? 0 : 1.6), w.z + CELL * 0.35);
-        rig.rotation.set(0, 0, 0);
-        S.xr = true; syncLoop();
-        renderer.setAnimationLoop(function (now) {
-          S.sea.material.uniforms.uTime.value = now / 1000; S.sky.position.copy(rig.position);
-          renderer.render(scene, camera); S.frame++;
+        xr.session = session;
+        xr.saved = { near: camera.near, far: camera.far };
+        renderer.xr.enabled = true;
+        try { renderer.xr.setReferenceSpaceType('local'); } catch (e) {}
+        camera.near = 0.1; camera.far = 200000; camera.updateProjectionMatrix();
+        return renderer.xr.setSession(session).then(function () {
+          vrPlacement(rig.position); rig.rotation.set(0, rotR, 0); // la cámara mira a -Z local = norte de la cuadrícula: hacia el centro de la parcela
+          S.xr = true; xr.entering = false; syncLoop();
+          session.addEventListener('end', restoreDesktop);
+          renderer.setAnimationLoop(xrFrame);
+          return session;
+        }, function (err) {
+          try { session.end(); } catch (e2) {}
+          restoreDesktop();
+          throw new Error(t('No se pudo iniciar la sesión VR') + ': ' + ((err && err.message) || err));
         });
-        session.addEventListener('end', function () {
-          renderer.setAnimationLoop(null);
-          renderer.xr.enabled = false; xrSessionRef = null;
-          rig.position.set(0, 0, 0); rig.rotation.set(0, 0, 0);
-          camera.position.set(0, 0, 0); camera.rotation.set(0, 0, 0);
-          S.xr = false; syncLoop();
-        });
-      });
+      }, function (err) { xr.entering = false; throw err; });
     }
 
     // --- API pública ---------------------------------------------------------------------
     var handle = {
       ready: ready,
       setCity: function (data) {
-        if (!data || !data.parcels) return;
+        if (!data) return;
         var h = fnv1a(JSON.stringify(data));
         if (h === S.cityHash) return;
-        S.cityHash = h; S.city = data;
+        S.cityHash = h; S.city = { parcels: data.parcels || [], assets: data.assets || [], me: data.me || null, size: data.size };
         if (data.size && data.size !== N) console.warn('city3d: el tamaño de la ciudad (' + data.size + ') no coincide con gridSize (' + N + ')');
-        if (S.ready) applyCity(data); else pending = data;
+        if (S.ready) applyCity(S.city); else pending = S.city;
       },
       select: function (x, y) { doSelect((x === null || x === undefined) ? null : { x: x | 0, y: y | 0 }, false); },
       flyTo: flyTo, flyToIsland: flyToIsland, flyToCity: flyToCity,
@@ -1322,8 +1578,16 @@
       setVisible: function (v) { S.visible = !!v; syncLoop(); },
       xrSupported: xrSupported, enterVR: enterVR,
       stats: function () { return { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame }; },
+      /** Correspondencia lat/lon <-> celda (misma fórmula que el panel 2D; no necesita los datos geo). */
+      latLonToCell: latLonToCell,
+      cellLatLon: cellLatLon,
       /** Utilidades (pruebas / integración) */
       cellWorld: function (x, y) { return S.ready ? cellWorld(x, y) : null; },
+      cellInfo: function (x, y) {
+        if (!S.ready) return null;
+        var ci = (y | 0) * N + (x | 0);
+        return { h: S.cellH[ci], top: S.cellTop[ci], lift: LIFT, sea: !!S.cellSea[ci], state: S.cellState[ci] };
+      },
       project: function (x, y) {
         if (!S.ready) return null;
         var v = cellWorld(x, y).project(camera), r = canvas.getBoundingClientRect();
@@ -1333,13 +1597,15 @@
       dispose: function () {
         if (S.disposed) return;
         S.disposed = true; syncLoop();
-        if (xrSessionRef) { try { xrSessionRef.end(); } catch (e) {} }
+        if (xr.session) { try { xr.session.end(); } catch (e) {} }
         canvas.removeEventListener('pointerdown', L.pointerdown); canvas.removeEventListener('pointermove', L.pointermove);
         canvas.removeEventListener('pointerup', L.pointerup); canvas.removeEventListener('pointercancel', L.pointerup);
         canvas.removeEventListener('pointerleave', L.pointerleave); canvas.removeEventListener('dblclick', L.dblclick);
         canvas.removeEventListener('wheel', L.wheel); canvas.removeEventListener('contextmenu', L.contextmenu);
         canvas.removeEventListener('keydown', L.keydown); canvas.removeEventListener('keyup', L.keyup);
+        canvas.removeEventListener('blur', L.blur);
         document.removeEventListener('visibilitychange', L.visibility); global.removeEventListener('resize', L.resize);
+        global.removeEventListener('blur', L.blur);
         if (ro) ro.disconnect();
         scene.traverse(function (o) {
           if (o.geometry) o.geometry.dispose();
@@ -1353,15 +1619,16 @@
           if (o.isInstancedMesh) o.dispose();
         });
         if (S.towns) S.towns.dispose();
+        if (S.townsTop) S.townsTop.dispose();
         if (C.selLabel) C.selLabel.dispose();
         renderer.dispose();
         try { renderer.forceContextLoss(); } catch (e2) {}
         if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
       },
-      _debug: { scene: scene, camera: camera, renderer: renderer, state: S, meshes: C }
+      _debug: { scene: scene, camera: camera, renderer: renderer, state: S, meshes: C, cam: cam, vrPlacement: function () { return vrPlacement(new THREE.Vector3()); }, keysDown: function () { return Object.keys(keys); } }
     };
     return handle;
   }
 
-  global.RamiCity3D = { mount: mount, version: '1.0.0', _internals: { inflate: inflate, decodePngGray: decodePngGray, fnv1a: fnv1a } };
+  global.RamiCity3D = { mount: mount, version: '1.1.0', _internals: { inflate: inflate, inflateStream: inflateStream, decodePngGray: decodePngGray, decodePngGrayAsync: decodePngGrayAsync, fnv1a: fnv1a } };
 })(typeof window !== 'undefined' ? window : this);
