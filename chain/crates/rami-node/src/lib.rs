@@ -12,6 +12,8 @@
 pub mod http;
 pub mod update;
 pub mod geo;
+pub mod portmap;
+pub mod seeds;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -211,6 +213,25 @@ pub struct NodeConfig {
     pub seeds: Vec<String>,
     pub miner: Option<AccountId>,
     pub mining: bool,
+    /// Descubrimiento de nodos en la red local (UDP 30303).
+    pub lan_discovery: bool,
+    /// Abrir el puerto P2P en el router (NAT-PMP / UPnP).
+    pub portmap: bool,
+}
+
+/// Diagnóstico de red para el panel: IP local, IP pública y estado del mapeo
+/// de puerto. `code` es lo que hay que darle a otra persona para conectarse.
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct NetInfo {
+    pub lan_ip: Option<String>,
+    pub external_ip: Option<String>,
+    pub portmap_ok: bool,
+    pub portmap_method: String,
+    pub portmap_detail: String,
+    pub portmap_enabled: bool,
+    pub lan_discovery: bool,
+    pub code: String,
+    pub code_lan: String,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -239,6 +260,7 @@ pub struct NodeStatus {
     pub mining: bool,
     pub hashrate: u64,
     pub found: u64,
+    pub netinfo: NetInfo,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -444,6 +466,22 @@ pub struct CityView {
     pub mint_price: u64,
     pub parcels: Vec<ParcelView>,
     pub assets: Vec<AssetView>,
+    /// Operaciones de la ciudad aún en el mempool (se aplican al minarse el
+    /// próximo bloque): el panel las muestra como «pendientes».
+    #[serde(default)]
+    pub pending: Vec<PendingView>,
+}
+
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct PendingView {
+    pub op: String,
+    pub who: String,
+    pub x: u16,
+    pub y: u16,
+    pub name: String,
+    pub kind: u8,
+    pub asset: String,
+    pub txid: String,
 }
 
 fn city_view(st: &State, height: u64) -> CityView {
@@ -490,6 +528,7 @@ fn city_view(st: &State, height: u64) -> CityView {
         mint_price: rami_core::state::MINT_PRICE,
         parcels,
         assets,
+        pending: Vec::new(),
     }
 }
 
@@ -610,6 +649,7 @@ struct Node {
     /// Pares conocidos remarcables; se persisten en peers.json del directorio de
     /// cadena y se re-marcan al arrancar (descubrimiento sin servidor central).
     known_peers: HashSet<String>,
+    netinfo: Arc<Mutex<NetInfo>>,
     net: Network,
     mining: Arc<MiningShared>,
     miner: Option<AccountId>,
@@ -639,7 +679,38 @@ pub fn spawn(cfg: NodeConfig) -> Result<NodeHandle, String> {
         listen: cfg.listen,
         seeds: cfg.seeds.clone(),
         max_peers: 32,
+        lan_discovery: cfg.lan_discovery,
     });
+
+    // Diagnóstico de red + apertura del puerto en el router (en segundo
+    // plano: SSDP/NAT-PMP tardan unos segundos; se renueva cada hora).
+    let netinfo = Arc::new(Mutex::new(NetInfo {
+        portmap_enabled: cfg.portmap,
+        lan_discovery: cfg.lan_discovery,
+        ..Default::default()
+    }));
+    {
+        let ni = netinfo.clone();
+        let port = net.listen_port;
+        let do_map = cfg.portmap && port != 0;
+        thread::spawn(move || loop {
+            let lan = portmap::lan_ip().map(|ip| ip.to_string());
+            let res = if do_map { portmap::map_port(port) } else { portmap::MapResult::default() };
+            if let Ok(mut g) = ni.lock() {
+                g.lan_ip = lan.clone();
+                g.external_ip = res.external_ip.clone();
+                g.portmap_ok = res.ok;
+                g.portmap_method = res.method.clone();
+                g.portmap_detail = res.detail.clone();
+                g.code_lan = lan.as_ref().map(|l| format!("{l}:{port}")).unwrap_or_default();
+                g.code = match (&res.external_ip, res.ok) {
+                    (Some(ext), true) => format!("{ext}:{port}"),
+                    _ => g.code_lan.clone(),
+                };
+            }
+            thread::sleep(Duration::from_secs(3600));
+        });
+    }
 
     let (tx, rx) = channel::<NodeMsg>();
     let status = Arc::new(Mutex::new(NodeStatus::default()));
@@ -690,6 +761,7 @@ pub fn spawn(cfg: NodeConfig) -> Result<NodeHandle, String> {
         peer_height: HashMap::new(),
         peer_meta: HashMap::new(),
         known_peers: HashSet::new(),
+        netinfo: netinfo.clone(),
         net,
         mining: mining.clone(),
         miner: cfg.miner,
@@ -986,7 +1058,25 @@ impl Node {
             }
             NodeCmd::GetCity(reply) => {
                 let st = self.tree.head_state().unwrap_or_default();
-                let _ = reply.send(city_view(&st, self.head_height()));
+                let mut v = city_view(&st, self.head_height());
+                for t in &self.mempool {
+                    let id = hex::encode(txid(t));
+                    let who = signer_of(t).map(hex::encode).unwrap_or_default();
+                    let pv = match t {
+                        Tx::ClaimParcel { x, y, name, kind, .. } => PendingView {
+                            op: "claim".into(), who, x: *x, y: *y,
+                            name: String::from_utf8_lossy(name).to_string(), kind: *kind, asset: String::new(), txid: id,
+                        },
+                        Tx::MintAsset { x, y, kind, .. } => PendingView { op: "mint".into(), who, x: *x, y: *y, kind: *kind, txid: id, ..Default::default() },
+                        Tx::TransferAsset { asset, .. } => PendingView { op: "transfer".into(), who, asset: hex::encode(asset), txid: id, ..Default::default() },
+                        Tx::ListLease { asset, .. } => PendingView { op: "list".into(), who, asset: hex::encode(asset), txid: id, ..Default::default() },
+                        Tx::Rent { asset, .. } => PendingView { op: "rent".into(), who, asset: hex::encode(asset), txid: id, ..Default::default() },
+                        Tx::Harvest { x, y, .. } => PendingView { op: "harvest".into(), who, x: *x, y: *y, txid: id, ..Default::default() },
+                        _ => continue,
+                    };
+                    v.pending.push(pv);
+                }
+                let _ = reply.send(v);
             }
             NodeCmd::GetBlock(height, reply) => {
                 let chain = self.tree.observer_chain();
@@ -1080,6 +1170,7 @@ impl Node {
             mining: self.mining.on.load(Ordering::Relaxed),
             hashrate: self.mining.hashrate.load(Ordering::Relaxed),
             found: self.mining.found.load(Ordering::Relaxed),
+            netinfo: self.netinfo.lock().map(|g| g.clone()).unwrap_or_default(),
         };
         if let Ok(mut g) = self.status.lock() {
             *g = status;

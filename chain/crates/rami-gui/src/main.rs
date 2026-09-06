@@ -938,7 +938,16 @@ fn main() -> ExitCode {
         .unwrap_or_else(|| PathBuf::from(format!("{home}/.rami/chain-{net_name}")));
     let dash_port: u16 = arg(&args, "--port").and_then(|s| s.parse().ok()).unwrap_or(8645);
     let p2p_port: u16 = arg(&args, "--listen").and_then(|s| s.parse().ok()).unwrap_or(30301);
-    let seeds = args_all(&args, "--connect");
+    // Semillas: las de --connect más la semilla DNS del proyecto (si el nombre
+    // no existe todavía, simplemente no resuelve). La lista web se añade
+    // cuando el nodo está listo (ver más abajo).
+    let mut seeds = args_all(&args, "--connect");
+    if !has(&args, "--no-seeds") {
+        seeds.push(rami_node::seeds::DNS_SEED.to_string());
+    }
+    let lan_discovery = !has(&args, "--no-lan");
+    let portmap = !has(&args, "--no-portmap");
+    let web_seeds_on = !has(&args, "--no-seeds");
     let label = arg(&args, "--label").unwrap_or_else(|| "default".into());
 
     // Monedero: NO se crea solo. Si no existe, el panel pedirá una contraseña
@@ -1107,6 +1116,8 @@ fn main() -> ExitCode {
                     seeds,
                     miner: pubkey,
                     mining: false,
+                    lan_discovery,
+                    portmap,
                 })
             }));
             match spawned {
@@ -1119,6 +1130,21 @@ fn main() -> ExitCode {
                     // fija ahora el minero con su pubkey.
                     if let Some(pk) = gui.wallet.lock().unwrap_or_else(|e| e.into_inner()).pubkey {
                         h.set_miner(pk);
+                    }
+                    // Semillas publicadas en la web (quantbot.army/descargas/seeds.json):
+                    // se consultan al arrancar y cada 15 minutos.
+                    if web_seeds_on {
+                        let h2 = h.clone();
+                        std::thread::spawn(move || loop {
+                            let list = rami_node::seeds::fetch_web_seeds();
+                            if !list.is_empty() {
+                                dlog(&format!("semillas web: {}", list.join(", ")));
+                            }
+                            for s in list {
+                                h2.add_peer(s);
+                            }
+                            std::thread::sleep(std::time::Duration::from_secs(900));
+                        });
                     }
                     *gui.node.write().unwrap_or_else(|e| e.into_inner()) = NodeSlot::Ready(h);
                 }

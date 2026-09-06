@@ -49,6 +49,11 @@ for pair in "${map_suffix[@]}"; do
     '$a + [{name:$n, browser_download_url:$u}]')"
 done
 
+# Semillas de la red (web/seeds.json, editable sin sacar versión): el monedero
+# las consulta en /descargas/seeds.json al arrancar y cada 15 minutos.
+cp web/seeds.json "${OUT}/seeds.json"
+cp web/SEEDS-README.txt "${OUT}/SEEDS-README.txt"
+
 printf '{"version":"%s"}\n' "$tag" > "${OUT}/version.json"
 # Espejo del release con la MISMA forma que la API de GitHub (subconjunto):
 # el auto-actualizador del monedero lo parsea igual que el release oficial.

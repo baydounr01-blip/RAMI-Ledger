@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub use protocol::{Frame, PROTO_VERSION};
 
@@ -41,6 +41,9 @@ pub struct NetConfig {
     pub seeds: Vec<String>,
     /// Tope de conexiones simultáneas.
     pub max_peers: usize,
+    /// Descubrimiento en la red local (UDP): los nodos de la misma casa u
+    /// oficina se encuentran solos, sin escribir ninguna IP.
+    pub lan_discovery: bool,
 }
 
 impl NetConfig {
@@ -161,6 +164,11 @@ impl Network {
         // Marcado inicial de seeds.
         for s in &cfg.seeds {
             let _ = tx.send(Internal::Cmd(Cmd::Dial(s.clone())));
+        }
+
+        // Descubrimiento LAN: anuncia «estoy aquí» por UDP y marca a quien oiga.
+        if cfg.lan_discovery && listen_port != 0 {
+            spawn_lan_discovery(cfg.net_hex(), cfg.node_id, listen_port, tx.clone());
         }
 
         // Hilo de mantenimiento: re-marca seeds caídos cada 15 s.
@@ -316,6 +324,83 @@ fn central_loop(
     }
 }
 
+/// Puerto UDP del descubrimiento en red local.
+pub const LAN_DISCOVERY_PORT: u16 = 30303;
+/// Grupo multicast del descubrimiento (además del broadcast clásico).
+const LAN_MCAST: std::net::Ipv4Addr = std::net::Ipv4Addr::new(239, 255, 77, 77);
+
+/// Anuncio de descubrimiento: `RAMI1 <net_hex> <node_id> <puerto>`.
+fn discovery_line(net_hex: &str, node_id: u64, port: u16) -> String {
+    format!("RAMI1 {net_hex} {node_id} {port}")
+}
+
+/// Parsea un anuncio; None si no es nuestro formato.
+fn parse_discovery(line: &str) -> Option<(String, u64, u16)> {
+    let mut it = line.split_whitespace();
+    if it.next()? != "RAMI1" {
+        return None;
+    }
+    let net = it.next()?.to_string();
+    let node: u64 = it.next()?.parse().ok()?;
+    let port: u16 = it.next()?.parse().ok()?;
+    if net.len() != 64 || port == 0 {
+        return None;
+    }
+    Some((net, node, port))
+}
+
+/// Descubrimiento en red local: cada 10 s se envía el anuncio por broadcast
+/// (255.255.255.255) y multicast (239.255.77.77) al puerto 30303; un hilo
+/// escucha ese puerto y, al oír a OTRO nodo de la MISMA red, lo marca (como
+/// máximo una vez por minuto por dirección). Así dos ordenadores de la misma
+/// casa se conectan sin escribir IPs. Es el mismo mecanismo que usan las
+/// impresoras o Chromecast para aparecer en la red.
+fn spawn_lan_discovery(net_hex: String, node_id: u64, listen_port: u16, tx: Sender<Internal>) {
+    use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
+    // Emisor.
+    {
+        let line = discovery_line(&net_hex, node_id, listen_port);
+        thread::spawn(move || {
+            let Ok(sock) = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) else { return };
+            let _ = sock.set_broadcast(true);
+            let _ = sock.set_multicast_ttl_v4(1);
+            let bcast = SocketAddrV4::new(Ipv4Addr::BROADCAST, LAN_DISCOVERY_PORT);
+            let mcast = SocketAddrV4::new(LAN_MCAST, LAN_DISCOVERY_PORT);
+            loop {
+                let _ = sock.send_to(line.as_bytes(), bcast);
+                let _ = sock.send_to(line.as_bytes(), mcast);
+                thread::sleep(Duration::from_secs(10));
+            }
+        });
+    }
+    // Receptor.
+    thread::spawn(move || {
+        let Ok(sock) = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, LAN_DISCOVERY_PORT)) else {
+            // Otra instancia en esta máquina ya escucha: seguimos anunciándonos
+            // (ella nos marcará a nosotros).
+            return;
+        };
+        let _ = sock.join_multicast_v4(&LAN_MCAST, &Ipv4Addr::UNSPECIFIED);
+        let mut last: HashMap<String, Instant> = HashMap::new();
+        let mut buf = [0u8; 256];
+        while let Ok((n, from)) = sock.recv_from(&mut buf) {
+            let Ok(text) = std::str::from_utf8(&buf[..n]) else { continue };
+            let Some((net, node, port)) = parse_discovery(text.trim()) else { continue };
+            if net != net_hex || node == node_id {
+                continue;
+            }
+            let addr = format!("{}:{port}", from.ip());
+            let now = Instant::now();
+            if last.get(&addr).map_or(true, |t| now.duration_since(*t) > Duration::from_secs(60)) {
+                last.insert(addr.clone(), now);
+                if tx.send(Internal::Cmd(Cmd::Dial(addr))).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+}
+
 fn spawn_dialer(addr: String, tx: Sender<Internal>) {
     thread::spawn(move || {
         let targets = match addr.to_socket_addrs() {
@@ -430,8 +515,18 @@ fn write_line(mut w: &TcpStream, line: &str) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn discovery_line_roundtrip() {
+        let net = "ab".repeat(32);
+        let l = discovery_line(&net, 42, 30301);
+        assert_eq!(parse_discovery(&l), Some((net.clone(), 42, 30301)));
+        assert_eq!(parse_discovery("hola"), None);
+        assert_eq!(parse_discovery(&format!("RAMI1 {net} 1 0")), None);
+        assert_eq!(parse_discovery("RAMI1 corto 1 30301"), None);
+    }
+
     fn cfg(node: u64, listen: Option<u16>, seeds: Vec<String>, net: [u8; 32]) -> NetConfig {
-        NetConfig { network_id: net, node_id: node, listen, seeds, max_peers: 16 }
+        NetConfig { network_id: net, node_id: node, listen, seeds, max_peers: 16, lan_discovery: false }
     }
 
     fn wait_connected(rx: &Receiver<NetEvent>) -> Option<PeerId> {

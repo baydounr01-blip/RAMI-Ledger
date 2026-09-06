@@ -118,6 +118,10 @@ fn cmd_run(args: &[String]) -> ExitCode {
         seeds: seeds.clone(),
         miner,
         mining,
+        // La CLI también descubre nodos en la LAN y abre el puerto, salvo que
+        // se pida lo contrario.
+        lan_discovery: !args.iter().any(|a| a == "--no-lan"),
+        portmap: !args.iter().any(|a| a == "--no-portmap"),
     };
     let handle = match spawn(cfg) {
         Ok(h) => h,

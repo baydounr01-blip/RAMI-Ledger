@@ -1063,11 +1063,12 @@
           else { paintCell(col, ci, FREE_RGBA, FREE_RGBA[3]); cnt.free++; state[ci] = 0; }
           continue;
         }
-        var pc = parcels[pi], kind = clamp(pc.kind | 0, 0, 3), own = !!(me && pc.owner === me);
-        paintCell(col, ci, own ? ownRGB[kind] : kindRGB[kind], own ? 215 : 165);
+        var pc = parcels[pi], kind = clamp(pc.kind | 0, 0, 3), own = !!(me && pc.owner === me), pend = !!pc.pending;
+        // Pendiente de minar: mismo color pero más transparente y edificio «en obras» (bajo).
+        paintCell(col, ci, own ? ownRGB[kind] : kindRGB[kind], pend ? 90 : (own ? 215 : 165));
         state[ci] = own ? 3 : 2; cnt.plot++; if (own) cnt.own++;
         var w = cellWorld(x, y);
-        var v = 0.9 + 0.2 * hash2(x + 13, y + 29), sy = 0.85 + 0.3 * hash2(x + 3, y + 7) + Math.min(pc.assets | 0, 6) * 0.03;
+        var v = 0.9 + 0.2 * hash2(x + 13, y + 29), sy = (pend ? 0.3 : 1) * (0.85 + 0.3 * hash2(x + 3, y + 7) + Math.min(pc.assets | 0, 6) * 0.03);
         tmpColor.copy(kindColors[kind]).multiplyScalar(v);
         place(C.buildings[kind], cnt.b[kind]++, w.x, S.cellH[ci] + LIFT * 0.6, w.z, 1, sy, 1, tmpColor);
       }

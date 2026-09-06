@@ -732,6 +732,16 @@
       </div>
 
       <div class="card" style="margin-bottom:14px;max-width:720px">
+        <div class="lbl" style="margin-bottom:6px">🔗 Conectar con otro ordenador</div>
+        <div class="kv" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <div><span class="k">Código de conexión:</span> <span class="mono" id="netCode">—</span></div>
+          <button class="copybtn" data-copy-target="netCodeFull">Copiar</button>
+        </div>
+        <p class="note" style="margin:8px 0 0" id="netCodeHelp">Dáselo a la otra persona: en su panel, Red → «Añadir par» → pegar el código. Los ordenadores de la misma casa u oficina se encuentran solos (descubrimiento en red local).</p>
+        <div class="note" id="netMap" style="margin-top:6px"></div>
+        <p class="note" style="margin:8px 0 0">⚠️ Si minas sin estar conectado a nadie, tus bloques forman una <b>rama aparte</b>: al conectar, gana la rama con más trabajo y las monedas de la otra no cuentan en el suministro (así funciona toda cadena de trabajo). Conéctate <b>antes</b> de minar.</p>
+      </div>
+      <div class="card" style="margin-bottom:14px;max-width:720px">
         <label class="field" style="margin-bottom:10px">
           <span class="cap">Añadir par (host:puerto)</span>
           <input type="text" id="peerAddr" placeholder="127.0.0.1:30302" autocomplete="off">
@@ -1057,6 +1067,7 @@
     document.getElementById("netNodeId").textContent = s.node_id != null ? s.node_id : "—";
     document.getElementById("netPeerCount").textContent = (s.peers||[]).length;
     renderPeers(s.peers||[]);
+    renderNetInfo(s.netinfo || {}, s.listen_port);
 
     // Staking
     document.getElementById("stkStaked").textContent  = w.staked  != null ? w.staked  : "—";
@@ -1087,6 +1098,24 @@
     else                         hideOverlay();
   }
 
+  var lastNetInfoKey = "";
+  function renderNetInfo(n, port){
+    var key = JSON.stringify(n) + port;
+    if(key === lastNetInfoKey) return;
+    lastNetInfoKey = key;
+    var code = n.code || n.code_lan || (port ? ("…:"+port) : "—");
+    document.getElementById("netCode").textContent = code;
+    copyStore.netCodeFull = code;
+    var m = document.getElementById("netMap"), parts = [];
+    if(n.lan_ip) parts.push(t("IP local")+": "+n.lan_ip);
+    if(n.external_ip) parts.push(t("IP pública")+": "+n.external_ip);
+    if(n.portmap_enabled){
+      parts.push(n.portmap_ok ? ("✅ "+t("Puerto abierto en el router")+" ("+(n.portmap_method||"").toUpperCase()+")")
+                              : ("⚠️ "+t("No se pudo abrir el puerto en el router")+(n.portmap_detail ? " — "+n.portmap_detail : "")+". "+t("Desde fuera de tu casa solo podrán conectarse si abres el puerto a mano o si ellos aceptan tu conexión.")));
+    } else parts.push(t("Apertura automática del puerto desactivada (--no-portmap)."));
+    parts.push(n.lan_discovery ? "📡 "+t("Descubrimiento en red local activo") : t("Descubrimiento en red local desactivado (--no-lan)."));
+    m.textContent = parts.join(" · ");
+  }
   function renderPeers(peers){
     var body = document.getElementById("peersBody");
     if(!peers.length){
@@ -1457,9 +1486,22 @@
     return { lat: CITY_ANCHOR.lat - (y+0.5)*CITY_ANCHOR.cellMeters/110574, lon: CITY_ANCHOR.lon + (x+0.5)*CITY_ANCHOR.cellMeters/mx };
   }
   function buildCityIndex(d){
-    city.pIdx = {}; city.aIdx = {};
-    d.parcels.forEach(function(p){ city.pIdx[p.x+","+p.y] = p; });
-    d.assets.forEach(function(a){ var k = a.x+","+a.y; (city.aIdx[k] = city.aIdx[k] || []).push(a); });
+    city.pIdx = {}; city.aIdx = {}; city.pendIdx = {};
+    var merged = (d.parcels || []).slice();
+    (d.parcels || []).forEach(function(p){ city.pIdx[p.x+","+p.y] = p; });
+    (d.assets || []).forEach(function(a){ var k = a.x+","+a.y; (city.aIdx[k] = city.aIdx[k] || []).push(a); });
+    // Operaciones aún en el mempool: se ven al instante como «pendientes».
+    (d.pending || []).forEach(function(op){
+      var k = op.x+","+op.y; (city.pendIdx[k] = city.pendIdx[k] || []).push(op);
+      if(op.op === "claim"){
+        var cur = city.pIdx[k];
+        if(!cur){
+          var np = { x:op.x, y:op.y, owner:op.who, name:op.name, kind:op.kind, since:(d.height||0)+1, harvests:0, last_harvest:null, assets:0, pending:true };
+          city.pIdx[k] = np; merged.push(np);
+        } else cur.pendingRename = true;
+      }
+    });
+    city.view = Object.assign({}, d, { parcels: merged });
   }
   // ---- cliente 3D (Three.js, cargado solo al entrar en la Ciudad) ----
   var c3d = { handle:null, loading:null, mode:"3d", failed:false };
@@ -1482,7 +1524,7 @@
         onHover:function(x,y){ var el2 = document.getElementById("cityHover"); if(el2) el2.textContent = (x==null) ? "" : t("parcela")+" ("+x+","+y+")"; }
       });
       c3d.handle = h; window.__ramiCity3D = h;   // (pruebas automáticas)
-      if(city.data) h.setCity(city.data);
+      if(city.view) h.setCity(city.view);
       if(city.sel) h.select(city.sel.x, city.sel.y);
       txt("cyLoad", "");
       h.xrSupported().then(function(ok){ document.getElementById("cyVR").style.display = ok ? "" : "none"; }).catch(function(){});
@@ -1549,7 +1591,7 @@
       var d = null; try{ d = JSON.parse(txtBody); }catch(e){}
       if(!d || !d.ok){ document.getElementById("cityStatus").textContent = (d && d.error) || t("sin datos"); return; }
       city.data = d; buildCityIndex(d);
-      if(c3d.handle) c3d.handle.setCity(d);
+      if(c3d.handle) c3d.handle.setCity(city.view);
       document.getElementById("cityParcelPrice").textContent = ramFmt(d.parcel_price);
       document.getElementById("cityMintPrice").textContent = ramFmt(d.mint_price);
       document.getElementById("cityStats").textContent = d.parcels.length+" parcelas ocupadas · "+d.assets.length+" activos · altura "+fmtNum(d.height);
@@ -1571,12 +1613,14 @@
       var px = o.ox + (x - y)*ISO.w/2, py = o.oy + (x + y)*ISO.h/2;
       var p = parcelAt(x,y);
       var fill = p ? KIND_COLORS[p.kind] || "#4f8cff" : "#1d2a3a";
+      if(p && p.pending) ctx.globalAlpha = .45;
       ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px+ISO.w/2, py+ISO.h/2); ctx.lineTo(px, py+ISO.h); ctx.lineTo(px-ISO.w/2, py+ISO.h/2); ctx.closePath();
       ctx.fillStyle = fill; ctx.fill();
       var isSel = city.sel && city.sel.x===x && city.sel.y===y;
       ctx.lineWidth = isSel ? 2 : 1;
       ctx.strokeStyle = isSel ? "#ffffff" : (p && me && p.owner===me) ? "#7ef0c0" : "rgba(255,255,255,.08)";
       ctx.stroke();
+      ctx.globalAlpha = 1;
       if(p){ // "edificio": una caja sencilla sobre la parcela
         var hgt = 6 + Math.min(14, p.assets*2);
         ctx.fillStyle = fill; ctx.globalAlpha = .85;
@@ -1602,10 +1646,16 @@
     var info = document.getElementById("cityInfo"), acts = document.getElementById("cityActions"), d = city.data;
     if(!d || !city.sel){ info.textContent = t("Haz clic en una parcela de la ciudad."); acts.innerHTML=""; return; }
     var x=city.sel.x, y=city.sel.y, p=parcelAt(x,y), me=d.me, mine = !!(p && me && p.owner===me), h="";
-    var assets = assetsAt(x,y), ll = parcelToLatLon(x,y);
+    var assets = assetsAt(x,y), ll = parcelToLatLon(x,y), pend = city.pendIdx[x+","+y] || [];
+    var pendMints = pend.filter(function(o){ return o.op === "mint"; }).length;
     var geoLine = '<div class="note" style="margin:6px 0 0">📍 '+ll.lat.toFixed(4)+', '+ll.lon.toFixed(4)+
       ' · <a href="https://www.openstreetmap.org/?mlat='+ll.lat.toFixed(5)+'&mlon='+ll.lon.toFixed(5)+'#map=13/'+ll.lat.toFixed(4)+'/'+ll.lon.toFixed(4)+'" target="_blank" rel="noopener">'+t("Ver en OpenStreetMap")+'</a></div>';
     h += geoLine;
+    if(p && p.pending){
+      info.innerHTML = "<b>"+esc(p.name)+"</b> · "+t(KIND_NAMES[p.kind])+" · "+t("parcela")+" ("+x+","+y+")<br>"+
+        "<span style='color:var(--muted)'>⏳ "+t("Pendiente de confirmar: se aplica al minarse el próximo bloque.")+"</span>";
+      acts.innerHTML = h; return;
+    }
     if(!p){
       info.innerHTML = "<b>"+t("Parcela")+" ("+x+","+y+")</b> · <span style='color:var(--muted)'>"+t("libre")+"</span>";
       h += cityForm('<strong>'+t("Montar mi empresa aquí")+'</strong>'+
@@ -1618,6 +1668,8 @@
         "<span style='color:var(--muted)'>"+t("dueño ")+(mine?"<b style='color:var(--accent)'>"+t("tú")+"</b>":esc(shortAddr(p.owner)))+
         t(" · desde bloque ")+fmtNum(p.since)+" · "+p.assets+t(" activo(s) · ")+p.harvests+t(" cosecha(s)")+
         (p.last_harvest? t(" · última: ")+ramFmt(p.last_harvest[1])+t(" RAMI en bloque ")+fmtNum(p.last_harvest[0]) : "")+"</span>";
+      if(pendMints) h += '<div class="note" style="margin-top:6px">⏳ '+pendMints+t(" activo(s) pendiente(s)")+'</div>';
+      if(p.pendingRename) h += '<div class="note" style="margin-top:6px">⏳ '+t("Pendiente de confirmar: se aplica al minarse el próximo bloque.")+'</div>';
       if(mine){
         h += cityForm('<strong>'+t("Acuñar activo")+'</strong>'+
           '<label class="field" style="margin-top:10px"><span class="cap">Tipo</span><select id="cyAKind">'+ASSET_NAMES.map(function(k,i){return '<option value="'+i+'">'+t(k)+'</option>';}).join("")+'</select></label>'+
@@ -1660,7 +1712,12 @@
     var st = document.getElementById("cityStatus"); st.textContent = t("Enviando…");
     jpost(path, body).then(function(r){
       st.textContent = r.ok ? ("✓ "+okMsg+" (txid "+String(r.txid).slice(0,12)+"…"+t("). Se aplica al minarse el próximo bloque.")) : ("✗ "+(r.error||"error"));
-      setTimeout(loadCity, 1500);
+      if(r.ok){
+        city.fastUntil = Date.now() + 180000;            // sondeo rápido 3 min
+        if(state.status && !state.status.mining && !(state.status.peers||[]).length)
+          st.textContent += " " + t("Nadie está minando ahora: activa Minar para que se confirme.");
+      }
+      setTimeout(loadCity, 600);
     }).catch(function(){ st.textContent = t("✗ sin conexión con el nodo"); });
   }
   document.getElementById("cityActions").addEventListener("click", function(e){
@@ -1673,7 +1730,12 @@
     else if(b.classList.contains("cyRent")){ cityAct("/api/city/rent", {asset:id}, t("activo alquilado")); }
     else if(b.classList.contains("cyXfer")){ cityAct("/api/city/transfer", {asset:id, to:document.querySelector('.cyTo[data-id="'+id+'"]').value.trim()}, t("activo transferido")); }
   });
-  setInterval(function(){ if(currentView==="ciudad") loadCity(); }, 5000);
+  setInterval(function(){
+    if(currentView!=="ciudad") return;
+    var fast = city.fastUntil && Date.now() < city.fastUntil;
+    city.tick = (city.tick||0) + 1;
+    if(fast || city.tick % 2 === 0) loadCity();      // 2,5 s tras una acción; 5 s en reposo
+  }, 2500);
 
   // ---------- actualización: aviso automático + sección «Actualizar» ----------
   // El backend (nodo) comprueba el Release oficial, descarga el instalador y

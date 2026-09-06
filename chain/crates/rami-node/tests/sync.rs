@@ -43,6 +43,8 @@ fn two_nodes_share_genesis_and_sync() {
         seeds: vec![],
         miner: Some([1u8; 32]),
         mining: true,
+        lan_discovery: false,
+        portmap: false,
     })
     .expect("A no arrancó");
 
@@ -68,6 +70,8 @@ fn two_nodes_share_genesis_and_sync() {
         seeds: vec![format!("127.0.0.1:{port}")],
         miner: None,
         mining: false,
+        lan_discovery: false,
+        portmap: false,
     })
     .expect("B no arrancó");
 

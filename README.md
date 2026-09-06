@@ -126,6 +126,23 @@ cd chain && cargo build --release        # o descarga el binario de las releases
 ./target/release/rami-gui --network testnet --connect IP_DEL_PAR:30301
 ```
 
+### Conectar dos ordenadores (y por qué «sus monedas no aparecen»)
+
+- **Misma casa u oficina:** no hay que hacer nada; los nodos se descubren por
+  la red local (UDP 30303) y se conectan solos en menos de un minuto.
+- **Casas distintas:** la app intenta abrir el puerto 30301 en el router
+  (NAT-PMP/UPnP). En la pestaña **Red** verás si lo consiguió y tu **código de
+  conexión** (`IP:puerto`): dáselo a la otra persona para que lo pegue en
+  Red → «Añadir par». Basta con que UNO de los dos tenga el puerto abierto.
+- **Nodo semilla del proyecto:** cualquier VPS con `rami-node run --listen
+  30301` y su dirección en `web/descargas/seeds.json` (o el DNS
+  `seed.quantbot.army`) hace que todos los monederos nuevos se conecten solos.
+- **Minar sin estar conectado** crea una rama aparte. Cuando los nodos se
+  conectan gana la rama con más trabajo acumulado; los bloques de la otra se
+  conservan en el árbol pero sus monedas no cuentan en la cadena principal.
+  Es el comportamiento normal de una cadena de trabajo: conéctate antes de
+  minar.
+
 ## En la terminal (usuarios avanzados)
 
 ```bash
@@ -417,6 +434,21 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
   RAMI-Chain **no verifica** la existencia ni la legalidad de ninguna empresa:
   el panel enlaza al Registro Mercantil y al BORME para que cada uno lo
   compruebe. Testnet sin valor monetario.
+- **v0.6.1 (esto): la red se encuentra sola; parcelas «pendientes».** Antes
+  un monedero recién instalado no tenía NINGÚN par por defecto: dos casas
+  minaban cada una su rama y al final «las monedas del otro no aparecían».
+  Ahora: **descubrimiento en red local** (anuncio UDP 30303 por broadcast y
+  multicast: los ordenadores de la misma casa se conectan sin escribir IPs);
+  **apertura automática del puerto** P2P en el router con **NAT-PMP** y
+  **UPnP** (sin dependencias, como `-upnp`/`-natpmp` de Bitcoin Core;
+  `--no-portmap` lo desactiva); **semillas ancladas a la web**
+  (`web/seeds.json` → `quantbot.army/descargas/seeds.json`, se publica sin sacar versión) y
+  **semilla DNS** `seed.quantbot.army:30301`; pestaña Red con IP local, IP
+  pública, estado del mapeo y un **código de conexión** para compartir, y la
+  explicación de por qué minar aislado crea una rama aparte. En la Ciudad,
+  las operaciones aún en el mempool se muestran como **pendientes** (`pending`
+  en `/api/city`) en el panel, el 2D y el 3D, con sondeo rápido tras cada
+  acción y aviso si nadie está minando.
 - **v0.6.x (siguiente):** instantáneas de cadena re-verificables para el explorador
   web, seeds comunitarios, endurecimiento P2P (puntuación de pares, límites por
   IP) y IPC dedicado faucet↔nodo.
