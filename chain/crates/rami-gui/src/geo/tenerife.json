@@ -3,7 +3,7 @@
  "attribution": "Terrain: Mapzen/AWS Terrain Tiles (SRTM, GMTED2010, ETOPO1 and other public sources) · Roads: Natural Earth (public domain)",
  "zoom": 12,
  "downsample": 2,
- "width": 1238,
+ "width": 1239,
  "height": 1059,
  "origin_px": {
   "x": 474917.0,
@@ -11,8 +11,8 @@
  },
  "meters_per_pixel": 67.3011,
  "offset": 1000,
- "min_h": -2783.08,
- "max_h": 3677.44,
+ "min_h": -1000.0,
+ "max_h": 3677.0,
  "bbox": {
   "west": -16.95,
   "south": 27.98,

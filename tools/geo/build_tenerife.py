@@ -22,6 +22,21 @@ Salidas (contrato GEO, ver docstring de `write_outputs`):
   chain/crates/rami-gui/src/geo/tenerife.json      metadatos (origen, escala, pueblos, carreteras...)
   tools/geo/preview.png                            hillshade 8 bit (sólo para inspección)
 
+Notas del contrato que conviene tener presentes:
+  * Con offset = 1000 el PNG NO puede representar profundidades por debajo de
+    -1000 m: todo lo más hondo se recorta a v = 0 (h = -1000 m, un fondo plano).
+    `min_h`/`max_h` del JSON se calculan sobre los valores YA codificados, así
+    que describen exactamente lo que hay en el PNG (min_h nunca baja de -1000).
+  * h == 0 es MAR por diseño (contrato: mar = h <= 0). El relleno de batimetría
+    deja en 0 m exactos los píxeles enmascarados en zoom 12 cuyo vecino grueso
+    de zoom 10 es tierra (>= 0), una franja fina pegada a la costa. Un
+    renderizador que use `h < 0` verá un anillo de 0 m alrededor de la isla.
+  * El recorte empieza en (floor(x0), floor(y0)) píxeles nativos de zoom 12 y
+    mide width*downsample x height*downsample píxeles nativos, redondeado HACIA
+    ARRIBA a múltiplo de `downsample`: cubre la bbox entera con hasta
+    `downsample` px nativos de sobra por el este/sur; no coincide exactamente
+    con la bbox del JSON.
+
 El script es idempotente: cachea cada tesela y el GeoJSON en tools/geo/cache/ y
 puede relanzarse tantas veces como se quiera.
 
@@ -301,12 +316,15 @@ def build_mosaic():
     a la bbox (en resolución nativa de zoom 12)."""
     x0f, y0f = lonlat_to_px(BBOX["west"], BBOX["north"])
     x1f, y1f = lonlat_to_px(BBOX["east"], BBOX["south"])
-    # recorte en píxeles enteros; lo redondeamos a múltiplo de DOWNSAMPLE
+    # recorte en píxeles enteros, redondeado HACIA ARRIBA a múltiplo de DOWNSAMPLE
+    # para que la imagen cubra la bbox completa (antes se redondeaba hacia abajo
+    # y el borde este quedaba ~0.35 px nativos (~13 m) corto).
     px0, py0 = int(math.floor(x0f)), int(math.floor(y0f))
     px1, py1 = int(math.ceil(x1f)), int(math.ceil(y1f))
-    W = (px1 - px0) // DOWNSAMPLE * DOWNSAMPLE
-    H = (py1 - py0) // DOWNSAMPLE * DOWNSAMPLE
+    W = -(-(px1 - px0) // DOWNSAMPLE) * DOWNSAMPLE
+    H = -(-(py1 - py0) // DOWNSAMPLE) * DOWNSAMPLE
     px1, py1 = px0 + W, py0 + H
+    assert px0 <= x0f and py0 <= y0f and px1 >= x1f and py1 >= y1f
     tx0, tx1 = px0 // TILE, (px1 - 1) // TILE
     ty0, ty1 = py0 // TILE, (py1 - 1) // TILE
     ntiles = (tx1 - tx0 + 1) * (ty1 - ty0 + 1)
@@ -473,14 +491,48 @@ def ensure_gitignore():
     print("Añadido %s a .gitignore" % line)
 
 
-def write_outputs(heights, origin_px, roads, make_preview=True):
-    H, W = len(heights), len(heights[0])
-    min_h = min(min(r) for r in heights)
-    max_h = max(max(r) for r in heights)
+def encode_heights(heights):
+    """Codifica las alturas al contrato del PNG: v = clamp(round(h) + OFFSET, 0, 65535).
+    Devuelve (rows, stats) con rows = filas ya empaquetadas big-endian y stats un dict
+    con el mínimo/máximo codificados (en metros) y cuántos píxeles se recortaron por
+    abajo (v == 0, h <= -1000 m) y por arriba (v == 65535)."""
+    W = len(heights[0])
     rows = []
+    vmin, vmax = 65535, 0
+    clamp_lo = clamp_hi = 0
     for r in heights:
-        vals = [max(0, min(65535, int(round(h)) + OFFSET)) for h in r]
+        vals = [0] * W
+        for x, h in enumerate(r):
+            v = int(round(h)) + OFFSET
+            if v <= 0:
+                clamp_lo += v < 0
+                v = 0
+            elif v >= 65535:
+                clamp_hi += v > 65535
+                v = 65535
+            vals[x] = v
         rows.append(struct.pack(">%dH" % W, *vals))
+        vmin = min(vmin, min(vals))
+        vmax = max(vmax, max(vals))
+    stats = {"min_h": float(vmin - OFFSET), "max_h": float(vmax - OFFSET),
+             "clamped_low": clamp_lo, "clamped_high": clamp_hi}
+    return rows, stats
+
+
+def write_outputs(heights, origin_px, roads, make_preview=True):
+    """Escribe el PNG de 16 bits y el JSON del contrato GEO (claves fijas: name,
+    attribution, zoom, downsample, width, height, origin_px, meters_per_pixel,
+    offset, min_h, max_h, bbox, peak, towns, roads). `min_h`/`max_h` son el mínimo y
+    máximo de los valores YA codificados (tras el recorte a [0, 65535]), es decir,
+    exactamente lo que un lector del PNG obtendrá con h = v - offset."""
+    H, W = len(heights), len(heights[0])
+    rows, stats = encode_heights(heights)
+    min_h, max_h = stats["min_h"], stats["max_h"]
+    raw_min = min(min(r) for r in heights)
+    raw_max = max(max(r) for r in heights)
+    print("Codificación PNG: min bruto %.1f m -> codificado %.0f m ; max bruto %.1f m -> %.0f m ; "
+          "recortados por abajo (h < -%d m): %d ; por arriba: %d"
+          % (raw_min, min_h, raw_max, max_h, OFFSET, stats["clamped_low"], stats["clamped_high"]))
     png = encode_png_gray(W, H, rows, 16)
     os.makedirs(OUT_DIR, exist_ok=True)
     with open(OUT_PNG, "wb") as f:
@@ -591,6 +643,42 @@ def verify(heights, meta):
     ok &= c6
     print("  relectura PNG: %dx%d ch=%d bd=%d, v(pico)=%d -> %.0f m  [%s]"
           % (w2, h2, ch2, bd2, v, v - OFFSET, "OK" if c6 else "FALLO"))
+    # el JSON debe describir el PNG tal cual se codificó (mínimo recortado a v = 0)
+    vmin, vmax = 65535, 0
+    n_v0 = n_vmax = n_v_off = 0
+    for r in rows2:
+        vals = struct.unpack(">%dH" % w2, r)
+        vmin = min(vmin, min(vals))
+        vmax = max(vmax, max(vals))
+        n_v0 += vals.count(0)
+        n_vmax += vals.count(65535)
+        n_v_off += vals.count(OFFSET)
+    total = w2 * h2
+    c7 = (vmin - OFFSET == meta["min_h"] and vmax - OFFSET == meta["max_h"]
+          and meta["min_h"] >= -OFFSET)
+    ok &= c7
+    print("  PNG decodificado: min v=%d (%.0f m) max v=%d (%.0f m) == JSON min_h=%.1f max_h=%.1f  [%s]"
+          % (vmin, vmin - OFFSET, vmax, vmax - OFFSET, meta["min_h"], meta["max_h"],
+             "OK" if c7 else "FALLO"))
+    print("  píxeles recortados al suelo v=0 (h <= -%d m): %d de %d (%.1f%%) ; al techo v=65535: %d"
+          % (OFFSET, n_v0, total, 100.0 * n_v0 / total, n_vmax))
+    n_zero = sum(r.count(0.0) for r in heights)
+    n_sea = sum(1 for r in heights for h in r if h <= 0)
+    print("  píxeles con h == 0: %d exactos en el array, %d con v == %d en el PNG (|h| < 0.5) ; "
+          "son MAR por contrato (h <= 0) ; mar total: %d (%.1f%%)"
+          % (n_zero, n_v_off, OFFSET, n_sea, 100.0 * n_sea / total))
+    # la imagen debe cubrir la bbox entera (redondeo hacia arriba del recorte)
+    ds = meta["downsample"]
+    x0f, y0f = lonlat_to_px(BBOX["west"], BBOX["north"])
+    x1f, y1f = lonlat_to_px(BBOX["east"], BBOX["south"])
+    ox, oy = meta["origin_px"]["x"], meta["origin_px"]["y"]
+    ex, ey = ox + W * ds, oy + H * ds
+    c8 = ox <= x0f and oy <= y0f and ex >= x1f and ey >= y1f
+    ok &= c8
+    lon_e, lat_s = px_to_lonlat(ex, ey)
+    print("  cobertura bbox: px [%.0f..%.0f) x [%.0f..%.0f) contiene [%.2f..%.2f] x [%.2f..%.2f] ; "
+          "esquina inferior derecha lon=%.5f lat=%.5f  [%s]"
+          % (ox, ex, oy, ey, x0f, x1f, y0f, y1f, lon_e, lat_s, "OK" if c8 else "FALLO"))
     print("RESULTADO: %s" % ("TODO OK" if ok else "HAY FALLOS"))
     return ok
 
