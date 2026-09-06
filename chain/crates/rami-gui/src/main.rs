@@ -598,7 +598,7 @@ static NO_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::n
 /// Salida INMEDIATA y segura desde CUALQUIER hilo.
 ///
 /// Causa raíz de «la aplicación no responde» tras cada actualización (v0.5.2 a
-/// v0.6.1): la salida se pedía con `std::process::exit` desde un hilo
+/// v0.6.1): la salida se pedía con `exit()` de la libc desde un hilo
 /// secundario (el que atendía «Actualizar ahora» o «Salir») mientras el hilo
 /// principal estaba dentro del bucle de eventos de Cocoa. `exit()` ejecuta los
 /// manejadores atexit y los destructores de AppKit, que esperan al hilo
@@ -614,15 +614,7 @@ fn safe_exit(code: i32) -> ! {
         let _ = std::io::stderr().flush();
         let _ = std::io::stdout().flush();
     }
-    #[cfg(unix)]
-    unsafe {
-        extern "C" {
-            fn _exit(code: i32) -> !;
-        }
-        _exit(code)
-    }
-    #[cfg(not(unix))]
-    std::process::exit(code)
+    rami_node::update::hard_exit(code)
 }
 
 fn open_browser(url: &str) {
@@ -724,6 +716,15 @@ mod cocoa {
         let _ = PANEL_URL.set(url);
     }
 
+    /// `- (NSUInteger)applicationShouldTerminate:(NSApplication*)app`
+    /// Cierre pedido por el sistema (Cmd+Q, cerrar sesión, apagar, «quit» por
+    /// AppleScript): salida inmediata, igual que «Salir» (nunca exit() de
+    /// AppKit con el nodo aún corriendo).
+    extern "C" fn should_terminate(_this: Id, _sel: Sel, _app: Id) -> usize {
+        super::dlog("cierre pedido por el sistema");
+        super::safe_exit(0)
+    }
+
     /// No vuelve: ejecuta el bucle de eventos en el hilo actual (debe ser el
     /// principal). El hilo principal NO hace nada más: cualquier trabajo
     /// (puertos, nodo, diálogos) va en otros hilos, así macOS siempre recibe
@@ -745,6 +746,12 @@ mod cocoa {
                     sel(c"applicationShouldHandleReopen:hasVisibleWindows:"),
                     reopen as *const c_void,
                     c"B@:@B".as_ptr(),
+                );
+                class_addMethod(
+                    cls,
+                    sel(c"applicationShouldTerminate:"),
+                    should_terminate as *const c_void,
+                    c"Q@:@".as_ptr(),
                 );
                 objc_registerClassPair(cls);
                 let delegate = msg0(msg0(cls, sel(c"alloc")), sel(c"init"));

@@ -106,6 +106,17 @@ jobs:
       # atiende eventos (macOS) y «Salir» cierra el proceso. Si falla, NO se
       # publica el release («la aplicación no responde» nunca más llega al
       # usuario).
+      - name: Guardia — ninguna salida con exit() fuera de hard_exit
+        shell: bash
+        run: |
+          # Toda salida del monedero debe ser inmediata (_exit): exit() desde un
+          # hilo secundario colgaba la app en macOS («no responde»).
+          if grep -rn 'process::exit' chain/crates/rami-gui/src chain/crates/rami-node/src | grep -v ':[0-9]*:\s*//' | grep -v 'update.rs:.*std::process::exit(code)'; then
+            echo "::error::hay una llamada a process::exit fuera de hard_exit"; exit 1
+          fi
+      - name: Rosetta 2 (macOS x64 en runner arm64)
+        if: matrix.kind == 'macos' && matrix.arch == 'x64'
+        run: arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
       - name: Prueba de humo (arranque, respuesta, salida)
         if: matrix.kind != 'windows'
         shell: bash

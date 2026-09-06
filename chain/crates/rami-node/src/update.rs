@@ -530,8 +530,15 @@ fn spawn_relauncher_unix_with(open_cmd: &str, target: &Path, extra: &[&str]) -> 
     let script = format!(
         "n=0; while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; n=$((n+1)); if [ $n -ge 50 ]; then kill -9 \"$1\" 2>/dev/null; fi; done; sleep 0.3; t=\"$2\"; shift 2; exec {open_cmd} \"$t\"{pass_args}"
     );
-    Command::new("/bin/sh")
-        .arg("-c")
+    let mut cmd = Command::new("/bin/sh");
+    // Grupo de procesos propio: si launchd/el sistema limpia el grupo de la app
+    // al morir esta, el relanzador sobrevive y la versión nueva se abre igual.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    cmd.arg("-c")
         .arg(script)
         .arg("rami-relaunch")
         .arg(std::process::id().to_string())
@@ -707,7 +714,9 @@ pub fn relaunch_after_exit(target: &Path) -> Result<(), String> {
 /// Como [`relaunch_after_exit`], añadiendo argumentos (p. ej. `--no-install`
 /// tras instalarse, para que la copia nueva nunca vuelva a proponerlo).
 pub fn relaunch_after_exit_with(target: &Path, extra: &[&str]) -> Result<(), String> {
-    let open_cmd = if cfg!(target_os = "macos") { "open" } else { "" };
+    // `open -n`: lanza SIEMPRE una instancia nueva (no depende de que
+    // LaunchServices haya dado de baja ya al proceso que muere).
+    let open_cmd = if cfg!(target_os = "macos") { "open -n" } else { "" };
     spawn_relauncher_unix_with(open_cmd, target, extra)
 }
 
@@ -767,7 +776,7 @@ fn apply_macos(bytes: &[u8], asset_name: &str, relaunch: bool) -> Result<ApplyRe
 
     let mut relaunched = false;
     if relaunch {
-        relaunched = spawn_relauncher_unix("open", &dest).map(|_| true).unwrap_or_else(|e| {
+        relaunched = spawn_relauncher_unix("open -n", &dest).map(|_| true).unwrap_or_else(|e| {
             ulog(&e);
             false
         });
