@@ -37,6 +37,57 @@ const DEFAULT_RELEASE_URL: &str =
 /// pocos MB; esto acota un servidor malicioso o un archivo corrupto enorme.
 const MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
 
+/// Descargas de los releases en GitHub. **Anclaje de confianza (v0.7.1):**
+/// `SHA256SUMS.txt` (y su firma) se leen SIEMPRE de aquí, nunca del espejo
+/// web: un espejo comprometido puede servir bytes, pero no decidir qué hash
+/// es «el bueno». Si GitHub no responde, no se instala nada automáticamente.
+const GITHUB_DOWNLOAD_BASE: &str = "https://github.com/baydounr01-blip/RAMI-Ledger/releases/download";
+
+/// Clave pública Ed25519 (hex) con la que el mantenedor firma `SHA256SUMS.txt`
+/// (`SHA256SUMS.sig`; ver SIGNING.md, «firma de release»). Vacía = la firma
+/// aún no está activada: solo se verifica el SHA-256 contra GitHub. En cuanto
+/// se rellene, una actualización SIN firma válida se rechaza.
+pub const RELEASE_PUBKEY_HEX: &str = "";
+
+/// Nombres de instalador admitidos: letras, números, punto, guion y guion
+/// bajo; nada de rutas ni nombres ocultos (viene de una fuente remota y se
+/// usa como nombre de archivo).
+fn safe_asset_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && !name.starts_with('.')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+}
+
+/// Con `RAMI_UPDATE_RELEASE_URL` (solo pruebas locales) se acepta la URL de
+/// sumas que anuncie ese release simulado; en producción manda GitHub.
+fn testing_release() -> bool {
+    std::env::var("RAMI_UPDATE_RELEASE_URL").is_ok()
+}
+
+/// SHA-256 (hex) del ejecutable que está corriendo.
+pub fn own_exe_sha256() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let bytes = std::fs::read(exe).ok()?;
+    let mut h = Sha256::new();
+    h.update(&bytes);
+    Some(hex::encode(h.finalize()))
+}
+
+/// Hash publicado del ejecutable `rami-gui` de esta plataforma para la versión
+/// dada (`BINARIES-SHA256.txt` del release). `Ok(None)` si el release no lo
+/// publica; `Err` si no se pudo consultar.
+pub fn published_binary_sha256(version: &str) -> Result<Option<String>, String> {
+    let url = format!("{GITHUB_DOWNLOAD_BASE}/v{}/BINARIES-SHA256.txt", norm(version));
+    let txt = match agent().get(&url).set("User-Agent", "RAMI-Chain-Wallet").call() {
+        Ok(r) => r.into_string().map_err(|e| e.to_string())?,
+        Err(ureq::Error::Status(404, _)) => return Ok(None),
+        Err(e) => return Err(format!("no se pudo consultar: {e}")),
+    };
+    let name = format!("rami-gui-{}", platform());
+    Ok(sha_for(&txt, &name))
+}
+
 /// Tope de las notas del release que se muestran en el panel.
 const MAX_NOTES_CHARS: usize = 6000;
 
@@ -114,6 +165,9 @@ pub struct UpdateInfo {
     pub notes: String,
     /// Fecha de publicación (ISO 8601) si la fuente la incluye.
     pub published: String,
+    /// La lista de hashes del release lleva la firma Ed25519 del mantenedor
+    /// (solo puede ser true cuando RELEASE_PUBKEY_HEX está configurada).
+    pub signed: bool,
 }
 
 /// Resultado de aplicar la actualización.
@@ -351,17 +405,52 @@ pub fn check(current: &str) -> Result<UpdateInfo, String> {
         }
     }
 
+    // El nombre del instalador viene de una fuente remota: se sanea antes de
+    // usarlo como nombre de archivo.
+    if !info.asset_name.is_empty() && !safe_asset_name(&info.asset_name) {
+        info.asset_name.clear();
+        info.asset_url.clear();
+        info.note = "el nombre del instalador publicado no es válido; descarga rechazada".into();
+        return Ok(info);
+    }
+    // Anclaje de confianza: las sumas (y su firma) salen de GitHub, con la
+    // etiqueta del release, no de lo que anuncie la fuente consultada.
+    if !testing_release() {
+        sums_url = format!("{GITHUB_DOWNLOAD_BASE}/{}/SHA256SUMS.txt", tag.trim());
+    }
+    let sig_url = sums_url.replace("SHA256SUMS.txt", "SHA256SUMS.sig");
+
     // Solo tiene sentido buscar el hash si hay instalador para esta plataforma.
     if !info.asset_name.is_empty() {
         if sums_url.is_empty() {
             info.note = "el Release no publica SHA256SUMS.txt; no puedo verificar la descarga".into();
         } else if let Ok(sums) = http_get_text(&sums_url) {
-            match sha_for(&sums, &info.asset_name) {
-                Some(h) => info.sha256 = h,
-                None => info.note = "no encuentro el hash del instalador en SHA256SUMS.txt".into(),
+            // Firma de release (si el proyecto la tiene activada): sin firma
+            // válida no hay hash de confianza y no se instala.
+            let mut trusted = true;
+            if !RELEASE_PUBKEY_HEX.is_empty() {
+                match http_get_text(&sig_url) {
+                    Ok(sig) => match rami_core::crypto::verify_release_signature(RELEASE_PUBKEY_HEX, sums.as_bytes(), &sig) {
+                        Ok(()) => info.signed = true,
+                        Err(e) => {
+                            trusted = false;
+                            info.note = format!("{e}: actualización rechazada");
+                        }
+                    },
+                    Err(_) => {
+                        trusted = false;
+                        info.note = "el release no lleva SHA256SUMS.sig (firma del mantenedor): actualización rechazada".into();
+                    }
+                }
+            }
+            if trusted {
+                match sha_for(&sums, &info.asset_name) {
+                    Some(h) => info.sha256 = h,
+                    None => info.note = "no encuentro el hash del instalador en SHA256SUMS.txt".into(),
+                }
             }
         } else {
-            info.note = "no pude descargar SHA256SUMS.txt para verificar".into();
+            info.note = "no pude descargar SHA256SUMS.txt de GitHub para verificar: no se instala nada".into();
         }
     } else if info.supported {
         info.note = "el Release no incluye un instalador para tu sistema".into();
@@ -911,7 +1000,7 @@ fn apply_windows(bytes: &[u8], asset_name: &str, relaunch: bool) -> Result<Apply
          Start-Process -FilePath '{exe}'{relaunch_args}",
         pid = std::process::id(),
         setup = ps(&setup),
-        dir = dir.to_string_lossy(),
+        dir = ps(&dir),
         exe = ps(&exe),
     );
     Command::new("powershell.exe")
