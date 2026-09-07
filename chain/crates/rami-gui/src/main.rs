@@ -86,6 +86,111 @@ struct Gui {
     ks_corrupt: bool,
     label: String,
     wallet: std::sync::Mutex<WalletState>,
+    /// Puerto del panel (para exigir `Host`/`Origin` exactos).
+    port: u16,
+    /// Token de sesión del panel (`~/.rami/panel-<puerto>.token`, 0600):
+    /// toda orden a `/api/*` debe traerlo en `X-Rami-Token`.
+    token: String,
+}
+
+/// ¿La cabecera Host es EXACTAMENTE este panel? Solo `127.0.0.1`, `localhost`
+/// o `[::1]` con nuestro puerto: `localhost.evil.com` resolviendo a 127.0.0.1
+/// (DNS rebinding) no pasa. Sin Host no hay petición válida (HTTP/1.1).
+fn host_is_local(host: &str, port: u16) -> bool {
+    let p = port.to_string();
+    ["127.0.0.1", "localhost", "[::1]"].iter().any(|h| host == format!("{h}:{p}"))
+}
+
+/// ¿`Origin`/`Referer` (si el navegador los manda) apuntan a este panel?
+fn origin_is_local(v: &str, port: u16) -> bool {
+    if v.is_empty() {
+        return true; // el navegador no lo manda en navegación normal
+    }
+    let p = port.to_string();
+    ["127.0.0.1", "localhost", "[::1]"].iter().any(|h| {
+        let base = format!("http://{h}:{p}");
+        v == base || v.strip_prefix(&base).map(|rest| rest.starts_with('/')).unwrap_or(false)
+    })
+}
+
+/// ¿El proceso `pid` es un monedero RAMI-Chain (rami-gui)? Solo entonces se
+/// fuerza su cierre: un `/api/status` falso en nuestro puerto no puede
+/// hacernos matar otro programa del usuario.
+#[cfg(target_os = "linux")]
+fn process_is_rami(pid: u32) -> bool {
+    match std::fs::read_to_string(format!("/proc/{pid}/comm")) {
+        Ok(c) => c.trim() == "rami-gui",
+        Err(_) => false,
+    }
+}
+#[cfg(target_os = "macos")]
+fn process_is_rami(pid: u32) -> bool {
+    match Command::new("ps").args(["-o", "comm=", "-p", &pid.to_string()]).output() {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().ends_with("rami-gui"),
+        Err(_) => false,
+    }
+}
+#[cfg(windows)]
+fn process_is_rami(pid: u32) -> bool {
+    match Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"]).output() {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).to_ascii_lowercase().contains("rami-gui.exe"),
+        Err(_) => false,
+    }
+}
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn process_is_rami(_pid: u32) -> bool {
+    false
+}
+
+/// Comprobaciones locales de la autoauditoría: permisos de los archivos con
+/// claves, token del panel, escucha solo local y hash del ejecutable frente al
+/// publicado en el release (si hay conexión).
+fn local_security_checks(g: &Gui) -> Vec<Value> {
+    let mut out = Vec::new();
+    let t0 = std::time::Instant::now();
+    let push = |out: &mut Vec<Value>, name: &str, ok: bool, detail: String| {
+        out.push(json!({"name": name, "ok": ok, "detail": detail, "ms": t0.elapsed().as_millis() as u64}));
+    };
+    // Permisos 0600 de los archivos sensibles (en Unix).
+    let files: [(&str, PathBuf); 3] = [
+        ("keystore del monedero", PathBuf::from(&g.ks_path)),
+        ("identidad del nodo (node.key)", g.chain_dir.join("node.key")),
+        ("token del panel", http::token_path(g.port).unwrap_or_default()),
+    ];
+    for (what, p) in files.iter() {
+        let name = format!("permisos de {what}");
+        match std::fs::metadata(p) {
+            Ok(md) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = md.permissions().mode() & 0o777;
+                    let ok = mode & 0o077 == 0;
+                    push(&mut out, &name, ok, format!("{} (modo {:o}{})", p.display(), mode, if ok { "" } else { ": otros usuarios podrían leerlo" }));
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = md;
+                    push(&mut out, &name, true, format!("{} (Windows: protegido por tu perfil de usuario)", p.display()));
+                }
+            }
+            Err(_) => push(&mut out, &name, true, format!("{} (aún no existe)", p.display())),
+        }
+    }
+    // El panel solo escucha en 127.0.0.1 (así se enlaza al arrancar).
+    push(&mut out, "panel solo accesible desde este ordenador", true, format!("127.0.0.1:{} con token de sesión, Host/Origin exactos y JSON obligatorio", g.port));
+    // Hash del ejecutable frente al publicado en el release de esta versión.
+    let name = "hash del ejecutable frente al publicado";
+    match rami_node::update::own_exe_sha256() {
+        Some(mine) => match rami_node::update::published_binary_sha256(env!("CARGO_PKG_VERSION")) {
+            Ok(Some(pub_)) if pub_.eq_ignore_ascii_case(&mine) => push(&mut out, name, true, format!("SHA-256 {}… coincide con BINARIES-SHA256.txt del release v{}", &mine[..16], env!("CARGO_PKG_VERSION"))),
+            Ok(Some(pub_)) => push(&mut out, name, false, format!("SHA-256 propio {}… ≠ publicado {}… (compilación propia o binario alterado)", &mine[..16], &pub_[..16])),
+            Ok(None) => push(&mut out, name, true, format!("SHA-256 {}…; el release v{} no publica hashes de binarios (no comprobado)", &mine[..16], env!("CARGO_PKG_VERSION"))),
+            Err(e) => push(&mut out, name, true, format!("SHA-256 {}…; sin conexión para comparar ({e})", &mine[..16])),
+        },
+        None => push(&mut out, name, true, "no se pudo leer el ejecutable".into()),
+    }
+    out
 }
 
 impl Gui {
@@ -172,14 +277,25 @@ fn route(g: &Gui, req: Request) -> Response {
     // POST debe ser application/json — un formulario cross-origin solo puede
     // enviar text/plain o urlencoded sin disparar el preflight CORS (que este
     // servidor nunca aprueba), así que con esto no puede dar órdenes al nodo.
-    let host_ok = req.host.is_empty()
-        || req.host.starts_with("127.0.0.1")
-        || req.host.starts_with("localhost");
-    if !host_ok {
+    // Host EXACTO (nombre local + nuestro puerto): `localhost.evil.com` o
+    // `127.0.0.1.evil.com` resolviendo a 127.0.0.1 no pasan.
+    if !host_is_local(&req.host, g.port) {
         return err("host no local");
+    }
+    // Origin/Referer (si el navegador los manda) deben ser este mismo panel.
+    if !origin_is_local(&req.origin, g.port) || !origin_is_local(&req.referer, g.port) {
+        return err("origen no local");
     }
     if req.method == "POST" && !req.content_type.starts_with("application/json") {
         return err("Content-Type debe ser application/json");
+    }
+    // Token de sesión: toda orden a /api/* lo exige, salvo «Salir» (lo usa la
+    // toma de relevo entre versiones y el instalador de Windows; solo cierra)
+    // y la parte pública de /api/status (versión/pid, para la instancia única).
+    let authed = http::token_ok(&req.token, &g.token);
+    let exempt = matches!((req.method.as_str(), req.path.as_str()), ("POST", "/api/quit") | ("GET", "/api/status"));
+    if req.path.starts_with("/api/") && !exempt && !authed {
+        return err("sesión no autorizada: abre el panel desde la app RAMI-Chain");
     }
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/") | ("GET", "/index.html") => Response::html(DASHBOARD),
@@ -232,6 +348,17 @@ fn route(g: &Gui, req: Request) -> Response {
         }
 
         ("GET", "/api/status") => {
+            if !authed {
+                // Parte pública (sin token): lo que necesita otra instancia del
+                // monedero para reconocernos. Nada del monedero ni de la red.
+                let mut v = json!({ "version": env!("CARGO_PKG_VERSION"), "pid": std::process::id() });
+                match &*g.node.read().unwrap_or_else(|e| e.into_inner()) {
+                    NodeSlot::Ready(h) => v["network_id"] = json!(h.status().network_id),
+                    NodeSlot::Failed(_) => v["failed"] = json!(true),
+                    NodeSlot::Starting => v["starting"] = json!(true),
+                }
+                return Response::json(&v);
+            }
             let w = g.wallet.lock().unwrap_or_else(|e| e.into_inner());
             let mut wallet = json!({ "state": w.state(), "encrypted": w.encrypted, "corrupt": g.ks_corrupt });
             let node = match g.node_ready() {
@@ -533,6 +660,27 @@ fn route(g: &Gui, req: Request) -> Response {
         // Cierre limpio desde el panel (botón «Salir»): en macOS la app no tiene
         // ventana propia, así que sin esto quedaba corriendo invisible y el
         // siguiente clic en el icono «no respondía».
+        // Autoauditoría: un «pentest» con nuestra propia tecnología contra
+        // ESTE nodo (par malicioso simulado) más comprobaciones locales
+        // (permisos de claves, token, ejecutable). Tarda unos segundos.
+        ("POST", "/api/audit") => {
+            let node = match g.node_ready() { Ok(n) => n, Err(r) => return r };
+            let s = node.status();
+            let mut checks: Vec<serde_json::Value> = Vec::new();
+            let net: Option<[u8; 32]> = hex::decode(&s.network_id).ok().and_then(|v| v.try_into().ok());
+            match net {
+                Some(net) if s.listen_port > 0 => {
+                    for c in rami_node::selftest::run(&format!("127.0.0.1:{}", s.listen_port), net) {
+                        checks.push(serde_json::to_value(&c).unwrap_or(Value::Null));
+                    }
+                }
+                _ => checks.push(json!({"name": "túnel RAMI (par malicioso simulado)", "ok": false, "detail": "el nodo no escucha en ningún puerto P2P", "ms": 0})),
+            }
+            checks.extend(local_security_checks(g));
+            let failed = checks.iter().filter(|c| c.get("ok") == Some(&Value::Bool(false))).count();
+            Response::json(&json!({ "ok": true, "checks": checks, "failed": failed, "version": env!("CARGO_PKG_VERSION") }))
+        }
+
         ("POST", "/api/quit") => {
             dlog("salida solicitada desde el panel («Salir»)");
             std::thread::spawn(|| {
@@ -932,6 +1080,10 @@ fn ask_other_to_quit(port: u16, other_pid: Option<u32>) -> bool {
 
 /// Termina a la fuerza OTRO proceso de este monedero (ver ask_other_to_quit).
 fn force_kill(pid: u32) {
+    if !process_is_rami(pid) {
+        dlog(&format!("no se fuerza el cierre del pid {pid}: no es un monedero RAMI-Chain"));
+        return;
+    }
     #[cfg(unix)]
     {
         let _ = Command::new("kill").args(["-9", &pid.to_string()]).stdin(std::process::Stdio::null()).output();
@@ -1175,9 +1327,12 @@ fn real_main(args: Vec<String>) -> ExitCode {
                             dlog(&format!("el monedero v{other} no liberó el puerto {p}; pruebo el siguiente"));
                             continue;
                         }
-                        let url = format!("http://127.0.0.1:{p}");
-                        dlog(&format!("ya hay un monedero abierto; reabriendo su panel {url}"));
-                        println!("● Ya hay un monedero RAMI-Chain abierto — abriendo su panel: {url}");
+                        let url = match http::read_token(p) {
+                            Some(t) => format!("http://127.0.0.1:{p}/?t={t}"),
+                            None => format!("http://127.0.0.1:{p}"),
+                        };
+                        dlog(&format!("ya hay un monedero abierto; reabriendo su panel http://127.0.0.1:{p}"));
+                        println!("● Ya hay un monedero RAMI-Chain abierto — abriendo su panel: http://127.0.0.1:{p}");
                         if !has(&args, "--no-open") {
                             open_browser(&url);
                         }
@@ -1199,11 +1354,18 @@ fn real_main(args: Vec<String>) -> ExitCode {
             "Cierra otras aplicaciones que usen esos puertos e inténtalo de nuevo.",
         );
     };
-    let url = format!("http://127.0.0.1:{dash_port}");
-    dlog(&format!("v{} panel escuchando en {url} ({net_name})", env!("CARGO_PKG_VERSION")));
+    // Token de sesión del panel (como el .cookie de Bitcoin Core): el navegador
+    // lo recibe en la URL con la que la app lo abre y lo manda en cada orden.
+    let token = http::new_token();
+    if let Err(e) = http::write_token(dash_port, &token) {
+        dlog(&format!("aviso: no pude guardar el token del panel: {e}"));
+    }
+    let url = format!("http://127.0.0.1:{dash_port}/?t={token}");
+    dlog(&format!("v{} panel escuchando en http://127.0.0.1:{dash_port} ({net_name})", env!("CARGO_PKG_VERSION")));
 
     println!("● RAMI-Chain — monedero de escritorio ({net_name})");
     println!("  panel      : {url}");
+    println!("               (la URL lleva tu token de sesión; no la compartas)");
     match pubkey {
         Some(pk) => println!("  dirección  : {}", hex::encode(pk)),
         None if ks_corrupt => {
@@ -1227,6 +1389,8 @@ fn real_main(args: Vec<String>) -> ExitCode {
         ks_corrupt,
         label,
         wallet: std::sync::Mutex::new(wallet),
+        port: dash_port,
+        token,
     });
 
     // El nodo arranca en SEGUNDO PLANO: revalidar una cadena grande tarda, y el
