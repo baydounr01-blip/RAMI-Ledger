@@ -1,0 +1,59 @@
+# Comprobaciones de seguridad en cada push y cada semana:
+#   1) cargo audit: dependencias con vulnerabilidades conocidas (RustSec);
+#   2) inventario de red y procesos: TODO lo que el código contacta o ejecuta
+#      debe estar en SECURITY-INVENTORY.txt (una «puerta trasera» nueva haría
+#      fallar el build);
+#   3) guardián de salidas (_exit) y suite de tests (incluye la autoauditoría
+#      del Túnel RAMI contra un nodo real).
+# RAMI-Chain es una testnet EXPERIMENTAL sin valor monetario.
+name: security
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    name: inventario de red y procesos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inventario == lista aprobada
+        run: bash tools/security/inventory.sh --check
+      - name: Guardia — ninguna salida con exit() fuera de hard_exit
+        run: |
+          if grep -rn 'process::exit' chain/crates/rami-gui/src chain/crates/rami-node/src | grep -v ':[0-9]*:\s*//' | grep -v 'update.rs:.*std::process::exit(code)'; then
+            echo "::error::hay una llamada a process::exit fuera de hard_exit"; exit 1
+          fi
+      - name: Sin secretos en el repositorio
+        run: |
+          if grep -rnE 'BEGIN (RSA|EC|OPENSSH|PRIVATE)|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}' --exclude-dir=.git --exclude-dir=target . ; then
+            echo "::error::parece haber una clave o token en el repositorio"; exit 1
+          fi
+
+  audit:
+    name: cargo audit (RustSec)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Instalar cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Auditar dependencias
+        run: cargo audit --file chain/Cargo.lock
+
+  tests:
+    name: tests (incluye autoauditoría del túnel)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo test --release --locked
+        run: cargo test --release --locked --manifest-path chain/Cargo.toml

@@ -148,4 +148,16 @@ windows)
   echo "kind desconocido: $KIND" >&2; exit 1 ;;
 esac
 
+# Hash del ejecutable rami-gui que va DENTRO del paquete (el que corre): la
+# autoauditoría del monedero compara el suyo con BINARIES-SHA256.txt del
+# release. En macOS se hashea el binario ya firmado (el que se instala).
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+case "$KIND" in
+  linux)   printf '%s  rami-gui-linux\n' "$(sha256_of "$REL/rami-gui")" > "dist/BINARIES-SHA256-$TARGET.txt" ;;
+  macos)   printf '%s  rami-gui-macos-%s\n' "$(sha256_of "stage/RAMI-Chain.app/Contents/MacOS/rami-gui")" "$ARCH" > "dist/BINARIES-SHA256-$TARGET.txt" ;;
+  windows) printf '%s  rami-gui-windows\n' "$(sha256_of "$REL/rami-gui.exe")" > "dist/BINARIES-SHA256-$TARGET.txt" ;;
+esac
+
 echo "✓ paquetes en dist/:"; ls -la dist/
