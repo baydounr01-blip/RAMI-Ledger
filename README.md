@@ -49,9 +49,14 @@ Workspace de Rust en [`chain/`](chain), con dependencias mínimas
 
 Crates de red y aplicación (v0.2):
 
-- [`rami-net`](chain/crates/rami-net) — gossip P2P sobre TCP JSON-lines, **sin
-  servidor central**: handshake con `network-id` (hash del génesis), sincronización
-  por lotes y retransmisión de bloques/tx. Solo transporte; el nodo revalida todo.
+- [`rami-net`](chain/crates/rami-net) — gossip P2P sobre TCP, **sin servidor
+  central** y, desde v0.7.0, **cifrado y autenticado** («túnel RAMI»: identidad
+  Ed25519 con prueba de trabajo SHA-256d, saludo firmado por ambas partes con
+  claves efímeras X25519, HKDF-SHA256 y ChaCha20-Poly1305; ver
+  [`PROTOCOL.md`](chain/crates/rami-net/PROTOCOL.md)). Sincronización **por
+  ramas** (`Tips` / `GetBranch` / `Branch`: todo bloque válido llega a todos
+  los nodos, no solo la cadena principal) y retransmisión de bloques/tx. Solo
+  transporte; el nodo revalida todo.
 - [`rami-node`](chain/crates/rami-node) — nodo: `init`, `run` (demonio P2P que
   escucha, sincroniza y mina), `mine`, `status`, `verify`, `show`. También es
   biblioteca del runtime que usa el monedero de escritorio.
@@ -139,9 +144,17 @@ cd chain && cargo build --release        # o descarga el binario de las releases
   `seed.quantbot.army`) hace que todos los monederos nuevos se conecten solos.
 - **Minar sin estar conectado** crea una rama aparte. Cuando los nodos se
   conectan gana la rama con más trabajo acumulado; los bloques de la otra se
-  conservan en el árbol pero sus monedas no cuentan en la cadena principal.
+  conservan en el árbol (y desde v0.7.0 **viajan a todos los nodos**, no solo
+  la cadena principal) pero sus monedas no cuentan en la cadena principal.
   Es el comportamiento normal de una cadena de trabajo: conéctate antes de
   minar.
+- **Huella del nodo:** en Red verás tu huella (`xxxx-xxxx-xxxx-xxxx`, derivada
+  de tu identidad Ed25519 con prueba de trabajo) y la de cada par. Toda
+  conexión va cifrada y autenticada; si un par cambia de identidad, el panel
+  avisa. Compara la huella con la otra persona por otro canal, como con una
+  clave SSH.
+- **Versiones:** el protocolo v2 de v0.7.0 no habla con v0.6.x. Actualizad
+  todos los ordenadores (el monedero avisa y se actualiza solo).
 
 ## En la terminal (usuarios avanzados)
 
@@ -468,7 +481,57 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
   de `open` en macOS, panel en < 20 s, AppleEvent «reopen» con timeout de 10 s
   (si el hilo principal no atiende eventos, falla), y «Salir» debe cerrar el
   proceso en < 5 s. Si falla, el release no se publica.
-- **v0.6.x (siguiente):** instantáneas de cadena re-verificables para el explorador
+- **v0.7.0 (esto): la red habla como la cadena — universo de ramas y túnel RAMI.**
+  (1) **Sincronización del universo de ramas.** Hasta v0.6.x el nodo pedía
+  bloques *por altura* (`GetBlocks{from,max}`) de la cadena canónica del otro:
+  una rama perdedora jamás viajaba entre nodos, en contra de la teoría. Ahora
+  el protocolo P2P es v2: cada nodo anuncia **todas sus puntas** (`Tips`, con
+  altura y trabajo) al conectar, cuando cambian y cada 30 s; por cada punta
+  desconocida pide la rama (`GetBranch{tip, known: locator(), max}`) con un
+  **localizador exponencial** (últimos 8 bloques, huecos que se doblan, todas
+  las puntas propias y el génesis) y recibe `Branch{tip, blocks, more}` en
+  orden ascendente, truncado por el extremo antiguo para insertarlo ya y
+  seguir pidiendo con un **cursor** (el último bloque del lote que ya está
+  en el árbol se añade a `known`, así una bifurcación más profunda que los
+  huecos del localizador avanza en vez de repetir el mismo lote); cada
+  bloque se revalida (`accept_block`). Revisión adversaria aplicada: como
+  máximo 4 peticiones de rama en vuelo por par (el resto se encola por
+  trabajo), rondas contadas por (par, punta) con expulsión del par que agota
+  8 puntas, bloques inválidos recordados para no revalidarlos, puntas
+  anunciadas ordenadas por trabajo (la cabeza siempre viaja) con tope de 256
+  y anuncio incremental (`partial`), límite de 128 `GetBranch` servidos por
+  par cada 10 s y 4 MB por respuesta, cola de salida acotada por par (quien no
+  lee, se desconecta), frames de ≤ 16 MiB comprobados antes de reservar
+  memoria, y el saludo rechaza cualquier versión de protocolo distinta.
+  `NodeStatus.universe` (bloques, puntas, ramas sincronizadas, último
+  origen). Tests de integración con nodos reales por TCP:
+  `universe_merges_divergent_branches` (A y B minan aislados, se conectan y
+  ambos árboles quedan idénticos: todos los bloques de las dos ramas, 2
+  puntas, misma cabeza), `deep_fork_syncs_via_cursor` (bifurcación a 700
+  bloques de profundidad, falla sin el cursor), `side_branch_reaches_node_two_hops_away`
+  (una rama lateral llega a un tercer nodo que solo la conoce por los
+  anuncios de puntas del intermedio) y `hostile_tips_do_not_amplify_requests`
+  (256 puntas falsas ⇒ ≤ 4 peticiones). (2) **Túnel RAMI** (`rami-net/src/{identity,secure}.rs`):
+  identidad Ed25519 por nodo en `<cadena>/node.key` (0600) cuya clave pública
+  lleva una **prueba de trabajo SHA-256d** (20 bits, la misma `pow_hash` del
+  minado, ≈1 s una sola vez): `node_id` y **huella** `xxxx-xxxx-xxxx-xxxx`
+  derivan de ella. Saludo en 3 mensajes (`RamiHello1/2/3`): claves efímeras
+  X25519 y nonces de ambos, **firma Ed25519 de ambas partes** sobre la
+  transcripción completa `"RAMI-P2P-v2"‖net‖pub_i‖eph_i‖nonce_i‖pub_r‖eph_r‖nonce_r`,
+  comprobación de PoW *antes* de verificar firmas (anti-DoS), rechazo del
+  secreto X25519 nulo; claves por sentido con **HKDF-SHA256** (RFC 5869, con
+  su vector de prueba) y tramas **ChaCha20-Poly1305** `len‖ct` con contador
+  de 64 bits por sentido como nonce implícito (una trama repetida o
+  reordenada cierra la conexión). Un par v0.6.x (saludo en claro) se rechaza
+  limpiamente. **TOFU**: `known-identities.json` recuerda la identidad de
+  cada dirección y el panel avisa si cambia. Pestaña Red: huella propia y de
+  cada par, «cifrado y autenticado», puntas y universo. **Qué es nuevo y qué
+  no:** los bloques criptográficos son práctica establecida (patrón
+  Noise/WireGuard, identidades con PoW de S/Kademlia, BIP-324); lo nuevo es la
+  sincronización completa por ramas coherente con la teoría y reutilizar la
+  PoW de la cadena como coste de identidad. **Sin cambio de consenso.**
+  Detalle de bytes en [`chain/crates/rami-net/PROTOCOL.md`](chain/crates/rami-net/PROTOCOL.md).
+- **v0.7.x (siguiente):** instantáneas de cadena re-verificables para el explorador
   web, seeds comunitarios, endurecimiento P2P (puntuación de pares, límites por
   IP) y IPC dedicado faucet↔nodo.
 

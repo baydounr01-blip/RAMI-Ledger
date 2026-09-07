@@ -727,8 +727,31 @@
 
       <div class="grid tiles" style="margin-bottom:14px">
         <div class="tile"><div class="lbl">Puerto de escucha</div><div class="val" id="netPort">—</div></div>
-        <div class="tile"><div class="lbl">ID de nodo</div><div class="val" id="netNodeId">—</div></div>
+        <div class="tile"><div class="lbl">Huella de tu nodo</div><div class="val" id="netFpTile" style="font-size:15px">—</div></div>
         <div class="tile"><div class="lbl">Pares conectados</div><div class="val" id="netPeerCount">—</div></div>
+        <div class="tile"><div class="lbl">Puntas del universo</div><div class="val" id="netTips">—</div></div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px;max-width:720px">
+        <div class="lbl" style="margin-bottom:6px">🔐 Túnel RAMI: conexiones cifradas y autenticadas</div>
+        <div class="kv" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <div><span class="k">Huella:</span> <span class="mono" id="netFp">—</span></div>
+          <button class="copybtn" data-copy-target="netFpFull">Copiar</button>
+        </div>
+        <div class="note" id="netSecure" style="margin-top:6px"></div>
+        <p class="note" style="margin:8px 0 0">Cada nodo tiene una identidad propia (clave Ed25519) que cuesta trabajo crear: una prueba de trabajo SHA-256d, la misma del minado, así que una huella no se fabrica gratis. Al conectar, los dos nodos firman el saludo y todo el tráfico va cifrado (ChaCha20-Poly1305) con claves de sesión efímeras. Comprueba la huella con la otra persona por otro canal, como se hace con una clave SSH.</p>
+        <div class="note" id="netIdWarn" style="margin-top:6px;color:var(--warn)"></div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px;max-width:720px">
+        <div class="lbl" style="margin-bottom:8px">🌳 Universo de bloques ramificados</div>
+        <div class="grid tiles" style="margin-bottom:8px">
+          <div class="tile"><div class="lbl">Bloques en el árbol</div><div class="val" id="uniBlocks">—</div></div>
+          <div class="tile"><div class="lbl">Ramas / puntas</div><div class="val" id="uniTips">—</div></div>
+          <div class="tile"><div class="lbl">Ramas sincronizadas</div><div class="val" id="uniBranches">—</div></div>
+          <div class="tile"><div class="lbl">Última rama recibida de</div><div class="val" id="uniFrom" style="font-size:14px">—</div></div>
+        </div>
+        <p class="note" style="margin:0">A diferencia de otras cadenas, tu nodo pide a cada par TODAS sus ramas (anuncio de puntas → petición de rama → bloques), no solo la cadena principal. Ningún bloque válido se pierde: las ramas perdedoras también se conservan y se comparten, tal y como dice la teoría del Universo de Bloques Ramificados.</p>
       </div>
 
       <div class="card" style="margin-bottom:14px;max-width:720px">
@@ -755,10 +778,10 @@
         <div class="tbl-wrap">
           <table>
             <thead>
-              <tr><th>Dirección</th><th>Sentido</th><th class="num">Altura</th></tr>
+              <tr><th>Dirección</th><th>Huella</th><th>Sentido</th><th class="num">Altura</th><th class="num">Puntas</th></tr>
             </thead>
             <tbody id="peersBody">
-              <tr><td colspan="3" class="muted">Sin pares.</td></tr>
+              <tr><td colspan="5" class="muted">Sin pares.</td></tr>
             </tbody>
           </table>
         </div>
@@ -766,6 +789,7 @@
           No hay servidor central. Cualquiera puede ejecutar un nodo y unirse a la red conectándose a otros pares; la cadena se
           replica de igual a igual (peer-to-peer).
         </p>
+        <p class="note">Todos los pares se autentican con su identidad y hablan cifrado. Un nodo con la versión antigua (v0.6.x) no puede conectarse hasta que actualice.</p>
       </div>
     </section>
 
@@ -1064,8 +1088,24 @@
 
     // Red
     document.getElementById("netPort").textContent = s.listen_port != null ? s.listen_port : "—";
-    document.getElementById("netNodeId").textContent = s.node_id != null ? s.node_id : "—";
+    var fp = s.node_fingerprint || "";
+    copyStore.netFpFull = fp;
+    document.getElementById("netFp").textContent = fp || "—";
+    var fpTile = document.getElementById("netFpTile");
+    fpTile.textContent = fp || (s.node_id != null ? String(s.node_id) : "—");
+    fpTile.title = s.node_id != null ? (t("ID de nodo")+": "+s.node_id) : "";
     document.getElementById("netPeerCount").textContent = (s.peers||[]).length;
+    var u = s.universe || {};
+    var uTips = u.tips != null ? u.tips : s.tips, uBlocks = u.blocks != null ? u.blocks : s.blocks_total;
+    document.getElementById("netTips").textContent   = fmtNum(uTips);
+    document.getElementById("uniTips").textContent   = fmtNum(uTips);
+    document.getElementById("uniBlocks").textContent = fmtNum(uBlocks);
+    document.getElementById("uniBranches").textContent = u.branches_synced != null ? fmtNum(u.branches_synced) : "—";
+    document.getElementById("uniFrom").textContent   = u.last_sync_from || "—";
+    var sec = document.getElementById("netSecure");
+    if(s.secure) sec.innerHTML = '<span class="badge in">🔐 '+esc(t("cifrado y autenticado"))+'</span> '+esc(t("Protocolo RAMI-P2P v2: identidad Ed25519 con prueba de trabajo, acuerdo X25519, HKDF-SHA256, ChaCha20-Poly1305."));
+    else if(s.secure === false) sec.textContent = t("Sin cifrado (nodo antiguo).");
+    else sec.textContent = "";
     renderPeers(s.peers||[]);
     renderNetInfo(s.netinfo || {}, s.listen_port);
 
@@ -1100,7 +1140,7 @@
 
   var lastNetInfoKey = "";
   function renderNetInfo(n, port){
-    var key = JSON.stringify(n) + port;
+    var key = JSON.stringify(n) + port + LANG; // se repinta también al cambiar de idioma
     if(key === lastNetInfoKey) return;
     lastNetInfoKey = key;
     var code = n.code || n.code_lan || (port ? ("…:"+port) : "—");
@@ -1115,18 +1155,21 @@
     } else parts.push(t("Apertura automática del puerto desactivada (--no-portmap)."));
     parts.push(n.lan_discovery ? "📡 "+t("Descubrimiento en red local activo") : t("Descubrimiento en red local desactivado (--no-lan)."));
     m.textContent = parts.join(" · ");
+    var warn = document.getElementById("netIdWarn"), ws = n.identity_warnings || [];
+    warn.textContent = ws.length ? ("⚠️ "+t("Un par ha cambiado de identidad (¿reinstaló, o alguien se hace pasar por él?):")+" "+ws.join(" · ")) : "";
   }
   function renderPeers(peers){
     var body = document.getElementById("peersBody");
     if(!peers.length){
-      body.innerHTML = '<tr><td colspan="3" class="muted">Sin pares.</td></tr>';
+      body.innerHTML = '<tr><td colspan="5" class="muted">'+esc(t("Sin pares."))+'</td></tr>';
       return;
     }
     body.innerHTML = peers.map(function(p){
       var badge = p.inbound
         ? '<span class="badge in">'+t("entrante")+'</span>'
         : '<span class="badge out">'+t("saliente")+'</span>';
-      return "<tr><td>"+esc(p.addr)+"</td><td>"+badge+"</td><td class='num'>"+fmtNum(p.height)+"</td></tr>";
+      var fp = p.fingerprint ? ('<span class="mono" title="'+esc(p.pubkey||"")+'">🔐 '+esc(p.fingerprint)+'</span>') : '<span class="muted">—</span>';
+      return "<tr><td>"+esc(p.addr)+"</td><td>"+fp+"</td><td>"+badge+"</td><td class='num'>"+fmtNum(p.height)+"</td><td class='num'>"+(p.tips!=null?fmtNum(p.tips):"—")+"</td></tr>";
     }).join("");
   }
 

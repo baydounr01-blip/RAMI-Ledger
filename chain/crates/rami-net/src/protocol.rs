@@ -10,7 +10,18 @@ use rami_core::tx::Tx;
 use serde::{Deserialize, Serialize};
 
 /// Versión del protocolo P2P. Súbela si cambia el formato de `Frame`.
-pub const PROTO_VERSION: u32 = 1;
+/// v2: sincronización del universo de ramas (`Tips`/`GetBranch`/`Branch`)
+/// en lugar de la lineal por altura (`GetBlocks`/`Blocks`, retirados).
+pub const PROTO_VERSION: u32 = 2;
+
+/// Una punta (hoja) del árbol de bloques de un par: hash en hex, altura y
+/// trabajo acumulado (u128 en decimal, como texto para no perder precisión).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TipInfo {
+    pub hash: String,
+    pub height: u64,
+    pub work: String,
+}
 
 /// Un fotograma del protocolo. Serialización externamente etiquetada:
 /// `{"Ping":{"nonce":7}}`, una por línea.
@@ -22,11 +33,21 @@ pub enum Frame {
     Hello { net: String, node: u64, port: u16, ver: u32 },
     /// Anuncio de punta de cadena tras el handshake (y cuando cambia).
     Status { height: u64, best: String, work: String },
-    /// Pide hasta `max` bloques contiguos desde la altura `from` por la cadena
-    /// del observador del que responde.
-    GetBlocks { from: u64, max: u32 },
-    /// Respuesta: bloques por altura ascendente.
-    Blocks { blocks: Vec<Block> },
+    /// Anuncio de puntas del árbol (universo de ramas), las más pesadas
+    /// primero (la cabeza siempre viaja) y acotado por el emisor. `partial ==
+    /// false`: conjunto completo (tras el handshake y como latido periódico),
+    /// sustituye lo que el par sabía de nosotros. `partial == true`: solo las
+    /// puntas NUEVAS desde el último anuncio (cada bloque aceptado), que el par
+    /// suma a las que ya tenía. Un par que vea una punta que no tiene pide su
+    /// rama con `GetBranch`.
+    Tips { tips: Vec<TipInfo>, partial: bool },
+    /// Pide la rama que termina en `tip` (hex): el que responde retrocede desde
+    /// `tip` hasta un hash de `known` (localizador del peticionario, o el
+    /// génesis) y devuelve hasta `max` bloques, los más antiguos primero.
+    GetBranch { tip: String, known: Vec<String>, max: u32 },
+    /// Respuesta a `GetBranch`: bloques en orden ascendente; `more` indica que
+    /// la rama sigue (el peticionario los admite y vuelve a pedir).
+    Branch { tip: String, blocks: Vec<Block>, more: bool },
     /// Retransmite un bloque recién aceptado.
     NewBlock { block: Block },
     /// Retransmite una transacción de mempool.
@@ -60,7 +81,16 @@ mod tests {
         let cases = vec![
             Frame::Hello { net: "ab".repeat(32), node: 42, port: 30301, ver: PROTO_VERSION },
             Frame::Status { height: 7, best: "00".repeat(32), work: "123456789".into() },
-            Frame::GetBlocks { from: 1, max: 500 },
+            Frame::Tips {
+                tips: vec![
+                    TipInfo { hash: "11".repeat(32), height: 7, work: u128::MAX.to_string() },
+                    TipInfo { hash: "22".repeat(32), height: 3, work: "5".into() },
+                ],
+                partial: false,
+            },
+            Frame::Tips { tips: vec![], partial: true },
+            Frame::GetBranch { tip: "11".repeat(32), known: vec!["00".repeat(32), "22".repeat(32)], max: 256 },
+            Frame::Branch { tip: "11".repeat(32), blocks: vec![], more: true },
             Frame::GetPeers,
             Frame::Peers { addrs: vec!["1.2.3.4:30301".into()] },
             Frame::Ping { nonce: 99 },
@@ -77,5 +107,7 @@ mod tests {
     fn garbage_is_none() {
         assert_eq!(Frame::from_line("no soy json"), None);
         assert_eq!(Frame::from_line("{\"Desconocido\":1}"), None);
+        // v1 retirado: la sincronización lineal por altura ya no existe
+        assert_eq!(Frame::from_line("{\"GetBlocks\":{\"from\":1,\"max\":5}}"), None);
     }
 }

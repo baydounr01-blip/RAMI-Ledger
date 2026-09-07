@@ -75,6 +75,13 @@ jobs:
         if: matrix.kind == 'windows'
         run: choco install nsis -y --no-progress
 
+      # La red se prueba de verdad en cada release (solo Linux, ~1 min): unidad
+      # (túnel RAMI: handshake, cifrado, identidad) e integración con nodos
+      # reales por TCP (universo de ramas). Si falla, no se publica.
+      - name: Tests (Linux; red real por TCP)
+        if: matrix.kind == 'linux'
+        run: cargo test --release --locked --manifest-path chain/Cargo.toml
+
       - name: Compilar (--locked, reproducible)
         env:
           # Windows: CRT estático — sin esto, un PC sin el runtime de Visual

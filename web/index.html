@@ -147,7 +147,12 @@
   <code>rami-wallet</code>) sigue ahí para quien la quiera.</p>
   <p class="sub"><strong>En tu idioma:</strong> el panel del monedero está en <strong>español, inglés, chino, ruso y suajili</strong>;
   se cambia con un clic arriba a la derecha y se recuerda.</p>
-  <p class="sub"><strong>Nuevo en v0.6 — Tenerife en 3D 🏝️</strong>: la Ciudad RAMI se juega sobre una réplica 3D de la isla
+  <p class="sub"><strong>Nuevo en v0.7 — la red habla como la cadena 🌐</strong>: los nodos ya no se sincronizan como una
+  cadena lineal: anuncian todas sus puntas y se piden las ramas enteras, así que <strong>todo bloque válido llega a todos</strong>,
+  como dice la teoría del Universo de Bloques Ramificados. Y cada conexión va por el <strong>túnel RAMI</strong>: identidad
+  Ed25519 con prueba de trabajo (la misma del minado), saludo firmado por las dos partes y tráfico cifrado con
+  ChaCha20-Poly1305. La v0.7 no habla con la v0.6: actualiza todos tus ordenadores (el monedero lo hace solo).</p>
+  <p class="sub"><strong>v0.6 — Tenerife en 3D 🏝️</strong>: la Ciudad RAMI se juega sobre una réplica 3D de la isla
   de Tenerife hecha con <strong>datos abiertos</strong> (relieve real, costa, Teide, pueblos y carreteras principales), dividida
   en 32×32 parcelas que corresponden a lugares reales: escribe la dirección de tu empresa y la app la sitúa en su parcela.
   Gráficos WebGL rápidos (todo instanciado), vista Isla/Ciudad, y <strong>gafas de realidad virtual</strong> vía WebXR
@@ -163,9 +168,10 @@
       <p>Pulsa «Empezar a minar» y tu CPU asegura la red. La dificultad se ajusta sola (LWMA) hacia
       60 s/bloque según el hashrate real. Sin premine: las monedas nacen minando.</p></div>
     <div class="card"><div class="tag">P2P · SIN PUNTO DE FALLO ÚNICO</div><h3>Red sin servidor central</h3>
-      <p>El panel es local; la red es entre pares (gossip TCP). Cualquiera corre un nodo y se conecta a
-      otros por su IP: el <em>network-id</em> es el hash del génesis, así que todos hablan la misma red.
-      No hay una empresa que apagar.</p></div>
+      <p>El panel es local; la red es entre pares, <strong>cifrada y autenticada</strong> (túnel RAMI: cada
+      nodo tiene una identidad con prueba de trabajo y una huella, como una clave SSH). Los nodos comparten
+      <strong>todas las ramas</strong> del universo de bloques, no solo la cadena principal. El
+      <em>network-id</em> es el hash del génesis; no hay una empresa que apagar.</p></div>
     <div class="card"><div class="tag">VERIFICABLE</div><h3>Descarga comprobable</h3>
       <p>Los binarios se compilan en CI con <code>--locked</code> y se publican con su
       <code>SHA256SUMS.txt</code>. Comprueba el hash antes de ejecutar; no llevan <em>code-signing</em>
@@ -298,7 +304,7 @@
       <b>2 · Abre solo si entiendes el riesgo.</b> macOS: clic derecho → Abrir (o Ajustes del Sistema →
       Privacidad y seguridad → «Abrir de todas formas»). Windows: Más información → Ejecutar de todas formas.
       Estás asumiendo tú la verificación que normalmente haría la plataforma.<br>
-      <b>3 · Instalación desde la terminal</b> (mismo resultado que el instalador; <code>$TAG</code> es la versión, p. ej. <code>v0.6.2</code>):<br>
+      <b>3 · Instalación desde la terminal</b> (mismo resultado que el instalador; <code>$TAG</code> es la versión, p. ej. <code>v0.7.0</code>):<br>
       <code style="display:block;white-space:pre-wrap;margin:6px 0;padding:8px 10px;background:rgba(255,255,255,.05);border-radius:8px">TAG=$(curl -sIL -o /dev/null -w '%{url_effective}' https://github.com/baydounr01-blip/RAMI-Ledger/releases/latest | sed 's#.*/tag/##')
 # macOS (Apple Silicon; Intel: macos-x64)
 curl -fLO https://github.com/baydounr01-blip/RAMI-Ledger/releases/download/$TAG/RAMI-Chain-$TAG-macos-arm64.dmg

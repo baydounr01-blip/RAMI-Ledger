@@ -24,6 +24,19 @@ pub struct BlockNode {
     pub cum_work: u128,
 }
 
+/// Prefijo inequívoco del error de `insert` cuando falta el padre (huérfano).
+/// El nodo lo usa para distinguir «me falta la rama» de «bloque inválido».
+pub const ORPHAN_ERR: &str = "huérfano: padre desconocido";
+
+/// ¿Es `err` (de `BlockTree::insert`) el error de padre desconocido?
+pub fn is_orphan_err(err: &str) -> bool {
+    err.starts_with(ORPHAN_ERR)
+}
+
+/// Puntas que viajan en el localizador (las más pesadas): cota para que un
+/// universo frondoso no convierta cada `GetBranch` en cientos de KB.
+pub const LOCATOR_TIPS: usize = 64;
+
 pub struct BlockTree {
     nodes: HashMap<Hash, BlockNode>,
     children: HashMap<Hash, Vec<Hash>>,
@@ -148,9 +161,12 @@ impl BlockTree {
         let parent_node = self
             .nodes
             .get(&parent)
-            .ok_or("padre desconocido (no se admiten huérfanos)")?;
+            .ok_or_else(|| format!("{ORPHAN_ERR} (no se admiten huérfanos)"))?;
         if block.header.height != parent_node.block.header.height + 1 {
-            return Err("altura != altura_del_padre + 1".into());
+            return Err(format!(
+                "altura {} incorrecta: la anterior es {}",
+                block.header.height, parent_node.block.header.height
+            ));
         }
         if !meets_target(&h, block.header.bits) {
             return Err("el bloque no cumple el objetivo de PoW".into());
@@ -184,6 +200,18 @@ impl BlockTree {
     /// Puntas (hojas) actuales.
     pub fn tips(&self) -> Vec<Hash> {
         self.tip_state.keys().copied().collect()
+    }
+
+    /// Puntas ordenadas por trabajo acumulado DESCENDENTE (la cabeza primero;
+    /// a igual trabajo, por hash para que el orden sea estable).
+    pub fn tips_by_work(&self) -> Vec<(Hash, u128)> {
+        let mut out: Vec<(Hash, u128)> = self
+            .tip_state
+            .keys()
+            .filter_map(|h| self.nodes.get(h).map(|n| (*h, n.cum_work)))
+            .collect();
+        out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        out
     }
 
     /// Fork-choice determinista: mayor trabajo acumulado; empate EXACTO -> Collatz.
@@ -224,6 +252,82 @@ impl BlockTree {
             Some(s) => Ok(s.clone()),
             None => self.replay_state(&head),
         }
+    }
+
+    /// Localizador para la sincronización del universo de ramas: muestra de
+    /// nuestra cadena del observador (los últimos 8 bloques y después huecos que
+    /// se duplican), el génesis y las `LOCATOR_TIPS` puntas más pesadas. Sin
+    /// duplicados. Un par que reciba esto puede recortar la rama que nos falta
+    /// justo donde nuestras realidades se separan de la suya. Si la
+    /// bifurcación cae entre dos muestras lejanas, el peticionario avanza con
+    /// un cursor (ver `branch_to`): el localizador solo acota el primer lote.
+    pub fn locator(&self) -> Vec<Hash> {
+        let chain = self.observer_chain();
+        let mut out: Vec<Hash> = Vec::new();
+        let mut seen: HashSet<Hash> = HashSet::new();
+        let n = chain.len();
+        let mut dist = 0usize; // distancia a la cabeza
+        let mut step = 1usize;
+        let mut dense = 0usize;
+        while dist < n {
+            let h = chain[n - 1 - dist];
+            if seen.insert(h) {
+                out.push(h);
+            }
+            dense += 1;
+            if dense >= 8 {
+                step = step.saturating_mul(2);
+            }
+            dist = dist.saturating_add(step);
+        }
+        if seen.insert(self.genesis) {
+            out.push(self.genesis);
+        }
+        for (t, _) in self.tips_by_work().into_iter().take(LOCATOR_TIPS) {
+            if seen.insert(t) {
+                out.push(t);
+            }
+        }
+        out
+    }
+
+    /// Segmento de rama que termina en `tip` y que el peticionario aún no tiene:
+    /// retrocede desde `tip` hasta encontrar un hash de `known` (o el génesis,
+    /// que todos comparten) y devuelve los bloques en orden ASCENDENTE (el más
+    /// antiguo primero), truncado a los `max` MÁS ANTIGUOS. `more == true` si se
+    /// truncó: el peticionario admite lo recibido y vuelve a pedir añadiendo a
+    /// `known` el último bloque del lote (cursor), de modo que aunque todo el
+    /// lote fuera ya conocido la siguiente petición reanuda justo después.
+    /// `None` si `tip` no está en el árbol.
+    ///
+    /// Solo se recorren hashes (32 B por paso); únicamente se clonan los `max`
+    /// bloques devueltos, así una petición sobre una rama larga no cuesta
+    /// O(longitud) en memoria.
+    pub fn branch_to(&self, tip: &Hash, known: &[Hash], max: usize) -> Option<(Vec<Block>, bool)> {
+        if !self.nodes.contains_key(tip) {
+            return None;
+        }
+        let known_set: HashSet<Hash> = known.iter().copied().collect();
+        let mut path: Vec<Hash> = Vec::new();
+        let mut cur = *tip;
+        while cur != ZERO_HASH && cur != self.genesis && !known_set.contains(&cur) {
+            match self.nodes.get(&cur) {
+                Some(n) => {
+                    path.push(cur);
+                    cur = n.block.header.prev_hash;
+                }
+                None => break,
+            }
+        }
+        let more = path.len() > max;
+        let take = path.len().min(max);
+        // los `take` más antiguos son los ÚLTIMOS del recorrido (que va de la punta hacia atrás)
+        let segment: Vec<Block> = path[path.len() - take..]
+            .iter()
+            .rev()
+            .filter_map(|h| self.nodes.get(h).map(|n| n.block.clone()))
+            .collect();
+        Some((segment, more))
     }
 
     /// Calcula el reorg entre dos cabezas (antigua -> nueva).
@@ -343,6 +447,187 @@ mod tests {
             b.hash()
         };
         assert_eq!(h1, want);
+    }
+
+    /// Extiende `prev` con `n` bloques minados por `miner` (tags distintos por
+    /// altura); devuelve los hashes en orden ascendente.
+    fn extend(tree: &mut BlockTree, prev: Hash, n: usize, miner: [u8; 32], ts0: u64) -> Vec<Hash> {
+        let mut out = Vec::new();
+        let mut prev = prev;
+        for i in 0..n {
+            let height = tree.get(&prev).unwrap().block.header.height + 1;
+            let bits = tree.expected_bits(&prev);
+            let tag = [miner[0], b'_', (i / 10) as u8 + b'0', (i % 10) as u8 + b'0'];
+            let b = mined_block(height, prev, bits, miner, ts0 + 60 * (i as u64 + 1), tag);
+            prev = tree.insert(b).unwrap();
+            out.push(prev);
+        }
+        out
+    }
+
+    #[test]
+    fn locator_samples_chain_tips_and_genesis_without_duplicates() {
+        let g = genesis();
+        let mut tree = BlockTree::new(g.clone(), Params::regtest()).unwrap();
+        // árbol con un solo bloque: el génesis aparece UNA vez
+        assert_eq!(tree.locator(), vec![g.hash()]);
+        // rama principal de 40 bloques + rama hermana corta desde el génesis
+        let main = extend(&mut tree, g.hash(), 40, [1u8; 32], 1_700_000_000);
+        let side = extend(&mut tree, g.hash(), 2, [2u8; 32], 1_700_100_000);
+        assert_eq!(tree.head(), *main.last().unwrap());
+        let loc = tree.locator();
+        let uniq: HashSet<Hash> = loc.iter().copied().collect();
+        assert_eq!(uniq.len(), loc.len(), "el localizador no puede repetir hashes");
+        // los últimos 8 bloques de la cabeza están todos
+        for h in main.iter().rev().take(8) {
+            assert!(loc.contains(h));
+        }
+        // huecos que se duplican: distancias 9,13,21,37 (desde la cabeza)
+        for d in [9usize, 13, 21, 37] {
+            assert!(loc.contains(&main[main.len() - 1 - d]), "falta distancia {d}");
+        }
+        for d in [8usize, 10, 12, 20, 30] {
+            assert!(!loc.contains(&main[main.len() - 1 - d]), "sobra distancia {d}");
+        }
+        // todas las puntas y el génesis, en una lista mucho menor que la cadena
+        assert!(loc.contains(side.last().unwrap()));
+        assert!(loc.contains(&g.hash()));
+        assert!(loc.len() < 20);
+    }
+
+    #[test]
+    fn branch_to_returns_missing_segment_of_a_fork() {
+        let g = genesis();
+        let mut tree = BlockTree::new(g.clone(), Params::regtest()).unwrap();
+        let a = extend(&mut tree, g.hash(), 3, [1u8; 32], 1_700_000_000);
+        let b = extend(&mut tree, a[0], 4, [2u8; 32], 1_700_100_000);
+        assert_eq!(tree.tips().len(), 2);
+        // el peticionario conoce la rama A entera: de la rama B le faltan sus 4 bloques
+        let (seg, more) = tree.branch_to(b.last().unwrap(), &a, 100).unwrap();
+        assert!(!more);
+        let hashes: Vec<Hash> = seg.iter().map(|x| x.hash()).collect();
+        assert_eq!(hashes, b, "orden ascendente, sólo lo que falta");
+        // el primer bloque devuelto engancha con algo que el peticionario tiene
+        assert_eq!(seg[0].header.prev_hash, a[0]);
+        // sólo conoce el génesis: rama A completa
+        let (seg, more) = tree.branch_to(a.last().unwrap(), &[g.hash()], 100).unwrap();
+        assert!(!more);
+        assert_eq!(seg.iter().map(|x| x.hash()).collect::<Vec<_>>(), a);
+        // sin localizador alguno: el génesis se asume conocido por todos
+        let (seg, _) = tree.branch_to(a.last().unwrap(), &[], 100).unwrap();
+        assert_eq!(seg.len(), 3);
+        // punta ya conocida: nada que enviar
+        let (seg, more) = tree.branch_to(&a[2], &a, 100).unwrap();
+        assert!(seg.is_empty() && !more);
+        // punta desconocida
+        assert!(tree.branch_to(&[0xEE; 32], &a, 100).is_none());
+    }
+
+    #[test]
+    fn branch_to_truncates_to_oldest_blocks_and_flags_more() {
+        let g = genesis();
+        let mut tree = BlockTree::new(g.clone(), Params::regtest()).unwrap();
+        let a = extend(&mut tree, g.hash(), 7, [1u8; 32], 1_700_000_000);
+        let tip = *a.last().unwrap();
+        // primer lote: los 3 MÁS ANTIGUOS, con more=true
+        let (seg, more) = tree.branch_to(&tip, &[g.hash()], 3).unwrap();
+        assert!(more);
+        assert_eq!(seg.iter().map(|x| x.hash()).collect::<Vec<_>>(), a[..3].to_vec());
+        // el peticionario los admite y vuelve a pedir con localizador fresco
+        let (seg, more) = tree.branch_to(&tip, &[a[2], g.hash()], 3).unwrap();
+        assert!(more);
+        assert_eq!(seg.iter().map(|x| x.hash()).collect::<Vec<_>>(), a[3..6].to_vec());
+        let (seg, more) = tree.branch_to(&tip, &[a[5]], 3).unwrap();
+        assert!(!more);
+        assert_eq!(seg.iter().map(|x| x.hash()).collect::<Vec<_>>(), vec![a[6]]);
+        // max exacto: no se marca more
+        let (seg, more) = tree.branch_to(&tip, &[], 7).unwrap();
+        assert_eq!(seg.len(), 7);
+        assert!(!more);
+    }
+
+    /// Bifurcación MÁS PROFUNDA que la ventana densa del localizador: el
+    /// primer lote son bloques que el peticionario ya tiene, pero añadiendo el
+    /// último del lote como cursor la siguiente petición reanuda justo después
+    /// y en pocas rondas llega la rama entera (nunca se repite el mismo lote).
+    #[test]
+    fn deep_fork_advances_with_cursor_instead_of_repeating_batch() {
+        let g = genesis();
+        let mut server = BlockTree::new(g.clone(), Params::regtest()).unwrap();
+        let mut client = BlockTree::new(g.clone(), Params::regtest()).unwrap();
+        // tronco común de 60 bloques
+        let trunk = extend(&mut server, g.hash(), 60, [1u8; 32], 1_700_000_000);
+        for h in &trunk {
+            client.insert(server.get(h).unwrap().block.clone()).unwrap();
+        }
+        // el cliente sigue 140 bloques por su cuenta; el servidor 10 por la suya
+        let _mine = extend(&mut client, *trunk.last().unwrap(), 140, [3u8; 32], 1_700_500_000);
+        let theirs = extend(&mut server, *trunk.last().unwrap(), 10, [2u8; 32], 1_700_900_000);
+        let tip = *theirs.last().unwrap();
+        let batch = 50usize;
+        let base = client.locator();
+        // la bifurcación (altura 60) está a 140 de la cabeza del cliente: fuera
+        // de las muestras densas => el primer lote es TODO conocido
+        let (seg, more) = server.branch_to(&tip, &base, batch).unwrap();
+        assert!(more);
+        assert!(seg.iter().all(|b| client.contains(&b.hash())), "primer lote ya conocido");
+        // ... y con el MISMO localizador se repetiría: por eso hace falta el cursor
+        let (again, _) = server.branch_to(&tip, &base, batch).unwrap();
+        assert_eq!(again.iter().map(|b| b.hash()).collect::<Vec<_>>(), seg.iter().map(|b| b.hash()).collect::<Vec<_>>());
+        // bucle del peticionario: cursor = último bloque del lote que está en su árbol
+        let mut cursor: Option<Hash> = Some(seg.last().unwrap().hash());
+        let mut rounds = 1usize;
+        let mut last_seen: Option<Vec<Hash>> = None;
+        let mut more = more;
+        while more {
+            let mut known = client.locator();
+            known.extend(cursor);
+            let (seg, m) = server.branch_to(&tip, &known, batch).unwrap();
+            let hashes: Vec<Hash> = seg.iter().map(|b| b.hash()).collect();
+            assert_ne!(last_seen.as_ref(), Some(&hashes), "el lote no puede repetirse");
+            for b in seg {
+                if !client.contains(&b.hash()) {
+                    client.insert(b).unwrap();
+                }
+            }
+            cursor = hashes.last().copied();
+            last_seen = Some(hashes);
+            more = m;
+            rounds += 1;
+            assert!(rounds < 10, "demasiadas rondas");
+        }
+        assert!(client.contains(&tip), "la rama lateral llegó entera");
+        assert_eq!(client.len(), 1 + 60 + 140 + 10);
+        assert_eq!(client.tips().len(), 2);
+    }
+
+    #[test]
+    fn locator_caps_tips_to_heaviest() {
+        let g = genesis();
+        let mut tree = BlockTree::new(g.clone(), Params::regtest()).unwrap();
+        // muchas ramas hermanas de 1 bloque desde el génesis y una rama larga
+        for i in 0..(LOCATOR_TIPS + 20) {
+            let bits = tree.expected_bits(&g.hash());
+            let b = mined_block(1, g.hash(), bits, [(i % 250) as u8 + 1; 32], 1_700_000_000 + i as u64, [b's', b'i', (i / 100) as u8 + b'0', (i % 100) as u8]);
+            tree.insert(b).unwrap();
+        }
+        let long = extend(&mut tree, g.hash(), 5, [9u8; 32], 1_700_100_000);
+        let loc = tree.locator();
+        assert!(loc.contains(long.last().unwrap()), "la cabeza va siempre");
+        assert!(loc.contains(&g.hash()));
+        let by_work = tree.tips_by_work();
+        assert_eq!(by_work[0].0, tree.head());
+        // como mucho las muestras de la cadena (6) + génesis + LOCATOR_TIPS puntas
+        assert!(loc.len() <= 6 + 1 + LOCATOR_TIPS, "localizador sin cota: {}", loc.len());
+        assert!(loc.len() >= LOCATOR_TIPS);
+        // el error de huérfano se distingue del de altura
+        let bits = tree.expected_bits(long.last().unwrap());
+        let orphan = mined_block(7, [0xCD; 32], bits, [1u8; 32], 1_700_200_000, *b"orph");
+        let err = tree.insert(orphan).unwrap_err();
+        assert!(is_orphan_err(&err));
+        let wrong_h = mined_block(9, *long.last().unwrap(), bits, [1u8; 32], 1_700_200_000, *b"badh");
+        let err = tree.insert(wrong_h).unwrap_err();
+        assert!(!is_orphan_err(&err), "altura incorrecta no es huérfano: {err}");
     }
 
     #[test]

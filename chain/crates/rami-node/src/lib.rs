@@ -26,22 +26,54 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 
 use rami_core::block::{Block, BlockHeader, Hash};
+use rami_core::blocktree::is_orphan_err;
 use rami_core::params::Params;
 use rami_core::pow::{difficulty_from_bits, meets_target, pow_hash};
 use rami_core::state::{block_reward, Account, State, COIN};
 use rami_core::store::ChainDir;
 use rami_core::tx::{merkle_root_txids, signer_of, txid, verify_tx, AccountId, Tx, TxId};
 
-use rami_net::{Frame, NetConfig, NetEvent, Network};
+use rami_net::{Frame, NetConfig, NetEvent, Network, PeerId, TipInfo};
+use rami_net::identity::fingerprint as fingerprint_of;
 
 /// Mensaje del coinbase (aparece en cada bloque minado).
 pub const CHANCELLOR: &str =
     "RAMI-Chain — el pasado, el presente y el futuro coexisten. Testnet experimental, sin valor monetario.";
 
-/// Tamaño de lote de sincronización (bloques por petición).
+/// Tamaño de lote de sincronización (bloques por petición `GetBranch`).
 const SYNC_BATCH: u32 = 256;
-/// Tope de bloques servidos en una respuesta.
+/// Tope de bloques servidos en una respuesta `Branch`.
 const SERVE_MAX: usize = 512;
+/// Tope de bytes (JSON) de bloques en una respuesta `Branch`: por debajo de la
+/// cota de línea del transporte (`rami_net::MAX_LINE`) con margen.
+const SERVE_MAX_BYTES: usize = 4 * 1024 * 1024;
+/// Peticiones `GetBranch` que se atienden a UN par por ventana `BRANCH_RETRY`
+/// (cota de amplificación: un `GetBranch` de 100 bytes puede pedir 512 bloques).
+/// Un peticionario honesto (4 en vuelo, continuación inmediata) no la alcanza
+/// salvo en una sincronización enorme, y entonces solo se ralentiza.
+const SERVE_RATE_MAX: u32 = 128;
+/// Rondas máximas de `GetBranch` por (par, punta) SIN progreso (cota contra
+/// pares que responden basura o nunca terminan). Progreso = el cursor avanza
+/// (bloques nuevos O un lote entero ya conocido que reanuda más adelante). Se
+/// cuenta por par: un par que no sirve una punta no la «quema» para los demás.
+const BRANCH_MAX_ROUNDS: u32 = 200;
+/// (par, punta) agotadas que se toleran a un mismo par antes de expulsarlo.
+const PEER_STRIKES_MAX: u32 = 8;
+/// Ventana anti-spam: no se repite la misma petición de rama a un par antes de
+/// este plazo (salvo la continuación inmediata de un lote con `more`).
+const BRANCH_RETRY: Duration = Duration::from_secs(10);
+/// Peticiones `GetBranch` activas (enviadas hace menos de `BRANCH_RETRY`) que
+/// se mantienen por par: las puntas pendientes esperan cola, no se piden todas
+/// de golpe (un `Tips` con 256 puntas inventadas costaba 256 peticiones).
+const MAX_INFLIGHT_PER_PEER: usize = 4;
+/// Latido del universo de ramas: el conjunto COMPLETO de puntas se reanuncia
+/// periódicamente; entre latidos solo viajan las puntas nuevas (delta).
+const TIPS_HEARTBEAT: Duration = Duration::from_secs(30);
+/// Tope de puntas que se anuncian (las más pesadas) y que se registran por par
+/// (un par no puede inflar memoria).
+const PEER_TIPS_CAP: usize = 256;
+/// Bloques inválidos (no huérfanos) recordados para no revalidarlos.
+const BAD_BLOCKS_CAP: usize = 4096;
 /// Hashes por vuelta del minero antes de refrescar métricas/epoch.
 const MINE_CHUNK: u64 = 120_000;
 
@@ -59,6 +91,17 @@ pub fn parse_pubkey(hexs: &str) -> Result<AccountId, String> {
     let mut a = [0u8; 32];
     a.copy_from_slice(&v);
     Ok(a)
+}
+
+/// Hash de bloque en hex (64 caracteres) -> `Hash`; None si no es válido.
+fn parse_hash(hexs: &str) -> Option<Hash> {
+    let v = hex::decode(hexs).ok()?;
+    if v.len() != 32 {
+        return None;
+    }
+    let mut h = [0u8; 32];
+    h.copy_from_slice(&v);
+    Some(h)
 }
 
 pub fn tx_fee(tx: &Tx) -> u64 {
@@ -202,6 +245,39 @@ fn persist_known_peers(root: &Path, peers: &HashSet<String>) {
     }
 }
 
+/// Identidades conocidas (TOFU, «confía la primera vez»): dirección
+/// remarcable -> clave pública hex del nodo que la atendía. Como con SSH, si
+/// una dirección aparece luego con OTRA identidad se avisa (no se corta: es
+/// una testnet, y una IP puede cambiar de dueño legítimamente).
+const KNOWN_IDENTITIES_CAP: usize = 256;
+/// Tope de avisos de identidad cambiada que se exponen en el panel.
+const IDENTITY_WARNINGS_CAP: usize = 16;
+
+fn identities_path(root: &Path) -> PathBuf {
+    root.join("known-identities.json")
+}
+
+fn load_known_identities(root: &Path) -> HashMap<String, String> {
+    std::fs::read_to_string(identities_path(root))
+        .ok()
+        .and_then(|s| serde_json::from_str::<HashMap<String, String>>(&s).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .take(KNOWN_IDENTITIES_CAP)
+        .collect()
+}
+
+fn persist_known_identities(root: &Path, ids: &HashMap<String, String>) {
+    let mut list: Vec<(&String, &String)> = ids.iter().collect();
+    list.sort();
+    list.truncate(KNOWN_IDENTITIES_CAP);
+    let map: serde_json::Map<String, serde_json::Value> =
+        list.into_iter().map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone()))).collect();
+    if let Ok(json) = serde_json::to_string_pretty(&map) {
+        let _ = std::fs::write(identities_path(root), json);
+    }
+}
+
 // ------------------------- runtime -------------------------
 
 #[derive(Clone)]
@@ -232,13 +308,37 @@ pub struct NetInfo {
     pub lan_discovery: bool,
     pub code: String,
     pub code_lan: String,
+    /// Avisos «la identidad del par X ha cambiado (huella A → B)» (TOFU).
+    pub identity_warnings: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
 pub struct PeerView {
     pub addr: String,
     pub inbound: bool,
+    /// Huella de la identidad autenticada del par.
+    pub fingerprint: String,
+    /// Clave pública Ed25519 del par (hex).
+    pub pubkey: String,
     pub height: u64,
+    /// Nº de puntas (ramas) que el par ha anunciado con `Tips`.
+    pub tips: usize,
+    /// Mayor trabajo acumulado entre sus puntas (u128 decimal).
+    pub best_work: String,
+}
+
+/// Estado del universo de ramas para el panel: el árbol completo (todas las
+/// ramas, no solo la del observador) y la sincronización rama a rama.
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct UniverseInfo {
+    /// Bloques en el árbol (todas las ramas).
+    pub blocks: usize,
+    /// Puntas (hojas) del árbol.
+    pub tips: usize,
+    /// Lotes `Branch` aplicados (con al menos un bloque nuevo).
+    pub branches_synced: u64,
+    /// Par del que llegó el último lote aplicado.
+    pub last_sync_from: String,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -246,6 +346,10 @@ pub struct NodeStatus {
     pub network: String,
     pub network_id: String,
     pub node_id: u64,
+    /// Huella de la identidad de este nodo (`xxxx-xxxx-xxxx-xxxx`).
+    pub node_fingerprint: String,
+    /// Todas las conexiones van por el Túnel RAMI (autenticado y cifrado).
+    pub secure: bool,
     pub listen_port: u16,
     pub height: u64,
     pub head: String,
@@ -261,6 +365,7 @@ pub struct NodeStatus {
     pub hashrate: u64,
     pub found: u64,
     pub netinfo: NetInfo,
+    pub universe: UniverseInfo,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -635,6 +740,47 @@ impl NodeHandle {
     }
 }
 
+/// Puntas anunciadas por un par (`Tips`), ordenadas por trabajo descendente:
+/// las que nos falten se piden con `GetBranch`, las más pesadas primero.
+#[derive(Default)]
+struct PeerTips {
+    /// (hash, altura, trabajo acumulado)
+    tips: Vec<(Hash, u64, u128)>,
+}
+
+impl PeerTips {
+    fn normalize(&mut self) {
+        self.tips.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+        self.tips.dedup_by(|a, b| a.0 == b.0);
+        self.tips.truncate(PEER_TIPS_CAP);
+    }
+    /// Olvida las puntas anunciadas que ya son bloques INTERIORES de nuestro
+    /// árbol: los anuncios delta (`partial`) solo traen puntas nuevas, así que
+    /// la punta anterior de una rama que creció quedaría registrada para
+    /// siempre (hasta el latido completo). Si tenemos el bloque y ya tiene
+    /// hijos, no hay nada que pedir por él.
+    fn forget_interior(&mut self, tree: &rami_core::blocktree::BlockTree, my_tips: &HashSet<Hash>) {
+        self.tips.retain(|t| !tree.contains(&t.0) || my_tips.contains(&t.0));
+    }
+    fn best_work(&self) -> u128 {
+        self.tips.first().map(|t| t.2).unwrap_or(0)
+    }
+    fn best_height(&self) -> u64 {
+        self.tips.iter().map(|t| t.1).max().unwrap_or(0)
+    }
+}
+
+/// Una petición `GetBranch` a un par por una punta.
+struct BranchReq {
+    /// Último envío (ventana anti-spam y «activa» para el tope en vuelo).
+    sent: Instant,
+    /// Rondas sin progreso (cota `BRANCH_MAX_ROUNDS`).
+    rounds: u32,
+    /// Cursor de la última continuación (último bloque del lote anterior que ya
+    /// teníamos): si el par repite el mismo lote, no cuenta como progreso.
+    cursor: Option<Hash>,
+}
+
 struct Node {
     tree: rami_core::blocktree::BlockTree,
     chain: ChainDir,
@@ -642,10 +788,36 @@ struct Node {
     network_id: Hash,
     mempool: Vec<Tx>,
     seen_tx: HashSet<TxId>,
-    seen_block: HashSet<Hash>,
+    /// Bloques que NO se admitieron por inválidos (no por huérfanos): un par
+    /// que los repita no nos hace revalidarlos. Acotado.
+    bad_blocks: HashSet<Hash>,
     peer_height: HashMap<rami_net::PeerId, u64>,
+    /// Universo de ramas: puntas anunciadas por cada par.
+    peer_tips: HashMap<PeerId, PeerTips>,
+    /// Peticiones `GetBranch` por par y punta (rondas, ventana, cursor). Se
+    /// limpia al desconectar el par.
+    inflight: HashMap<PeerId, HashMap<Hash, BranchReq>>,
+    /// (par, punta) que agotaron las rondas, por par: al llegar a
+    /// `PEER_STRIKES_MAX` el par se expulsa (no se castiga a la punta).
+    strikes: HashMap<PeerId, u32>,
+    /// `GetBranch` atendidas por par en la ventana actual: (inicio, cuenta).
+    served: HashMap<PeerId, (Instant, u32)>,
+    /// Localizador cacheado por tamaño del árbol (solo cambia si entra un
+    /// bloque): calcularlo es O(altura), y un `Tips` no debe costar 256 veces eso.
+    locator_cache: Option<(usize, Vec<Hash>)>,
+    /// Último conjunto de puntas anunciado (por trabajo) y cuándo se envió el
+    /// conjunto completo por última vez (latido).
+    last_tips_sent: Vec<Hash>,
+    last_tips_at: Instant,
+    /// Lotes `Branch` aplicados y de quién llegó el último.
+    branches_synced: u64,
+    last_sync_from: String,
     /// peer -> (addr del socket, entrante, dirección REMARCABLE si el par escucha)
     peer_meta: HashMap<rami_net::PeerId, (String, bool, Option<String>)>,
+    /// peer -> (clave pública hex, huella) autenticadas en el handshake.
+    peer_ident: HashMap<rami_net::PeerId, (String, String)>,
+    /// Identidades fijadas por dirección (TOFU); known-identities.json.
+    known_identities: HashMap<String, String>,
     /// Pares conocidos remarcables; se persisten en peers.json del directorio de
     /// cadena y se re-marcan al arrancar (descubrimiento sin servidor central).
     known_peers: HashSet<String>,
@@ -654,7 +826,6 @@ struct Node {
     mining: Arc<MiningShared>,
     miner: Option<AccountId>,
     mining_on: bool,
-    sync_backoff: u64,
     last_candidate_ts: u64,
     status: Arc<Mutex<NodeStatus>>,
 }
@@ -669,13 +840,12 @@ pub fn spawn(cfg: NodeConfig) -> Result<NodeHandle, String> {
     let tree = chain.load_tree(cfg.params)?;
     let genesis_hash = tree.chain_to(&tree.head()).first().copied().ok_or("cadena vacía")?;
 
-    let node_id = {
-        use rand_core::{OsRng, RngCore};
-        OsRng.next_u64()
-    };
+    // Identidad del nodo (Túnel RAMI): clave Ed25519 con prueba de trabajo en
+    // <chain_dir>/node.key. La primera vez se crea (≈ un segundo de PoW).
+    let identity = rami_net::identity::load_or_create(&chain.root.join("node.key"))?;
     let (net, net_rx) = Network::start(NetConfig {
         network_id: genesis_hash,
-        node_id,
+        identity,
         listen: cfg.listen,
         seeds: cfg.seeds.clone(),
         max_peers: 32,
@@ -757,16 +927,26 @@ pub fn spawn(cfg: NodeConfig) -> Result<NodeHandle, String> {
         network_id: genesis_hash,
         mempool: Vec::new(),
         seen_tx: HashSet::new(),
-        seen_block: HashSet::new(),
+        bad_blocks: HashSet::new(),
         peer_height: HashMap::new(),
+        peer_tips: HashMap::new(),
+        inflight: HashMap::new(),
+        strikes: HashMap::new(),
+        served: HashMap::new(),
+        locator_cache: None,
+        last_tips_sent: Vec::new(),
+        last_tips_at: Instant::now(),
+        branches_synced: 0,
+        last_sync_from: String::new(),
         peer_meta: HashMap::new(),
+        peer_ident: HashMap::new(),
+        known_identities: HashMap::new(),
         known_peers: HashSet::new(),
         netinfo: netinfo.clone(),
         net,
         mining: mining.clone(),
         miner: cfg.miner,
         mining_on: cfg.mining && cfg.miner.is_some(),
-        sync_backoff: 0,
         last_candidate_ts: 0,
         status: status.clone(),
     };
@@ -778,6 +958,7 @@ pub fn spawn(cfg: NodeConfig) -> Result<NodeHandle, String> {
     // Descubrimiento: re-marca los pares conocidos de sesiones anteriores
     // (peers.json), además de los seeds pasados por configuración.
     node.known_peers = load_known_peers(&node.chain.root);
+    node.known_identities = load_known_identities(&node.chain.root);
     for a in node.known_peers.clone() {
         node.net.dial(a);
     }
@@ -816,10 +997,203 @@ impl Node {
         }
     }
 
+    /// Puntas que anunciamos: las `PEER_TIPS_CAP` más pesadas, la cabeza
+    /// primero (así la cabeza SIEMPRE viaja aunque el universo sea frondoso).
+    fn announced_tips(&self) -> Vec<Hash> {
+        self.tree.tips_by_work().into_iter().take(PEER_TIPS_CAP).map(|(h, _)| h).collect()
+    }
+
+    fn tips_frame(&self, hashes: &[Hash], partial: bool) -> Frame {
+        let tips: Vec<TipInfo> = hashes
+            .iter()
+            .filter_map(|h| {
+                self.tree.get(h).map(|n| TipInfo {
+                    hash: hex::encode(h),
+                    height: n.block.header.height,
+                    work: n.cum_work.to_string(),
+                })
+            })
+            .collect();
+        Frame::Tips { tips, partial }
+    }
+
+    /// Anuncio COMPLETO de nuestras puntas (al conectar y como latido).
+    fn my_tips_frame(&self) -> Frame {
+        self.tips_frame(&self.announced_tips(), false)
+    }
+
+    /// Reanuncia puntas: el conjunto completo si venció el latido
+    /// `TIPS_HEARTBEAT` o si `force`; si no, solo las puntas NUEVAS desde el
+    /// último anuncio (delta), y nada si no hay ninguna.
+    fn maybe_broadcast_tips(&mut self, force: bool) {
+        let cur = self.announced_tips();
+        if force || self.last_tips_at.elapsed() >= TIPS_HEARTBEAT {
+            self.net.broadcast(self.tips_frame(&cur, false));
+            self.last_tips_sent = cur;
+            self.last_tips_at = Instant::now();
+            return;
+        }
+        let last: HashSet<Hash> = self.last_tips_sent.iter().copied().collect();
+        let fresh: Vec<Hash> = cur.iter().filter(|h| !last.contains(*h)).copied().collect();
+        if !fresh.is_empty() {
+            self.net.broadcast(self.tips_frame(&fresh, true));
+        }
+        self.last_tips_sent = cur;
+    }
+
+    /// Etiqueta legible de un par (dirección remarcable o del socket).
+    fn peer_label(&self, peer: PeerId) -> String {
+        self.peer_meta
+            .get(&peer)
+            .map(|(addr, _, dial)| dial.clone().unwrap_or_else(|| addr.clone()))
+            .unwrap_or_default()
+    }
+
+    /// Localizador actual (cacheado mientras el árbol no cambie).
+    fn locator(&mut self) -> Vec<Hash> {
+        let n = self.tree.len();
+        if let Some((k, l)) = &self.locator_cache {
+            if *k == n {
+                return l.clone();
+            }
+        }
+        let l = self.tree.locator();
+        self.locator_cache = Some((n, l.clone()));
+        l
+    }
+
+    /// Peticiones activas (enviadas hace menos de `BRANCH_RETRY`) a un par.
+    fn active_requests(&self, peer: PeerId) -> usize {
+        self.inflight
+            .get(&peer)
+            .map(|s| s.values().filter(|r| r.sent.elapsed() < BRANCH_RETRY).count())
+            .unwrap_or(0)
+    }
+
+    /// Pide a `peer` la rama que termina en `tip` con un localizador fresco
+    /// más `cursor` (último bloque del lote anterior que ya teníamos: el par
+    /// reanuda justo después, aunque la bifurcación caiga entre dos muestras
+    /// lejanas del localizador). `force` salta la ventana anti-spam y el tope
+    /// en vuelo (continuación inmediata de un lote con `more`). Devuelve true
+    /// si se envió la petición.
+    fn request_branch(&mut self, peer: PeerId, tip: Hash, force: bool, cursor: Option<Hash>) -> bool {
+        if self.tree.contains(&tip) {
+            return false;
+        }
+        let existing = self
+            .inflight
+            .get(&peer)
+            .and_then(|s| s.get(&tip))
+            .map(|r| (r.rounds, r.sent.elapsed(), r.cursor));
+        if let Some((rounds, _, _)) = existing {
+            if rounds >= BRANCH_MAX_ROUNDS {
+                return false;
+            }
+        }
+        // Progreso = el cursor avanzó respecto a la última continuación. Un par
+        // que repite el mismo lote no consigue que se le vuelva a pedir al
+        // instante: cae en la ventana anti-spam y consume una ronda.
+        let advanced = cursor.is_some() && existing.is_none_or(|(_, _, prev)| cursor != prev);
+        let force = force && advanced;
+        if !force {
+            if let Some((_, age, _)) = existing {
+                if age < BRANCH_RETRY {
+                    return false;
+                }
+            } else if self.active_requests(peer) >= MAX_INFLIGHT_PER_PEER {
+                return false;
+            }
+        }
+        let rounds = if advanced { 1 } else { existing.map(|e| e.0).unwrap_or(0) + 1 };
+        let prev_cursor = existing.and_then(|e| e.2);
+        let slot = self.inflight.entry(peer).or_default();
+        if slot.len() >= PEER_TIPS_CAP * 2 {
+            // cota de memoria por par: fuera lo más antiguo
+            slot.retain(|_, r| r.sent.elapsed() < BRANCH_RETRY);
+            if slot.len() >= PEER_TIPS_CAP * 2 {
+                return false;
+            }
+        }
+        slot.insert(tip, BranchReq { sent: Instant::now(), rounds, cursor: cursor.or(prev_cursor) });
+        if rounds >= BRANCH_MAX_ROUNDS {
+            let st = self.strikes.entry(peer).or_insert(0);
+            *st += 1;
+            if *st >= PEER_STRIKES_MAX {
+                eprintln!("[sync] par {} agota rondas de rama una y otra vez: se expulsa", self.peer_label(peer));
+                self.net.disconnect(peer);
+                return false;
+            }
+        }
+        let mut known = self.locator();
+        if let Some(c) = cursor {
+            known.push(c);
+        }
+        let known: Vec<String> = known.iter().map(hex::encode).collect();
+        self.net.send(peer, Frame::GetBranch { tip: hex::encode(tip), known, max: SYNC_BATCH });
+        true
+    }
+
+    /// Pide a `peer`, por orden de trabajo, las puntas que anunció y aún nos
+    /// faltan, hasta llenar las `MAX_INFLIGHT_PER_PEER` ranuras activas.
+    fn pump_peer(&mut self, peer: PeerId) {
+        let wanted: Vec<Hash> = match self.peer_tips.get(&peer) {
+            Some(pt) => pt.tips.iter().map(|t| t.0).filter(|h| !self.tree.contains(h)).collect(),
+            None => return,
+        };
+        let mut active = self.active_requests(peer);
+        for h in wanted {
+            if active >= MAX_INFLIGHT_PER_PEER {
+                break;
+            }
+            if self.request_branch(peer, h, false, None) {
+                active += 1;
+            }
+        }
+    }
+
+    /// ¿Atendemos otra `GetBranch` de este par en la ventana actual?
+    fn serve_allowed(&mut self, peer: PeerId) -> bool {
+        let e = self.served.entry(peer).or_insert((Instant::now(), 0));
+        if e.0.elapsed() >= BRANCH_RETRY {
+            *e = (Instant::now(), 0);
+        }
+        if e.1 >= SERVE_RATE_MAX {
+            return false;
+        }
+        e.1 += 1;
+        true
+    }
+
+    fn remember_bad(&mut self, h: Hash) {
+        if self.bad_blocks.len() >= BAD_BLOCKS_CAP {
+            self.bad_blocks.clear();
+        }
+        self.bad_blocks.insert(h);
+    }
+
+    /// Poda el estado de sincronización: puntas ya en el árbol y peticiones
+    /// caducadas dejan de ocupar memoria. Nunca se reinicia todo de golpe.
+    fn prune_sync_state(&mut self) {
+        let tree = &self.tree;
+        let my_tips: HashSet<Hash> = tree.tips().into_iter().collect();
+        for pt in self.peer_tips.values_mut() {
+            pt.forget_interior(tree, &my_tips);
+        }
+        for slot in self.inflight.values_mut() {
+            slot.retain(|h, r| !tree.contains(h) && r.sent.elapsed() < BRANCH_RETRY * 12);
+        }
+        self.inflight.retain(|_, slot| !slot.is_empty());
+        self.served.retain(|_, (t, _)| t.elapsed() < BRANCH_RETRY * 2);
+    }
+
     fn on_net(&mut self, ev: NetEvent) {
         match ev {
-            NetEvent::Connected { peer, addr, inbound, dial_addr } => {
+            NetEvent::Connected { peer, addr, inbound, dial_addr, pubkey, fingerprint } => {
                 self.peer_height.insert(peer, 0);
+                self.peer_ident.insert(peer, (hex::encode(pubkey), fingerprint.clone()));
+                if let Some(d) = &dial_addr {
+                    self.pin_identity(d, &pubkey, &fingerprint);
+                }
                 // Recuerda al par si es remarcable (descubrimiento persistente).
                 // El tope también rige en memoria: un atacante no puede hacer
                 // crecer known_peers sin límite a base de conexiones.
@@ -831,15 +1205,58 @@ impl Node {
                 self.peer_meta.insert(peer, (addr, inbound, dial_addr));
                 let s = self.my_status_frame();
                 self.net.send(peer, s);
+                // Universo de ramas: le contamos TODAS nuestras puntas para que
+                // pida las ramas que le falten (y él hará lo mismo).
+                let t = self.my_tips_frame();
+                self.net.send(peer, t);
                 self.net.send(peer, Frame::GetPeers);
             }
             NetEvent::Disconnected { peer } => {
                 self.peer_height.remove(&peer);
                 self.peer_meta.remove(&peer);
+                self.peer_ident.remove(&peer);
+                self.peer_tips.remove(&peer);
+                self.inflight.remove(&peer);
+                self.strikes.remove(&peer);
+                self.served.remove(&peer);
             }
             NetEvent::Message { peer, frame } => self.on_frame(peer, frame),
         }
         self.publish_status();
+    }
+
+    /// TOFU: fija la identidad vista en `addr`. Si ya había OTRA, avisa (en el
+    /// registro y en `netinfo.identity_warnings`) y actualiza la fijación; no
+    /// se corta la conexión (testnet).
+    fn pin_identity(&mut self, addr: &str, pubkey: &[u8; 32], fp: &str) {
+        let pk_hex = hex::encode(pubkey);
+        match self.known_identities.get(addr) {
+            Some(known) if *known == pk_hex => return,
+            Some(known) => {
+                let old_fp = hex::decode(known)
+                    .ok()
+                    .and_then(|v| <[u8; 32]>::try_from(v).ok())
+                    .map(|k| fingerprint_of(&k))
+                    .unwrap_or_else(|| "?".into());
+                let msg = format!("la identidad del par {addr} ha cambiado (huella {old_fp} → {fp})");
+                eprintln!("[net] AVISO: {msg}");
+                if let Ok(mut g) = self.netinfo.lock() {
+                    if !g.identity_warnings.contains(&msg) {
+                        if g.identity_warnings.len() >= IDENTITY_WARNINGS_CAP {
+                            g.identity_warnings.remove(0);
+                        }
+                        g.identity_warnings.push(msg);
+                    }
+                }
+            }
+            None => {
+                if self.known_identities.len() >= KNOWN_IDENTITIES_CAP {
+                    return; // tope: no se fija (ni se persiste) nada más
+                }
+            }
+        }
+        self.known_identities.insert(addr.to_string(), pk_hex);
+        persist_known_identities(&self.chain.root, &self.known_identities);
     }
 
     fn on_frame(&mut self, peer: rami_net::PeerId, frame: Frame) {
@@ -848,61 +1265,144 @@ impl Node {
             Frame::Status { height, .. } => {
                 self.peer_height.insert(peer, height);
             }
-            Frame::GetBlocks { from, max } => {
-                let chain = self.tree.observer_chain();
-                let start = from as usize;
-                let end = (start + (max as usize).min(SERVE_MAX)).min(chain.len());
-                if start < chain.len() {
-                    let blocks: Vec<Block> = chain[start..end]
-                        .iter()
-                        .filter_map(|h| self.tree.get(h).map(|n| n.block.clone()))
-                        .collect();
-                    if !blocks.is_empty() {
-                        self.net.send(peer, Frame::Blocks { blocks });
+            Frame::Tips { tips, partial } => {
+                // Registra las puntas del par (completas o delta) y pide, por
+                // orden de trabajo y dentro del tope en vuelo, toda rama que
+                // nos falte: en el universo de ramas todo bloque válido llega
+                // a todos.
+                let entries = tips.into_iter().take(PEER_TIPS_CAP).filter_map(|t| {
+                    let h = parse_hash(&t.hash)?;
+                    let w = t.work.parse::<u128>().ok()?;
+                    Some((h, t.height, w))
+                });
+                let my_tips: HashSet<Hash> = self.tree.tips().into_iter().collect();
+                let pt = self.peer_tips.entry(peer).or_default();
+                if partial {
+                    pt.tips.extend(entries);
+                } else {
+                    pt.tips = entries.collect();
+                }
+                pt.normalize();
+                pt.forget_interior(&self.tree, &my_tips);
+                let best_height = pt.best_height();
+                let ph = self.peer_height.entry(peer).or_insert(0);
+                if best_height > *ph {
+                    *ph = best_height;
+                }
+                self.pump_peer(peer);
+            }
+            Frame::GetBranch { tip, known, max } => {
+                if let Some(tip_h) = parse_hash(&tip) {
+                    if !self.serve_allowed(peer) {
+                        return self.publish_status();
+                    }
+                    let known: Vec<Hash> = known.iter().take(4096).filter_map(|k| parse_hash(k)).collect();
+                    let max = (max as usize).clamp(1, SERVE_MAX);
+                    if let Some((blocks, more)) = self.tree.branch_to(&tip_h, &known, max) {
+                        // Presupuesto de bytes: la respuesta debe caber en una
+                        // línea del transporte; si se recorta, `more` avisa.
+                        let mut out: Vec<Block> = Vec::new();
+                        let mut bytes = 0usize;
+                        let mut more = more;
+                        for b in blocks {
+                            let sz = serde_json::to_vec(&b).map(|v| v.len()).unwrap_or(0);
+                            if !out.is_empty() && bytes + sz > SERVE_MAX_BYTES {
+                                more = true;
+                                break;
+                            }
+                            bytes += sz;
+                            out.push(b);
+                        }
+                        if !out.is_empty() {
+                            self.net.send(peer, Frame::Branch { tip, blocks: out, more });
+                        }
                     }
                 }
             }
-            Frame::Blocks { blocks } => {
-                let before = self.head_height();
+            Frame::Branch { tip, blocks, more } => {
+                // Admite el lote en orden; `accept_block` revalida TODO con las
+                // reglas de consenso (la red nunca es fuente de confianza).
+                let tip_h = parse_hash(&tip);
+                let requested = tip_h
+                    .map(|t| self.inflight.get(&peer).is_some_and(|s| s.contains_key(&t)))
+                    .unwrap_or(false);
                 let mut accepted = 0usize;
                 let mut orphan = false;
-                for b in blocks {
-                    match self.accept_block(b, None) {
-                        Ok(true) => accepted += 1,
-                        Ok(false) => {}
+                // Cursor: último bloque del lote que está en nuestro árbol
+                // (nuevo o ya conocido). Solo vale si TODO el lote quedó en el
+                // árbol: si algo falló, reanudar tras el cursor repetiría el fallo.
+                let mut cursor: Option<Hash> = None;
+                let mut all_in_tree = true;
+                let mut n = 0usize;
+                for b in blocks.into_iter().take(SERVE_MAX) {
+                    n += 1;
+                    let h = b.hash();
+                    if self.bad_blocks.contains(&h) {
+                        all_in_tree = false;
+                        continue;
+                    }
+                    match self.accept_block(b, Some(peer)) {
+                        Ok(true) => {
+                            accepted += 1;
+                            cursor = Some(h);
+                        }
+                        Ok(false) => cursor = Some(h),
                         Err(e) => {
-                            if e.contains("padre") {
+                            all_in_tree = false;
+                            if is_orphan_err(&e) {
                                 orphan = true;
+                            } else {
+                                self.remember_bad(h);
                             }
                         }
                     }
                 }
                 if accepted > 0 {
-                    self.sync_backoff = 0;
+                    self.branches_synced += 1;
+                    self.last_sync_from = self.peer_label(peer);
                     self.refresh_candidate();
-                    if self.head_height() != before {
-                        self.net.broadcast(self.my_status_frame());
-                    }
-                } else if orphan {
-                    // vamos por otra rama: pide desde más atrás la próxima vez.
-                    self.sync_backoff = (self.sync_backoff + SYNC_BATCH as u64).min(100_000);
+                    self.maybe_broadcast_tips(false);
                 }
+                if let Some(t) = tip_h {
+                    if self.tree.contains(&t) {
+                        // rama completa: libera la ranura
+                        if let Some(slot) = self.inflight.get_mut(&peer) {
+                            slot.remove(&t);
+                        }
+                    } else if requested {
+                        if more && n > 0 && all_in_tree {
+                            // El cursor avanzó (haya o no bloques nuevos):
+                            // continuación inmediata reanudando tras él.
+                            self.request_branch(peer, t, true, cursor);
+                        } else if more || orphan {
+                            // Sin progreso o huérfano: el reintento respeta la
+                            // ventana anti-spam y la cota de rondas.
+                            self.request_branch(peer, t, false, None);
+                        }
+                    }
+                }
+                // ranuras libres => siguientes puntas pendientes de este par
+                self.pump_peer(peer);
             }
             Frame::NewBlock { block } => {
                 let h = block.hash();
+                if self.bad_blocks.contains(&h) {
+                    return self.publish_status();
+                }
                 match self.accept_block(block, Some(peer)) {
                     Ok(true) => {
                         self.refresh_candidate();
-                        self.net.broadcast(self.my_status_frame());
+                        self.maybe_broadcast_tips(false);
                     }
                     Ok(false) => {}
                     Err(e) => {
-                        if e.contains("padre") {
-                            // nos falta el padre: sincroniza desde este par.
-                            let from = (self.head_height() + 1).saturating_sub(self.sync_backoff);
-                            self.net.send(peer, Frame::GetBlocks { from, max: SYNC_BATCH });
+                        if is_orphan_err(&e) {
+                            // nos falta el padre: pide la rama entera de este
+                            // bloque a quien lo anuncia.
+                            self.request_branch(peer, h, false, None);
+                        } else {
+                            self.remember_bad(h);
                         }
-                        let _ = h;
                     }
                 }
             }
@@ -939,13 +1439,12 @@ impl Node {
     /// persiste. Devuelve Ok(true) si era nuevo y se aceptó.
     fn accept_block(&mut self, block: Block, _from: Option<rami_net::PeerId>) -> Result<bool, String> {
         let h = block.hash();
-        if self.seen_block.contains(&h) || self.tree.contains(&h) {
+        if self.tree.contains(&h) {
             return Ok(false);
         }
         let included: Vec<TxId> = block.txs.iter().map(txid).collect();
         self.tree.insert(block.clone())?;
         self.chain.append_block(&block)?;
-        self.seen_block.insert(h);
         // Retira del mempool las tx ya incluidas.
         self.mempool.retain(|t| !included.contains(&txid(t)));
         self.persist_mempool();
@@ -989,7 +1488,9 @@ impl Node {
             Ok(true) => {
                 self.mining.found.fetch_add(1, Ordering::Relaxed);
                 self.net.broadcast(Frame::NewBlock { block });
-                self.net.broadcast(self.my_status_frame());
+                // `Tips` lleva la nueva cabeza (altura y trabajo): `Status`
+                // sería redundante en cada bloque.
+                self.maybe_broadcast_tips(false);
                 self.refresh_candidate();
             }
             _ => self.refresh_candidate(),
@@ -998,15 +1499,15 @@ impl Node {
     }
 
     fn on_tick(&mut self) {
-        // Sincronización: si algún par va por delante, pide bloques.
-        let our_h = self.head_height();
-        let best = self.peer_height.values().copied().max().unwrap_or(0);
-        if best > our_h {
-            if let Some((&peer, _)) = self.peer_height.iter().max_by_key(|(_, h)| **h) {
-                let from = (our_h + 1).saturating_sub(self.sync_backoff);
-                self.net.send(peer, Frame::GetBlocks { from, max: SYNC_BATCH });
-            }
+        // Universo de ramas: vuelve a pedir las puntas anunciadas que aún nos
+        // faltan (p. ej. si se perdió una respuesta), dentro de la ventana
+        // anti-spam y la cota de rondas; y late las puntas cada 30 s.
+        self.prune_sync_state();
+        let peers: Vec<PeerId> = self.peer_tips.keys().copied().collect();
+        for p in peers {
+            self.pump_peer(p);
         }
+        self.maybe_broadcast_tips(false);
         // Refresca el candidato cada ~30 s para renovar el timestamp del bloque.
         if self.mining_on && now_secs().saturating_sub(self.last_candidate_ts) >= 30 {
             self.refresh_candidate();
@@ -1146,22 +1647,33 @@ impl Node {
         let peers: Vec<PeerView> = self
             .peer_meta
             .iter()
-            .map(|(id, (addr, inbound, dial))| PeerView {
-                addr: dial.clone().unwrap_or_else(|| addr.clone()),
-                inbound: *inbound,
-                height: self.peer_height.get(id).copied().unwrap_or(0),
+            .map(|(id, (addr, inbound, dial))| {
+                let pt = self.peer_tips.get(id);
+                let ident = self.peer_ident.get(id);
+                PeerView {
+                    addr: dial.clone().unwrap_or_else(|| addr.clone()),
+                    inbound: *inbound,
+                    fingerprint: ident.map(|(_, f)| f.clone()).unwrap_or_default(),
+                    pubkey: ident.map(|(p, _)| p.clone()).unwrap_or_default(),
+                    height: self.peer_height.get(id).copied().unwrap_or(0),
+                    tips: pt.map(|t| t.tips.len()).unwrap_or(0),
+                    best_work: pt.map(|t| t.best_work().to_string()).unwrap_or_default(),
+                }
             })
             .collect();
+        let tips = self.tree.tips().len();
         let status = NodeStatus {
             network: if self.is_testnet { "testnet".into() } else { "regtest".into() },
             network_id: hex::encode(self.network_id),
             node_id: self.net.node_id,
+            node_fingerprint: self.net.fingerprint.clone(),
+            secure: true,
             listen_port: self.net.listen_port,
             height,
             head: hex::encode(head),
             difficulty: node.map(|n| difficulty_from_bits(n.block.header.bits)).unwrap_or(0),
             work: node.map(|n| n.cum_work).unwrap_or(0).to_string(),
-            tips: self.tree.tips().len(),
+            tips,
             blocks_total: self.tree.len(),
             supply_ram: format!("{}.{:08}", supply / COIN as u128, supply % COIN as u128),
             mempool: self.mempool.len(),
@@ -1171,6 +1683,12 @@ impl Node {
             hashrate: self.mining.hashrate.load(Ordering::Relaxed),
             found: self.mining.found.load(Ordering::Relaxed),
             netinfo: self.netinfo.lock().map(|g| g.clone()).unwrap_or_default(),
+            universe: UniverseInfo {
+                blocks: self.tree.len(),
+                tips,
+                branches_synced: self.branches_synced,
+                last_sync_from: self.last_sync_from.clone(),
+            },
         };
         if let Ok(mut g) = self.status.lock() {
             *g = status;

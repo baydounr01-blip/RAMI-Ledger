@@ -4,10 +4,20 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors = ["Rami Baydoun Nabhan"]
-description = "Capa de gossip P2P de RAMI-Chain (TCP JSON-lines, sin servidor central)"
+description = "Capa de gossip P2P de RAMI-Chain (Túnel RAMI: TCP cifrado y autenticado, sin servidor central)"
 
 [dependencies]
 rami-core = { path = "../rami-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 hex = { workspace = true }
+# Túnel RAMI (v0.7): identidad Ed25519 con prueba de trabajo, acuerdo de
+# claves X25519 (curve25519-dalek, la misma curva que ya usa ed25519-dalek),
+# HKDF-SHA256 (hmac + sha2) y cifrado ChaCha20-Poly1305 — todo de RustCrypto,
+# nunca criptografía casera.
+ed25519-dalek = { workspace = true }
+curve25519-dalek = "4.1.3"
+chacha20poly1305 = { workspace = true }
+hmac = "0.12"
+sha2 = { workspace = true }
+rand_core = { workspace = true }
