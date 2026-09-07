@@ -394,10 +394,50 @@ fn cmd_show(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Auditoría externa de un nodo con nuestra propia tecnología: se comporta
+/// como un par malicioso contra `--peer host:puerto` y comprueba que el Túnel
+/// RAMI rechaza cada intento (ver rami_net::selftest).
+///
+///   rami-node audit [--peer 127.0.0.1:30301] (--network testnet | --chain DIR)
+fn cmd_audit(args: &[String]) -> ExitCode {
+    let peer = arg(args, "--peer").unwrap_or_else(|| "127.0.0.1:30301".into());
+    let net: [u8; 32] = if let Some(dir) = arg(args, "--chain") {
+        let chain = ChainDir::new(&dir);
+        match chain.load_tree(params_of(args)) {
+            Ok(tree) => match tree.chain_to(&tree.head()).first().copied() {
+                Some(h) => h,
+                None => return die("cadena vacía"),
+            },
+            Err(e) => return die(&e),
+        }
+    } else if is_testnet(args) {
+        rami_core::genesis::testnet_network_id()
+    } else {
+        return die("indica --network testnet o --chain DIR (para saber el network-id del nodo)");
+    };
+    println!("● auditoría del Túnel RAMI contra {peer} (network-id {}…)", &hex::encode(net)[..16]);
+    println!("  (se comporta como un par malicioso; cada intento debe ser rechazado)");
+    let checks = rami_net::selftest::run(&peer, net);
+    let mut bad = 0;
+    for c in &checks {
+        println!("  {} {} — {} ({} ms)", if c.ok { "✓" } else { "✗" }, c.name, c.detail, c.ms);
+        if !c.ok {
+            bad += 1;
+        }
+    }
+    if bad == 0 {
+        println!("✓ {} comprobaciones superadas", checks.len());
+        ExitCode::SUCCESS
+    } else {
+        println!("✗ {bad} comprobación(es) fallida(s) de {}", checks.len());
+        ExitCode::FAILURE
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let Some(cmd) = args.get(1) else {
-        eprintln!("uso: rami-node init|run|mine|faucet|status|verify|show [opciones]");
+        eprintln!("uso: rami-node init|run|mine|faucet|status|audit|verify|show [opciones]");
         return ExitCode::FAILURE;
     };
     match cmd.as_str() {
@@ -406,6 +446,7 @@ fn main() -> ExitCode {
         "mine" => cmd_mine(&args[2..]),
         "faucet" => cmd_faucet(&args[2..]),
         "status" => cmd_status(&args[2..]),
+        "audit" => cmd_audit(&args[2..]),
         "verify" => cmd_verify(&args[2..]),
         "show" => cmd_show(&args[2..]),
         other => die(&format!("subcomando desconocido: {other}")),
