@@ -25,6 +25,18 @@ pub const DS_TAG: &[u8] = b"RAMI-CHAIN/tx/v1";
 /// Tope del payload de un Reveal (anti-DoS / anti-bloat).
 pub const MAX_PAYLOAD_BYTES: usize = 4096;
 
+/// Cotas de bloque (consenso, anti-DoS): un bloque con más transacciones o
+/// más bytes que esto es INVÁLIDO aunque su PoW sea correcta. Un minero no
+/// puede obligar a toda la red a validar/guardar bloques gigantes.
+pub const MAX_BLOCK_TXS: usize = 4096;
+pub const MAX_BLOCK_BYTES: usize = 2 * 1024 * 1024;
+
+/// Tamaño de una transacción a efectos de la cota de bloque: cuerpo
+/// codificado + firma (64 bytes si la lleva).
+pub fn tx_size(tx: &Tx) -> usize {
+    encode_body(tx).len() + if sig_of(tx).is_some() { 64 } else { 0 }
+}
+
 const T_COINBASE: u8 = 0x00;
 const T_TRANSFER: u8 = 0x01;
 const T_STAKE: u8 = 0x02;

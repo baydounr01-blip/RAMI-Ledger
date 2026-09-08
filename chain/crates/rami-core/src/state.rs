@@ -145,6 +145,16 @@ pub fn apply_block(state: &mut State, block: &Block, expected_height: u64) -> Re
         ));
     }
 
+    // 0) Cotas del bloque (anti-DoS): número de tx y bytes. Se comprueban
+    //    ANTES de hashear o verificar firmas, que es lo caro.
+    if block.txs.len() > crate::tx::MAX_BLOCK_TXS {
+        return Err(format!("bloque con {} tx > máximo {}", block.txs.len(), crate::tx::MAX_BLOCK_TXS));
+    }
+    let bytes: usize = block.txs.iter().map(crate::tx::tx_size).sum();
+    if bytes > crate::tx::MAX_BLOCK_BYTES {
+        return Err(format!("bloque de {bytes} bytes > máximo {}", crate::tx::MAX_BLOCK_BYTES));
+    }
+
     // 1) Merkle raíz coincide con las transacciones.
     let ids: Vec<TxId> = block.txs.iter().map(txid).collect();
     if merkle_root_txids(&ids) != block.header.merkle_root {

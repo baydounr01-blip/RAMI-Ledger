@@ -18,6 +18,7 @@
 pub mod identity;
 pub mod protocol;
 pub mod secure;
+pub mod selftest;
 
 use std::collections::{HashMap, HashSet};
 use std::net::{Shutdown, TcpListener, TcpStream, ToSocketAddrs};

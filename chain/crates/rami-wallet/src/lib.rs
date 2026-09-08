@@ -290,11 +290,38 @@ impl Keystore {
             Store::Plain(m) => serde_json::to_string_pretty(m).map_err(|e| e.to_string())?,
             Store::Encrypted(f) => serde_json::to_string_pretty(f).map_err(|e| e.to_string())?,
         };
-        fs::write(&self.path, text).map_err(|e| e.to_string())?;
+        // Escritura ATÓMICA: archivo temporal junto al keystore (0600 desde el
+        // primer byte), fsync y rename encima. Un corte de luz a mitad de
+        // escritura nunca deja el keystore a medias (antes, un archivo truncado
+        // se habría considerado «ilegible» y el monedero quedaba bloqueado).
+        let tmp = self.path.with_extension("json.tmp");
+        {
+            let mut opts = fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            let mut f = opts.open(&tmp).map_err(|e| e.to_string())?;
+            use std::io::Write;
+            f.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+            f.sync_all().map_err(|e| e.to_string())?;
+        }
+        fs::rename(&tmp, &self.path).map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            e.to_string()
+        })?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let _ = fs::set_permissions(&self.path, fs::Permissions::from_mode(0o600));
+            // El rename queda en disco cuando se sincroniza el directorio.
+            if let Some(dir) = self.path.parent() {
+                if let Ok(d) = fs::File::open(dir) {
+                    let _ = d.sync_all();
+                }
+            }
         }
         Ok(())
     }

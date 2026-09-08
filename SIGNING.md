@@ -19,6 +19,28 @@ macOS)** de forma automática — y en ese momento las descargas pasan a ser apt
 para cualquier usuario. Si no hay certificados, las descargas se publican **sin
 firmar** y solo deben usarlas usuarios avanzados que verifiquen `SHA256SUMS.txt`.
 
+## Firma de release con Ed25519 (nuestra propia criptografía) — sin coste
+
+Independiente de Apple/Microsoft: el mantenedor firma la lista de hashes de
+cada release (`SHA256SUMS.txt` → `SHA256SUMS.sig`) con una clave Ed25519, la
+misma criptografía que firma las transacciones de la cadena. El monedero,
+cuando lleva compilada la clave pública, **rechaza cualquier actualización
+cuya lista de hashes no lleve esa firma**: ni un espejo comprometido ni un
+release falso pueden colarle un binario.
+
+1. Genera la clave (una sola vez, en tu ordenador):
+   `rami-wallet release-keygen` → imprime la **semilla** (secreta) y la
+   **clave pública**.
+2. Guarda la semilla como secreto del repositorio: `RAMI_RELEASE_SEED`.
+   `release.yml` firmará `SHA256SUMS.txt` automáticamente en cada release.
+3. Pon la clave pública en `chain/crates/rami-node/src/update.rs`
+   (`RELEASE_PUBKEY_HEX`) y aquí, y publica una versión: a partir de ella la
+   firma es obligatoria.
+4. Cualquiera puede verificar a mano:
+   `rami-wallet release-verify --file SHA256SUMS.txt --sig SHA256SUMS.sig --pubkey <hex>`.
+
+Clave pública actual: *(pendiente: aún no generada)*.
+
 ## macOS — firma Developer ID + notarización
 
 Necesitas una **cuenta de Apple Developer** (99 USD/año). Con ella:

@@ -53,6 +53,38 @@ pub fn verify(pubkey: &[u8; 32], message: &[u8], sig: &[u8; 64]) -> bool {
     vk.verify(message, &signature).is_ok()
 }
 
+/// Etiqueta de dominio de la FIRMA DE RELEASE: el mantenedor firma con Ed25519
+/// (la misma criptografía de la cadena) el `SHA256SUMS.txt` de cada release y
+/// el monedero solo instala una actualización cuya lista de hashes lleve esa
+/// firma. Una firma de release nunca puede confundirse con una transacción
+/// (DS_TAG de tx) ni con un saludo P2P (transcripción "RAMI-P2P-v2").
+pub const RELEASE_SIG_DS: &[u8] = b"RAMI-CHAIN/release/v1";
+
+/// Mensaje que se firma para un archivo de release: `RELEASE_SIG_DS || bytes`.
+pub fn release_message(file_bytes: &[u8]) -> Vec<u8> {
+    let mut m = RELEASE_SIG_DS.to_vec();
+    m.extend_from_slice(file_bytes);
+    m
+}
+
+/// Verifica la firma de release (hex de 64 bytes) de `file_bytes` con la
+/// clave pública del mantenedor (hex de 32 bytes).
+pub fn verify_release_signature(pubkey_hex: &str, file_bytes: &[u8], sig_hex: &str) -> Result<(), String> {
+    let pk: [u8; 32] = hex::decode(pubkey_hex.trim())
+        .map_err(|_| "clave pública de release no es hex".to_string())?
+        .try_into()
+        .map_err(|_| "clave pública de release: longitud incorrecta".to_string())?;
+    let sig: [u8; 64] = hex::decode(sig_hex.trim())
+        .map_err(|_| "firma de release no es hex".to_string())?
+        .try_into()
+        .map_err(|_| "firma de release: longitud incorrecta".to_string())?;
+    if verify(&pk, &release_message(file_bytes), &sig) {
+        Ok(())
+    } else {
+        Err("la firma de release NO es válida".into())
+    }
+}
+
 /// Dirección legible a partir de la pubkey.
 pub fn address_from_pubkey(pubkey: &[u8; 32]) -> String {
     let h = sha256(pubkey);

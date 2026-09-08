@@ -339,6 +339,9 @@
   <span>⚠️ Tu monedero no está cifrado.</span>
   <button class="btn small" id="encryptBtn">Ponerle contraseña</button>
 </div>
+<div class="plainwarn" id="authBanner">
+  <span>🔑 Esta pestaña no tiene la llave de sesión del panel. Ábrelo desde la app RAMI-Chain (icono o menú) para poder dar órdenes al monedero.</span>
+</div>
 
 <!-- ================= SHELL ================= -->
 <div class="shell">
@@ -791,6 +794,17 @@
         </p>
         <p class="note">Todos los pares se autentican con su identidad y hablan cifrado. Un nodo con la versión antigua (v0.6.x) no puede conectarse hasta que actualice.</p>
       </div>
+
+      <div class="card" style="margin-top:14px;max-width:720px">
+        <div class="lbl" style="margin-bottom:6px">🛡️ Autoauditoría de seguridad</div>
+        <p class="note" style="margin:0 0 10px">Un test de seguridad hecho con nuestra propia tecnología: el monedero se conecta a su propio nodo comportándose como un par malicioso (saludo antiguo, identidad sin prueba de trabajo, firma manipulada, trama sin autenticar, trama gigante, avalancha de puntas falsas) y comprueba que el túnel RAMI rechaza cada intento. Además revisa los permisos de tus claves, el token del panel y el hash del ejecutable frente al publicado en el release. Tarda unos segundos.</p>
+        <button class="btn" id="auditBtn">Ejecutar autoauditoría</button>
+        <div class="status" id="auditStatus"></div>
+        <div id="auditList" style="margin-top:10px"></div>
+        <p class="note" style="margin:10px 0 0">Para auditar un nodo desde fuera (usuarios avanzados), en la terminal:</p>
+        <p class="mono" style="margin:4px 0 0;font-size:12px">rami-node audit --peer IP:30301 --network testnet</p>
+        <p class="note" style="margin:6px 0 0">El código y el informe de auditoría están en el repositorio (SECURITY.md).</p>
+      </div>
     </section>
 
   </main>
@@ -891,16 +905,39 @@
   var lastUpdate = null;
 
   // ---------- helpers red ----------
+  // Token de sesión: la app abre el panel con ?t=…; se guarda en esta pestaña
+  // (sessionStorage) y se quita de la URL. Cada orden lo manda en X-Rami-Token.
+  var TOKEN = "";
+  try{
+    var qtok = new URLSearchParams(location.search).get("t");
+    if(qtok){
+      TOKEN = qtok;
+      try{ sessionStorage.setItem("rami.token", qtok); }catch(e){}
+      history.replaceState(null, "", location.pathname);
+    } else {
+      TOKEN = sessionStorage.getItem("rami.token") || "";
+    }
+  }catch(e){}
+  function hdrs(extra){
+    var h = {"Accept":"application/json"};
+    if(TOKEN) h["X-Rami-Token"] = TOKEN;
+    if(extra) for(var k in extra) h[k] = extra[k];
+    return h;
+  }
+  function checkAuth(j){
+    if(j && j.ok === false && /sesión no autorizada/.test(j.error || "")) document.getElementById("authBanner").classList.add("show");
+    return j;
+  }
   function jget(url){
-    return fetch(url, {headers:{"Accept":"application/json"}})
-      .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); });
+    return fetch(url, {headers:hdrs()})
+      .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }).then(checkAuth);
   }
   function jpost(url, body){
     return fetch(url, {
       method:"POST",
-      headers:{"Content-Type":"application/json","Accept":"application/json"},
+      headers:hdrs({"Content-Type":"application/json"}),
       body:JSON.stringify(body)
-    }).then(function(r){ return r.json(); });
+    }).then(function(r){ return r.json(); }).then(checkAuth);
   }
 
   // ---------- formato ----------
@@ -1407,6 +1444,30 @@
       .then(function(){ btn.disabled = false; });
   });
 
+  // Autoauditoría
+  document.getElementById("auditBtn").addEventListener("click", function(){
+    var btn = this, st = document.getElementById("auditStatus"), list = document.getElementById("auditList");
+    btn.disabled = true;
+    showStatus(st, true, t("Auditando… (unos segundos)"));
+    list.innerHTML = "";
+    jpost("/api/audit", {})
+      .then(function(r){
+        if(!r.ok){ showStatus(st, false, t("Error: ")+esc(r.error||t("desconocido"))); return; }
+        var checks = r.checks || [];
+        list.innerHTML = checks.map(function(c){
+          return '<div style="display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.06)">'+
+                 '<span style="color:'+(c.ok ? 'var(--green)' : '#ff6b6b')+';font-weight:700">'+(c.ok ? '✓' : '✗')+'</span>'+
+                 '<div><div>'+esc(c.name)+'</div><div class="note" style="margin:0">'+esc(c.detail)+' · '+esc(c.ms)+' ms</div></div></div>';
+        }).join("");
+        var failed = r.failed || 0;
+        showStatus(st, failed === 0, failed === 0
+          ? ("✓ "+t("Todas las comprobaciones superadas")+" ("+checks.length+")")
+          : (failed+" "+t("comprobación(es) fallida(s)")+" "+t("de")+" "+checks.length));
+      })
+      .catch(function(e){ showStatus(st, false, t("Error: ")+esc(e.message||e)); })
+      .then(function(){ btn.disabled = false; });
+  });
+
   // Añadir par
   document.getElementById("peerBtn").addEventListener("click", function(){
     var addr = document.getElementById("peerAddr").value.trim();
@@ -1628,7 +1689,7 @@
   function ramFmt(n){ n = Number(n)||0; return (n/1e8).toLocaleString("es-ES",{maximumFractionDigits:8}); }
   function shortAddr(h){ return h ? h.slice(0,8)+"…"+h.slice(-6) : "—"; }
   function loadCity(){
-    fetch("/api/city", {headers:{"Accept":"application/json"}}).then(function(r){ return r.text(); }).then(function(txtBody){
+    fetch("/api/city", {headers:hdrs()}).then(function(r){ return r.text(); }).then(function(txtBody){
       if(txtBody === city.lastTxt) return;           // nada cambió: no se repinta nada
       city.lastTxt = txtBody;
       var d = null; try{ d = JSON.parse(txtBody); }catch(e){}
@@ -1905,7 +1966,7 @@
     var started = Date.now(), tries = 0;
     var timer = setInterval(function(){
       tries++;
-      fetch("/api/status", {cache:"no-store"}).then(function(r){ return r.json(); })
+      fetch("/api/status", {cache:"no-store", headers:hdrs()}).then(function(r){ return r.json(); })
         .then(function(d){
           if(d && ((d.version && d.version !== bootVersion) || (d.pid && bootPid && d.pid !== bootPid))){ clearInterval(timer); location.reload(); }
         })

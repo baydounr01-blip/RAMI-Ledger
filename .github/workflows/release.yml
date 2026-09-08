@@ -163,8 +163,27 @@ jobs:
           set -euo pipefail
           mkdir -p out
           find artifacts -type f \( -name '*.AppImage' -o -name '*.dmg' -o -name '*-setup.exe' -o -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} out/ \;
+          # Hashes de los ejecutables rami-gui que van dentro de cada paquete
+          # (la autoauditoría del monedero compara el suyo con esta lista).
+          find artifacts -type f -name 'BINARIES-SHA256-*.txt' -exec cat {} + | sort > out/BINARIES-SHA256.txt
           ( cd out && sha256sum * > SHA256SUMS.txt )
           echo "== SHA256SUMS.txt ==" && cat out/SHA256SUMS.txt
+          echo "== BINARIES-SHA256.txt ==" && cat out/BINARIES-SHA256.txt
+
+      # Firma de release con Ed25519 (la criptografía de la propia cadena):
+      # solo si el mantenedor guardó su semilla como secreto (ver SIGNING.md,
+      # «firma de release»). El monedero exige esta firma en cuanto lleva
+      # compilada la clave pública (update.rs, RELEASE_PUBKEY_HEX).
+      - name: Firmar SHA256SUMS.txt (Ed25519, si hay RAMI_RELEASE_SEED)
+        if: ${{ secrets.RAMI_RELEASE_SEED != '' }}
+        env:
+          RAMI_RELEASE_SEED: ${{ secrets.RAMI_RELEASE_SEED }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --manifest-path chain/Cargo.toml -p rami-wallet
+          chain/target/release/rami-wallet release-sign --file out/SHA256SUMS.txt --out out/SHA256SUMS.sig
+          echo "== SHA256SUMS.sig ==" && cat out/SHA256SUMS.sig
 
       - name: Publicar Release
         env:

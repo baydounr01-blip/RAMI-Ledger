@@ -13,6 +13,8 @@ pub mod http;
 pub mod update;
 pub mod geo;
 pub mod portmap;
+/// Autoauditoría del Túnel RAMI (re-exportada para el monedero de escritorio).
+pub use rami_net::selftest;
 pub mod seeds;
 
 use std::collections::{HashMap, HashSet};
@@ -74,6 +76,11 @@ const TIPS_HEARTBEAT: Duration = Duration::from_secs(30);
 const PEER_TIPS_CAP: usize = 256;
 /// Bloques inválidos (no huérfanos) recordados para no revalidarlos.
 const BAD_BLOCKS_CAP: usize = 4096;
+/// Topes del mempool: transacciones pendientes en total y por firmante, y
+/// tamaño de la memoria de txids ya vistos.
+const MEMPOOL_MAX: usize = 5_000;
+const MEMPOOL_MAX_PER_SIGNER: usize = 64;
+const SEEN_TX_CAP: usize = 100_000;
 /// Hashes por vuelta del minero antes de refrescar métricas/epoch.
 const MINE_CHUNK: u64 = 120_000;
 
@@ -1460,6 +1467,21 @@ impl Node {
         let id = txid(&tx);
         if self.seen_tx.contains(&id) {
             return Ok(hex::encode(id));
+        }
+        // Topes del mempool (anti-DoS): nadie puede llenarnos la memoria a
+        // base de tx válidas pero infinitas, ni acaparar el mempool un solo
+        // firmante.
+        if self.mempool.len() >= MEMPOOL_MAX {
+            return Err("mempool lleno: inténtalo cuando se mine el siguiente bloque".into());
+        }
+        if let Some(who) = rami_core::tx::signer_of(&tx) {
+            let mine = self.mempool.iter().filter(|t| rami_core::tx::signer_of(t) == Some(who)).count();
+            if mine >= MEMPOOL_MAX_PER_SIGNER {
+                return Err(format!("demasiadas tx pendientes de este firmante (máx. {MEMPOOL_MAX_PER_SIGNER})"));
+            }
+        }
+        if self.seen_tx.len() >= SEEN_TX_CAP {
+            self.seen_tx.clear();
         }
         // Valida sobre el estado de la punta CON el mempool ya aplicado en orden,
         // para admitir nonces consecutivos del mismo firmante (p. ej. enviar y

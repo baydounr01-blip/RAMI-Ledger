@@ -1,0 +1,38 @@
+# hosts y URLs (literales del código Rust, sin comentarios ni tests)
+host: https://api.github.com/repos/baydounr01-blip/RAMI-Ledger/releases/latest
+host: https://github.com/baydounr01-blip/RAMI-Ledger/releases/download
+host: https://github.com/baydounr01-blip/RAMI-Ledger/releases/latest
+host: https://nominatim.openstreetmap.org/search
+host: https://quantbot.army
+host: seed.quantbot.army:30301
+# programas externos (Command::new)
+exec: (dinámico) &c
+exec: /bin/sh
+exec: cmd
+exec: codesign
+exec: defaults
+exec: ditto
+exec: hdiutil
+exec: kill
+exec: open
+exec: osascript
+exec: powershell.exe
+exec: ps
+exec: route
+exec: taskkill
+exec: tasklist
+exec: xattr
+# variables de entorno leídas
+env: APPIMAGE
+env: BROWSER
+env: HOME
+env: RAMI_RELEASE_SEED
+env: RAMI_UPDATE_LATEST_URL
+env: RAMI_UPDATE_RELEASE_URL
+env: RAMI_WALLET_PASSWORD
+env: RAMI_WEB_URL
+env: USERPROFILE
+# sockets de escucha
+listen: 0.0.0.0
+listen: 127.0.0.1
+listen: Ipv4Addr::UNSPECIFIED

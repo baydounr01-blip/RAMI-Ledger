@@ -254,6 +254,69 @@ fn cmd_reveal(args: &[String]) -> ExitCode {
     submit(&chain, &build_reveal(&kp, commit_txid, &payload, secret, fee_of(args), nonce))
 }
 
+// ---- firma de release (Ed25519, la misma criptografía de la cadena) ----
+//
+//   rami-wallet release-keygen                 → semilla (secreta) + clave pública
+//   rami-wallet release-sign   --file SHA256SUMS.txt [--seed HEX | RAMI_RELEASE_SEED]
+//   rami-wallet release-verify --file SHA256SUMS.txt --sig SHA256SUMS.sig --pubkey HEX
+//
+// El mantenedor guarda la semilla como secreto de CI (RAMI_RELEASE_SEED); la
+// clave pública se compila en el monedero (update.rs, RELEASE_PUBKEY_HEX).
+
+fn cmd_release_keygen() -> ExitCode {
+    let kp = KeyPair::generate();
+    println!("semilla (SECRETA, guárdala como secreto de CI RAMI_RELEASE_SEED):");
+    println!("  {}", hex::encode(kp.secret_bytes()));
+    println!("clave pública (ponla en RELEASE_PUBKEY_HEX de update.rs y en SIGNING.md):");
+    println!("  {}", hex::encode(kp.public_bytes()));
+    ExitCode::SUCCESS
+}
+
+fn cmd_release_sign(args: &[String]) -> ExitCode {
+    let Some(file) = arg(args, "--file") else { return die("falta --file") };
+    let seed_hex = match arg(args, "--seed").or_else(|| std::env::var("RAMI_RELEASE_SEED").ok()) {
+        Some(s) => s,
+        None => return die("falta --seed (o la variable RAMI_RELEASE_SEED)"),
+    };
+    let seed: [u8; 32] = match hex::decode(seed_hex.trim()).ok().and_then(|v| v.try_into().ok()) {
+        Some(s) => s,
+        None => return die("la semilla debe ser 32 bytes en hex"),
+    };
+    let bytes = match std::fs::read(&file) {
+        Ok(b) => b,
+        Err(e) => return die(&format!("no se pudo leer {file}: {e}")),
+    };
+    let kp = KeyPair::from_secret(&seed);
+    let sig = kp.sign(&rami_core::crypto::release_message(&bytes));
+    let out = arg(args, "--out").unwrap_or_else(|| format!("{file}.sig").replace(".txt.sig", ".sig"));
+    if let Err(e) = std::fs::write(&out, format!("{}\n", hex::encode(sig))) {
+        return die(&format!("no se pudo escribir {out}: {e}"));
+    }
+    println!("✓ firma escrita en {out} (clave pública {})", hex::encode(kp.public_bytes()));
+    ExitCode::SUCCESS
+}
+
+fn cmd_release_verify(args: &[String]) -> ExitCode {
+    let (Some(file), Some(sig), Some(pk)) = (arg(args, "--file"), arg(args, "--sig"), arg(args, "--pubkey")) else {
+        return die("uso: release-verify --file F --sig F.sig --pubkey HEX");
+    };
+    let bytes = match std::fs::read(&file) {
+        Ok(b) => b,
+        Err(e) => return die(&format!("no se pudo leer {file}: {e}")),
+    };
+    let sig_hex = match std::fs::read_to_string(&sig) {
+        Ok(s) => s,
+        Err(e) => return die(&format!("no se pudo leer {sig}: {e}")),
+    };
+    match rami_core::crypto::verify_release_signature(&pk, &bytes, &sig_hex) {
+        Ok(()) => {
+            println!("✓ firma de release VÁLIDA para {file}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => die(&e),
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let Some(cmd) = args.get(1) else {
@@ -264,6 +327,9 @@ fn main() -> ExitCode {
     match cmd.as_str() {
         "new" => cmd_new(&args[2..]),
         "passwd" => cmd_passwd(&args[2..]),
+        "release-keygen" => cmd_release_keygen(),
+        "release-sign" => cmd_release_sign(&args[2..]),
+        "release-verify" => cmd_release_verify(&args[2..]),
         "address" => cmd_address(&args[2..]),
         "balance" => cmd_balance(&args[2..]),
         "send" => cmd_send(&args[2..]),
