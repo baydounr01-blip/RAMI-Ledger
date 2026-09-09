@@ -22,7 +22,10 @@
 - El texto del instalador de Windows decía `Ejìútalo`; ahora `Ejecútalo`
   (`update.rs`, rama `#[cfg(target_os = "windows")]`).
 - `i18n.js` no llegó a subirse con la v0.7.1: las cadenas nuevas del panel
-  (autoauditoría, etc.) se veían en español en en/ru/sw/zh. Va en este PR.
+  (autoauditoría, etc.) se veían en español en en/ru/sw/zh. Va en este PR, y
+  con él sus **fuentes** (`chain/crates/rami-gui/i18n-src/`), que tampoco
+  estaban en el repo: `gen_i18n.py` reproduce el `i18n.js` de esta rama byte a
+  byte, y el CI lo comprueba en cada push.
 - `README.md` y `web/index.html` / `web/en/index.html` tampoco llevaban la
   entrada de la v0.7.1. Van aquí, con la de la v0.7.2.
 - Dos comentarios de sección intercambiados en `dashboard.html`

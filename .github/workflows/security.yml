@@ -53,6 +53,13 @@ jobs:
         # Un error de sintaxis o un getElementById a un id que ya no existe
         # dejan el monedero mudo en el navegador sin romper la compilación.
         run: python3 tools/panel/check.py
+      - name: i18n.js coincide con sus fuentes
+        # i18n.js se genera desde i18n-src/. Si alguien edita el generado a
+        # mano, la siguiente regeneración se lo lleva por delante.
+        run: |
+          python3 chain/crates/rami-gui/i18n-src/gen_i18n.py
+          git diff --exit-code -- chain/crates/rami-gui/src/i18n.js \
+            || { echo "::error::i18n.js no coincide con i18n-src/; regenéralo"; exit 1; }
 
   audit:
     name: cargo audit (RustSec)
