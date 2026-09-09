@@ -531,6 +531,42 @@ bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
   sincronización completa por ramas coherente con la teoría y reutilizar la
   PoW de la cadena como coste de identidad. **Sin cambio de consenso.**
   Detalle de bytes en [`chain/crates/rami-net/PROTOCOL.md`](chain/crates/rami-net/PROTOCOL.md).
+- **v0.7.1: auditoría de seguridad y autoauditoría con nuestra tecnología.**
+  Revisión completa del código tras un aviso externo (informe:
+  [`docs/AUDITORIA-2026-09.md`](docs/AUDITORIA-2026-09.md); modelo de amenazas:
+  [`SECURITY.md`](SECURITY.md)). Sin puertas traseras: **inventario de red y
+  procesos** (`tools/security/inventory.py` → `SECURITY-INVENTORY.txt`)
+  comprobado en cada push por `security.yml`, junto a `cargo audit` y el
+  escaneo de secretos. Corregido: `Host` exacto + `Origin`/`Referer` + **token
+  de sesión** (`~/.rami/panel-<puerto>.token`, 0600) en el panel (antes
+  `localhost.evil.com` pasaba la guardia por DNS rebinding); servidor HTTP con
+  líneas/cabeceras/cuerpo acotados y timeouts; `/api/status` sin token solo
+  devuelve versión/pid; `SHA256SUMS.txt` **solo desde GitHub** (el espejo web
+  no puede decidir el hash «bueno») y nombres de instalador saneados; **firma
+  Ed25519 de release** (`rami-wallet release-keygen|release-sign|release-verify`,
+  `SHA256SUMS.sig`, exigida cuando `RELEASE_PUBKEY_HEX` está configurada);
+  keystore con escritura atómica; **topes de consenso** (≤ 4096 tx y ≤ 2 MiB
+  por bloque) y de mempool (5000 / 64 por firmante); cierre forzado de una
+  instancia antigua solo si es `rami-gui`. **Autoauditoría**
+  (`rami_net::selftest`, panel Red → 🛡️, `rami-node audit --peer`): un par
+  malicioso simulado contra el propio nodo (saludo en claro, versión antigua,
+  otra red, PoW inválida, firma manipulada, trama sin autenticar, trama
+  gigante, 256 puntas falsas) y comprobaciones locales (permisos 0600, panel
+  solo local, hash del ejecutable frente a `BINARIES-SHA256.txt` del release).
+  Pendiente y documentado: firma de tx ligada a la red (v0.8) y certificados
+  de plataforma.
+- **v0.7.2 (esto): arreglo urgente del acceso al panel.** La v0.7.1 generaba
+  una llave de sesión nueva en cada arranque, así que quien tuviera el panel
+  abierto en el navegador al actualizar se quedaba fuera («sesión no
+  autorizada») y veía el cuadro de *crear contraseña* encima de un monedero
+  intacto. Ahora la llave se reutiliza desde `~/.rami/panel-<puerto>.token`
+  (0600) mientras siga siendo válida —rotarla en cada arranque solo tiene
+  sentido si el cliente puede leer archivos, y aquí el cliente es un
+  navegador—, el panel la guarda en `localStorage` por puerto (marcadores y
+  pestañas reabiertas siguen valiendo), una respuesta sin `wallet` ya no se
+  confunde con «no hay monedero», y hay una pantalla de recuperación que
+  explica que no se ha perdido nada y deja pegar la llave del archivo. Con
+  tests de regresión para que no vuelva.
 - **v0.7.x (siguiente):** instantáneas de cadena re-verificables para el explorador
   web, seeds comunitarios, endurecimiento P2P (puntuación de pares, límites por
   IP) y IPC dedicado faucet↔nodo.

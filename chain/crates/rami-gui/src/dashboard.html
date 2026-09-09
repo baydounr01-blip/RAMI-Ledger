@@ -832,6 +832,21 @@
       <button class="btn" id="ovUnlockBtn">Desbloquear</button>
       <div class="err-line" id="ovUnlockErr"></div>
     </div>
+    <div id="ovNoToken" style="display:none">
+      <h3>🔑 Esta pestaña no tiene la llave de la sesión</h3>
+      <p class="sub">Tu dinero, tus claves y tu cadena están intactos: el monedero sigue
+      funcionando. Lo único que le falta a esta pestaña es la llave que autoriza las órdenes,
+      y por eso no puede mostrarte el saldo ni operar.</p>
+      <p class="sub">La forma fácil de arreglarlo: cierra esta pestaña y abre RAMI-Chain desde
+      su icono. La app abre siempre el panel con la llave puesta.</p>
+      <p class="sub">Si prefieres arreglar esta misma pestaña, pega aquí el contenido de este
+      archivo (solo tu usuario puede leerlo):</p>
+      <div class="addr-block" style="font-size:12.5px;padding:10px" id="ovTokenPath">~/.rami/panel-8645.token</div>
+      <label class="field" style="margin-top:12px"><span class="cap">Llave de sesión (64 caracteres)</span>
+        <input type="text" id="ovTokenInput" autocomplete="off" spellcheck="false"></label>
+      <button class="btn" id="ovTokenBtn">Entrar</button>
+      <div class="err-line" id="ovTokenErr"></div>
+    </div>
     <div id="ovCorrupt" style="display:none">
       <h3>⚠ El archivo del monedero no se pudo leer</h3>
       <p class="sub">Existe un keystore en esta máquina pero está dañado o es ilegible.
@@ -905,17 +920,26 @@
   var lastUpdate = null;
 
   // ---------- helpers red ----------
-  // Token de sesión: la app abre el panel con ?t=…; se guarda en esta pestaña
-  // (sessionStorage) y se quita de la URL. Cada orden lo manda en X-Rami-Token.
+  // Token de sesión: la app abre el panel con ?t=…; se guarda en este navegador
+  // y se quita de la URL. Cada orden lo manda en X-Rami-Token.
+  // Se guarda en localStorage (por puerto) y no en sessionStorage: con
+  // sessionStorage la llave moría al cerrar el navegador, así que un marcador o
+  // una pestaña reabierta daban un panel sin permisos. El token del monedero es
+  // estable entre arranques, así que guardarlo aquí es lo que hace que volver a
+  // abrir el panel funcione sin más.
+  var TOKKEY = "rami.token." + (location.port || "8645");
   var TOKEN = "";
   try{
     var qtok = new URLSearchParams(location.search).get("t");
     if(qtok){
       TOKEN = qtok;
-      try{ sessionStorage.setItem("rami.token", qtok); }catch(e){}
+      try{ localStorage.setItem(TOKKEY, qtok); }catch(e){}
       history.replaceState(null, "", location.pathname);
     } else {
-      TOKEN = sessionStorage.getItem("rami.token") || "";
+      try{ TOKEN = localStorage.getItem(TOKKEY) || ""; }catch(e){}
+      // Pestañas que vienen de la v0.7.1, que lo guardaba en sessionStorage.
+      if(!TOKEN){ try{ TOKEN = sessionStorage.getItem("rami.token") || ""; }catch(e){} }
+      if(TOKEN){ try{ localStorage.setItem(TOKKEY, TOKEN); }catch(e){} }
     }
   }catch(e){}
   function hdrs(extra){
@@ -924,8 +948,18 @@
     if(extra) for(var k in extra) h[k] = extra[k];
     return h;
   }
+  // Sesión sin llave: nunca se deja al usuario delante de un panel mudo. Se
+  // explica qué pasa y se ofrece la salida (reabrir desde la app, o pegar la
+  // llave del archivo, que solo su usuario puede leer).
+  var authLost = false;
+  function tokenLost(){
+    if(authLost) return;
+    authLost = true;
+    document.getElementById("authBanner").classList.add("show");
+    showOverlay("notoken");
+  }
   function checkAuth(j){
-    if(j && j.ok === false && /sesión no autorizada/.test(j.error || "")) document.getElementById("authBanner").classList.add("show");
+    if(j && j.ok === false && /sesión no autorizada/.test(j.error || "")) tokenLost();
     return j;
   }
   function jget(url){
@@ -1072,6 +1106,13 @@
       if(!bootPid) bootPid = s.pid;
       else if(s.pid !== bootPid){ location.reload(); return; }
     }
+    // Sin llave, /api/status solo trae versión, pid y network-id. Sin esta
+    // comprobación el panel leía «no hay monedero» y abría el cuadro de CREAR
+    // CONTRASEÑA encima de un monedero que existe y está intacto: alarmante y,
+    // si alguien lo intentaba, confuso (el nodo lo rechazaba de todas formas).
+    // (Una respuesta autorizada SIEMPRE trae "wallet", también mientras el nodo
+    // carga la cadena o si falló, así que esto vale desde el primer sondeo.)
+    if(!s.wallet){ tokenLost(); return; }
     if(s.install) renderInstall(s.install);
     // El nodo aún está cargando la cadena (el panel abre al instante).
     if(s.starting){
@@ -1162,6 +1203,7 @@
     document.getElementById("ovSetup").style.display   = (mode==="setup")   ? "block" : "none";
     document.getElementById("ovUnlock").style.display  = (mode==="unlock")  ? "block" : "none";
     document.getElementById("ovCorrupt").style.display = (mode==="corrupt") ? "block" : "none";
+    document.getElementById("ovNoToken").style.display = (mode==="notoken") ? "block" : "none";
   }
   function hideOverlay(){ document.getElementById("overlay").classList.remove("show"); }
 
@@ -1541,6 +1583,28 @@
   });
   document.getElementById("ovPw2").addEventListener("keydown", function(e){
     if(e.key==="Enter") document.getElementById("ovSetupBtn").click();
+  });
+
+  // Recuperar la sesión pegando la llave del archivo ~/.rami/panel-<puerto>.token
+  (function(){
+    var isWin = /Windows/i.test(navigator.userAgent || "");
+    var port = location.port || "8645";
+    document.getElementById("ovTokenPath").textContent =
+      (isWin ? "%USERPROFILE%\\.rami\\panel-" : "~/.rami/panel-") + port + ".token";
+  })();
+  document.getElementById("ovTokenBtn").addEventListener("click", function(){
+    var v = document.getElementById("ovTokenInput").value.trim();
+    var er = document.getElementById("ovTokenErr");
+    if(!/^[0-9a-fA-F]{64}$/.test(v)){
+      er.textContent = t("La llave son 64 caracteres hexadecimales; copia el archivo entero.");
+      return;
+    }
+    try{ localStorage.setItem(TOKKEY, v); }catch(e){}
+    // Se entra por la misma puerta que usa la app, para no duplicar caminos.
+    location.replace(location.pathname + "?t=" + encodeURIComponent(v));
+  });
+  document.getElementById("ovTokenInput").addEventListener("keydown", function(e){
+    if(e.key==="Enter") document.getElementById("ovTokenBtn").click();
   });
 
   // Bloquear
@@ -1995,6 +2059,9 @@
   });
 
   // ---------- arranque ----------
+  // Si ya se sabe que no hay llave, se dice de entrada en vez de esperar a que
+  // falle la primera orden y dejar el panel a medio pintar.
+  if(!TOKEN) tokenLost();
   pollStatus();
   pollBlocks();
   setInterval(pollStatus, 2000);

@@ -4,7 +4,9 @@
 #      debe estar en SECURITY-INVENTORY.txt (una «puerta trasera» nueva haría
 #      fallar el build);
 #   3) guardián de salidas (_exit) y suite de tests (incluye la autoauditoría
-#      del Túnel RAMI contra un nodo real).
+#      del Túnel RAMI contra un nodo real);
+#   4) panel: sintaxis del JavaScript e ids referenciados (un panel roto no
+#      rompe la compilación, pero deja el monedero mudo en el navegador).
 # RAMI-Chain es una testnet EXPERIMENTAL sin valor monetario.
 name: security
 
@@ -37,6 +39,20 @@ jobs:
           if grep -rnE 'BEGIN (RSA|EC|OPENSSH|PRIVATE)|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}' --exclude-dir=.git --exclude-dir=target . ; then
             echo "::error::parece haber una clave o token en el repositorio"; exit 1
           fi
+
+  panel:
+    name: panel del monedero (JS e ids)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Sintaxis del JavaScript e ids del panel
+        # El panel es HTML con JavaScript dentro: ningún test de Rust lo mira.
+        # Un error de sintaxis o un getElementById a un id que ya no existe
+        # dejan el monedero mudo en el navegador sin romper la compilación.
+        run: python3 tools/panel/check.py
 
   audit:
     name: cargo audit (RustSec)

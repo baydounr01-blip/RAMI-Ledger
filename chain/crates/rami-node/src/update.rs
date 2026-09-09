@@ -975,7 +975,7 @@ fn apply_windows(bytes: &[u8], asset_name: &str, relaunch: bool) -> Result<Apply
             ok: true,
             stage: "downloaded".into(),
             needs_restart: true,
-            message: format!("Instalador verificado guardado en {}. Ejìútalo para actualizar.", setup.display()),
+            message: format!("Instalador verificado guardado en {}. Ejecútalo para actualizar.", setup.display()),
             ..Default::default()
         });
     }
