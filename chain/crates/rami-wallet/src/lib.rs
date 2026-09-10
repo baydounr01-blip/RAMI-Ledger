@@ -9,6 +9,8 @@
 //! Los almacenes v1 (texto plano) se siguen leyendo y pueden migrarse con
 //! `set_password`. TESTNET sin valor monetario: aún así, protege tus claves.
 
+pub mod calibracion;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};

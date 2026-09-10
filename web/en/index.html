@@ -75,18 +75,49 @@
     background:#0a1520;border-radius:999px;padding:4px 10px;letter-spacing:1px}
   @media(max-width:820px){.facts{grid-template-columns:repeat(2,1fr)}.grid3{grid-template-columns:1fr}
     .two{grid-template-columns:1fr}.disc{grid-template-columns:1fr}.navlinks{display:none}}
+
+  /* ── El mapa orbital: la navegación (un centro, dos anillos, aristas) ── */
+  .hero{display:grid;grid-template-columns:minmax(0,46fr) minmax(0,54fr);gap:30px;align-items:center}
+  .hero h1{font-size:clamp(34px,3.6vw,50px);letter-spacing:-1.5px}
+  .hero .lead{font-size:16px}
+  .hero .facts{grid-template-columns:repeat(2,1fr);margin-top:26px}
+  .hero-map{position:relative}
+  .orbit{position:relative;container-type:inline-size;width:min(100%,560px);aspect-ratio:1;margin:0 auto}
+  .orbit-edges{position:absolute;inset:0;width:100%;height:100%;overflow:visible;z-index:1}
+  .orbit-ring{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border:1px solid #232743;border-radius:50%;pointer-events:none}
+  .orbit-ring-1{width:48cqw;height:48cqw}.orbit-ring-2{width:80cqw;height:80cqw;border-style:dashed}
+  .orbit-node{position:absolute;left:50%;top:50%;z-index:2;transform:translate(-50%,-50%) rotate(var(--a)) translate(calc(var(--r) * 1cqw)) rotate(calc(var(--a) * -1));width:15cqw;min-width:66px;padding:7px 5px;border:1px solid #2c3150;border-radius:10px;background:var(--panel);color:var(--ink);cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;font:600 11px/1.2 Inter,system-ui,sans-serif;text-align:center;transition:border-color .2s,box-shadow .2s}
+  .orbit-node small{font:400 8px var(--mono);color:var(--mut);line-height:1.3}
+  .orbit-node:hover,.orbit-node.linked{border-color:var(--acc2);background:#0f1a1f}
+  .orbit-node:focus-visible{outline:2px solid var(--acc2);outline-offset:2px}
+  .orbit-node[aria-current=true]{border-color:var(--acc);box-shadow:0 0 22px rgba(124,92,255,.25)}
+  .orbit-center{width:20cqw;min-width:84px;aspect-ratio:1;border-radius:50%;justify-content:center;background:radial-gradient(circle at 40% 35%,#1d1740,#0b0c16);border-color:#4a3fa0;box-shadow:0 0 44px rgba(124,92,255,.18)}
+  .orbit-center b{background:linear-gradient(90deg,var(--acc),var(--acc2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .edge{stroke:#2a2f4a;stroke-width:1.2;fill:none;marker-end:url(#orbit-arrow);transition:opacity .25s,stroke .25s}
+  .edge.dim{opacity:.18}
+  .edge.lit{stroke:var(--acc2);stroke-width:1.6;stroke-dasharray:5 5;marker-end:url(#orbit-arrow-lit);animation:orbit-flow 1.2s linear infinite}
+  @keyframes orbit-flow{to{stroke-dashoffset:-20}}
+  .orbit-arrow{fill:#3a4062}.orbit-arrow-lit{fill:var(--acc2)}
+  .orbit-caption{margin:12px auto 0;max-width:560px;min-height:36px;text-align:center;font:400 12px/1.6 var(--mono);color:var(--mut)}
+  .orbit-caption b{color:var(--ink)}
+  .orbit-list{max-width:560px;margin:6px auto 0}
+  .orbit-list summary{cursor:pointer;font:500 11px var(--mono);color:var(--mut);text-align:center}
+  .orbit-list ol{margin:12px 0 0;padding-left:18px;color:var(--mut);font-size:13px;line-height:1.6}
+  .orbit-list b{color:var(--ink)}
+  .panel-tabs{display:flex;flex-wrap:wrap;gap:6px;padding:12px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;background:rgba(7,8,12,.92);backdrop-filter:blur(6px)}
+  .panel-tabs button{border:1px solid #2c3150;background:var(--panel);color:var(--mut);padding:8px 13px;border-radius:999px;font:600 12px Inter,system-ui,sans-serif;cursor:pointer}
+  .panel-tabs button:hover{color:var(--ink);border-color:#3a4062}
+  .panel-tabs button[aria-current=true]{border-color:var(--acc2);color:var(--acc2);background:#0a1520}
+  section.panel[hidden]{display:none!important}
+  section.panel{scroll-margin-top:60px}
+  @media(prefers-reduced-motion:reduce){.edge.lit{animation:none}html{scroll-behavior:auto}}
+  @media(max-width:820px){.hero{grid-template-columns:1fr}}
+  @media(max-width:640px){.orbit{aspect-ratio:auto;width:100%;display:flex;flex-wrap:wrap;gap:8px;justify-content:center}.orbit-edges,.orbit-ring{display:none}.orbit-node{position:static;transform:none;width:auto;min-width:0;flex:1 1 45%}.orbit-center{flex:1 1 100%;aspect-ratio:auto;border-radius:10px}}
 </style>
 </head>
 <body>
 
 <div class="banner"><div class="wrap">
-  <b>⚠ EXPERIMENTAL NETWORK (testnet).</b> The RAMI-Chain coin <b>has no monetary value</b>,
-  it is not an investment or a tradable security. It is not sold: you get it for free (faucet, mining,
-  staking). &nbsp;<b>ES:</b> Red experimental. La moneda no tiene valor monetario, no es una
-  inversión ni un valor. Nunca a la venta.
-</div></div>
-
-<div class="wrap">
 <nav>
   <div class="brand">
     <span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
@@ -94,6 +125,7 @@
     RAMI-CHAIN
   </div>
   <div class="navlinks">
+    <a href="#mapa">Map</a>
     <a href="#monedero">Wallet</a>
     <a href="#descargas">Downloads</a>
     <a href="#teoria">Theory</a>
@@ -104,8 +136,6 @@
   </div>
 </nav>
 
-<!-- New-release notice: shown only when the latest published release is newer
-     than the one this page's downloads currently serve. -->
 <div id="relBanner" style="display:none;background:rgba(126,240,192,.10);border-bottom:1px solid rgba(126,240,192,.35);padding:10px 20px;font-size:14px;text-align:center">
   🎉 <strong>New version <span id="relBannerVer"></span> released.</strong>
   This page's downloads update within minutes —
@@ -113,8 +143,9 @@
   If you already have the wallet installed, it will notify you and update from within the app.
 </div>
 
-<header class="hero">
-  <div class="kick">Branched Block Universe · Rust · Open source</div>
+<header class="hero" id="mapa">
+  <div>
+  <div class="kick">Branched Block Universe · Rust · Open source · a map, not a list</div>
   <h1>A chain where the past, the present<br>and the future <em>coexist</em>.</h1>
   <p class="lead">RAMI-Chain brings the theory of the Branched Block Universe to a real
   blockchain: every valid block is kept as the complete tree, and your "reality" is the branch that
@@ -132,9 +163,67 @@
     <div class="fact"><b>~21 M</b><span>issuance cap (RAMI)</span></div>
     <div class="fact"><b>0</b><span>premine · 0 public sale</span></div>
   </div>
+  </div>
+  <div class="hero-map">
+    <p class="sub" style="margin:0 0 10px;font-size:13px">Twelve pieces and a centre. A big bang has a centre: the genesis block. Its hash is the <em>network-id</em>, and everything else comes from there.</p>
+    <div class="orbit" role="group" aria-label="Technology map: each node opens its section; the lines say which feeds which">
+      <svg class="orbit-edges" aria-hidden="true" focusable="false"></svg>
+      <span class="orbit-ring orbit-ring-1" aria-hidden="true"></span>
+      <span class="orbit-ring orbit-ring-2" aria-hidden="true"></span>
+        <button type="button" class="orbit-node orbit-center" data-node="genesis" style="--r:0;--a:0deg" aria-describedby="orbit-caption" aria-label="Genesis: The genesis block, calibrated and fixed. Its hash is the network-id: there is no network without it."><b>Genesis</b><small>block 0</small></button>
+        <button type="button" class="orbit-node" data-node="consenso" style="--r:24;--a:-90deg" aria-describedby="orbit-caption" aria-label="PoW + LWMA: SHA-256d, compact target and per-block LWMA retarget. Integer arithmetic; no floats."><b>PoW + LWMA</b><small>consensus</small></button>
+        <button type="button" class="orbit-node" data-node="cuentas" style="--r:24;--a:-30deg" aria-describedby="orbit-caption" aria-label="Accounts: Account model with sequential nonce, halving and a ~21 M cap. No premine."><b>Accounts</b><small>issuance</small></button>
+        <button type="button" class="orbit-node" data-node="commit" style="--r:24;--a:30deg" aria-describedby="orbit-caption" aria-label="Commit-reveal: Publish sha256(signal‖nonce) before the fact and reveal it afterwards, in a strictly later block."><b>Commit-reveal</b><small>anchored prediction</small></button>
+        <button type="button" class="orbit-node" data-node="ramas" style="--r:24;--a:90deg" aria-describedby="orbit-caption" aria-label="Branch universe: Every valid block is kept; the observed branch is the one with the most work. Nodes request whole branches."><b>Branch universe</b><small>the whole tree</small></button>
+        <button type="button" class="orbit-node" data-node="ubr" style="--r:24;--a:150deg" aria-describedby="orbit-caption" aria-label="Advisory UBR: An integer MLP scores how much a branch survives perturbations. Advisory only: it never decides validity or fork-choice."><b>Advisory UBR</b><small>neural network</small></button>
+        <button type="button" class="orbit-node" data-node="colapso" style="--r:24;--a:210deg" aria-describedby="orbit-caption" aria-label="Collapse: Branches of identical work are broken by the Collatz conjecture, bounded by steps; if it failed, lexicographic order."><b>Collapse</b><small>tiebreaker</small></button>
+        <button type="button" class="orbit-node" data-node="tunel" style="--r:40;--a:-90deg" aria-describedby="orbit-caption" aria-label="RAMI tunnel: Ed25519 identity with proof of work, a handshake signed by both sides and traffic encrypted with ChaCha20-Poly1305."><b>RAMI tunnel</b><small>rami-net</small></button>
+        <button type="button" class="orbit-node" data-node="nodo" style="--r:40;--a:-54deg" aria-describedby="orbit-caption" aria-label="Node: Listens, syncs branch by branch, mines if you want and remembers its peers. Also the operator faucet."><b>Node</b><small>rami-node</small></button>
+        <button type="button" class="orbit-node" data-node="monedero" style="--r:40;--a:-18deg" aria-describedby="orbit-caption" aria-label="Wallet: Keys encrypted with your password (PBKDF2 + ChaCha20-Poly1305); the address is readable without it, to mine."><b>Wallet</b><small>rami-wallet</small></button>
+        <button type="button" class="orbit-node" data-node="panel" style="--r:40;--a:18deg" aria-describedby="orbit-caption" aria-label="Dashboard: Node, mining and wallet in one program with a local dashboard in your browser. Spanish, English, Chinese, Russian and Swahili."><b>Dashboard</b><small>rami-gui · 5 languages</small></button>
+        <button type="button" class="orbit-node" data-node="fuentes" style="--r:40;--a:54deg" aria-describedby="orbit-caption" aria-label="Graded sources: Every peer gets an Admiralty code: a letter for its history, a number for this session. It describes; it does not decide."><b>Graded sources</b><small>new in 0.7.3</small></button>
+        <button type="button" class="orbit-node" data-node="prediccion" style="--r:40;--a:90deg" aria-describedby="orbit-caption" aria-label="The exact word: Predictions carry a term from the seven-term scale (“probable (55–80 %)”) and a local ledger measures their calibration."><b>The exact word</b><small>new in 0.7.3</small></button>
+        <button type="button" class="orbit-node" data-node="actualizador" style="--r:40;--a:126deg" aria-describedby="orbit-caption" aria-label="Updater: Downloads the official installer, checks its SHA-256 against GitHub and only then applies it."><b>Updater</b><small>verified</small></button>
+        <button type="button" class="orbit-node" data-node="autoauditoria" style="--r:40;--a:162deg" aria-describedby="orbit-caption" aria-label="Self-audit: The wallet attacks its own node through the tunnel and checks that everything is rejected. Permissions, token and binary hash."><b>Self-audit</b><small>simulated malicious peer</small></button>
+        <button type="button" class="orbit-node" data-node="ciudad" style="--r:40;--a:198deg" aria-describedby="orbit-caption" aria-label="RAMI City: Parcels on open data of the island, companies, assets and leases on-chain. A simulation with no value."><b>RAMI City</b><small>Tenerife 3D</small></button>
+        <button type="button" class="orbit-node" data-node="faucet" style="--r:40;--a:234deg" aria-describedby="orbit-caption" aria-label="Faucet: Any operator hands out coins from their own balance, with a drip and a cooldown. It never asks for payment."><b>Faucet</b><small>free coins</small></button>
+    </div>
+    <p class="orbit-caption" id="orbit-caption" aria-live="polite">Hover a node to see what it feeds; press it to open its section.</p>
+    <details class="orbit-list"><summary>The map as a list: nodes and connections</summary><ol>
+            <li><b>Genesis</b> — The genesis block, calibrated and fixed. Its hash is the network-id: there is no network without it. → PoW + LWMA, RAMI tunnel, Branch universe</li>
+            <li><b>PoW + LWMA</b> — SHA-256d, compact target and per-block LWMA retarget. Integer arithmetic; no floats. → Accounts, Branch universe</li>
+            <li><b>Accounts</b> — Account model with sequential nonce, halving and a ~21 M cap. No premine. → Commit-reveal</li>
+            <li><b>Commit-reveal</b> — Publish sha256(signal‖nonce) before the fact and reveal it afterwards, in a strictly later block. → The exact word</li>
+            <li><b>Branch universe</b> — Every valid block is kept; the observed branch is the one with the most work. Nodes request whole branches. → Advisory UBR, Collapse</li>
+            <li><b>Advisory UBR</b> — An integer MLP scores how much a branch survives perturbations. Advisory only: it never decides validity or fork-choice.</li>
+            <li><b>Collapse</b> — Branches of identical work are broken by the Collatz conjecture, bounded by steps; if it failed, lexicographic order.</li>
+            <li><b>RAMI tunnel</b> — Ed25519 identity with proof of work, a handshake signed by both sides and traffic encrypted with ChaCha20-Poly1305. → Node, Self-audit</li>
+            <li><b>Node</b> — Listens, syncs branch by branch, mines if you want and remembers its peers. Also the operator faucet. → Branch universe, Graded sources, Dashboard, Faucet</li>
+            <li><b>Wallet</b> — Keys encrypted with your password (PBKDF2 + ChaCha20-Poly1305); the address is readable without it, to mine. → Dashboard</li>
+            <li><b>Dashboard</b> — Node, mining and wallet in one program with a local dashboard in your browser. Spanish, English, Chinese, Russian and Swahili. → RAMI City, Self-audit</li>
+            <li><b>Graded sources</b> — Every peer gets an Admiralty code: a letter for its history, a number for this session. It describes; it does not decide. → Dashboard</li>
+            <li><b>The exact word</b> — Predictions carry a term from the seven-term scale (“probable (55–80 %)”) and a local ledger measures their calibration. → Dashboard</li>
+            <li><b>Updater</b> — Downloads the official installer, checks its SHA-256 against GitHub and only then applies it. → Dashboard</li>
+            <li><b>Self-audit</b> — The wallet attacks its own node through the tunnel and checks that everything is rejected. Permissions, token and binary hash.</li>
+            <li><b>RAMI City</b> — Parcels on open data of the island, companies, assets and leases on-chain. A simulation with no value.</li>
+            <li><b>Faucet</b> — Any operator hands out coins from their own balance, with a drip and a cooldown. It never asks for payment.</li>
+    </ol></details>
+  </div>
 </header>
 
-<section id="monedero">
+<nav class="panel-tabs" aria-label="Wallet">
+  <button type="button" data-goto="monedero">Wallet</button>
+  <button type="button" data-goto="teoria">Theory</button>
+  <button type="button" data-goto="tech">Technology</button>
+  <button type="button" data-goto="descargas">Downloads</button>
+  <button type="button" data-goto="empezar">Get started</button>
+  <button type="button" data-goto="faucet">Coins</button>
+  <button type="button" data-goto="explorer">Explorer</button>
+  <button type="button" data-goto="honestidad">Honesty</button>
+</nav>
+
+<div class="panels">
+<section id="monedero" class="panel">
   <span class="pill">DESKTOP WALLET · v0.5</span>
   <h2>A single program: your node, your mining and your wallet.</h2>
   <p class="sub">Download <code>rami-gui</code> (Linux, macOS, Windows), run it and a
@@ -190,7 +279,7 @@
   </p>
 </section>
 
-<section id="teoria">
+<section id="teoria" class="panel" hidden>
   <span class="pill">THE IDEA</span>
   <h2>Bitcoin discards the losing branches. RAMI-Chain keeps them.</h2>
   <p class="sub">In a normal chain only the chain with the most work survives; orphan blocks
@@ -210,7 +299,7 @@
   </div>
 </section>
 
-<section id="tech">
+<section id="tech" class="panel" hidden>
   <span class="pill">TECHNOLOGY</span>
   <h2>What's inside</h2>
   <p class="sub">All in Rust, with a minimal set of dependencies and verifiable from the bytes.
@@ -236,10 +325,22 @@
     <div class="card"><div class="tag">VERIFIABLE</div><h3>Parity and tests</h3>
       <p>Canonicalization, hashing and commit-reveal match byte for byte with the Python
       reference. The core carries dozens of tests; <code>rami-node verify</code> revalidates the entire chain.</p></div>
+    <div class="card" style="border-color:#2c5a4e"><div class="tag">GRADED SOURCES · NEW IN 0.7.3</div><h3>Every peer, with its code</h3>
+      <p>The node grades every peer as a <b>source</b> with the Admiralty code: a letter for its history of valid and
+      invalid blocks (A, reliable with a long record … F, no history) and a number for what was observed this session
+      (1, corroborated by another peer … 6, nothing yet). The Network tab shows “B2” next to each peer, with the reasons.
+      It describes, it does not decide: every block is re-validated the same way whoever it comes from. And “synced”
+      comes with the fact behind it: your height, the best peer height and how many blocks are missing.</p></div>
+    <div class="card" style="border-color:#2c5a4e"><div class="tag">THE EXACT WORD · NEW IN 0.7.3</div><h3>Predictions with a term</h3>
+      <p>When you anchor a prediction you say how probable it is with the seven-term scale (ICD 203):
+      <b>“probable (55–80 %)”</b>, never a bare percentage and never 0 or 100. The term travels inside the payload —
+      opaque bytes for consensus, so no rule changes — and a <b>local ledger</b> records the outcome when you mark it.
+      The ledger tells you whether your “probable” happens between 55 and 80 % of the time: it measures whether your
+      words mean what they say; it does not measure hit rate or returns. It exists only on your computer.</p></div>
   </div>
 </section>
 
-<section id="descargas">
+<section id="descargas" class="panel" hidden>
   <span class="pill">DOWNLOADS</span>
   <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
     <img src="/assets/rami-icon.svg" alt="RAMI-Chain" width="84" height="84" style="border-radius:18px">
@@ -329,7 +430,9 @@ sha256sum -c &lt;(grep AppImage SHA256SUMS.txt) &amp;&amp; chmod +x RAMI-Chain-$
     Advanced users and source code (loose binaries, <code>.tar.gz</code>/<code>.zip</code>):
     <a href="https://github.com/baydounr01-blip/rami-ledger/releases">releases on GitHub</a>.
   </p>
-  <span id="empezar"></span>
+</section>
+
+<section id="empezar" class="panel" hidden>
   <span class="pill">GET STARTED</span>
   <h2>Run the wallet, or build it</h2>
   <div class="card" style="margin:0 0 18px">
@@ -375,7 +478,7 @@ rami-node verify --chain ./midato --network regtest</pre>
   (listens, syncs and mines). <code>rami-wallet commit</code> / <code>reveal</code> anchors predictions on the chain.</p>
 </section>
 
-<section id="faucet">
+<section id="faucet" class="panel" hidden>
   <span class="pill">HOW YOU GET COINS</span>
   <h2>Free: by mining or staking</h2>
   <div class="warnbox">
@@ -397,7 +500,7 @@ rami-node verify --chain ./midato --network regtest</pre>
   </div>
 </section>
 
-<section id="explorer">
+<section id="explorer" class="panel" hidden>
   <span class="pill">EXPLORER</span>
   <h2>Block explorer <span style="font-size:14px;color:var(--warn)">· stub</span></h2>
   <p class="sub">The explorer will read a periodically published snapshot of the chain, which
@@ -412,7 +515,7 @@ $ rami-node show --chain ./midato --network regtest 10<br>
   </div>
 </section>
 
-<section>
+<section id="honestidad" class="panel" hidden>
   <span class="pill">HONESTY</span>
   <h2>What RAMI-Chain is not</h2>
   <div class="disc" style="grid-template-columns:1fr 1fr">
@@ -428,6 +531,7 @@ $ rami-node show --chain ./midato --network regtest 10<br>
   Software without warranty (MIT license). Operate only with what you can afford to lose — which here is
   literally nothing, because it has no value.</p>
 </section>
+</div>
 
 <footer>
   <div class="brand" style="margin-bottom:10px"><span class="logo"><svg viewBox="0 0 24 24" fill="none"
@@ -499,6 +603,66 @@ $ rami-node show --chain ./midato --network regtest 10<br>
       document.getElementById("relBanner").style.display="block";
     }
   }).catch(function(){});
+})();
+</script>
+<script>
+/* El mapa orbital ES la navegación (sin librerías). Las posiciones las pone el
+   CSS (--r/--a por nodo); aquí se dibujan las aristas, se ilumina el flujo al
+   pasar por un nodo y se enrutan los apartados por location.hash, así que los
+   enlaces guardados (#descargas, #teoria…) siguen llegando a su sitio. */
+(function(){
+  var NODES={"genesis": {"panel": "teoria", "label": "Genesis", "sub": "block 0", "desc": "The genesis block, calibrated and fixed. Its hash is the network-id: there is no network without it."}, "consenso": {"panel": "tech", "label": "PoW + LWMA", "sub": "consensus", "desc": "SHA-256d, compact target and per-block LWMA retarget. Integer arithmetic; no floats."}, "cuentas": {"panel": "tech", "label": "Accounts", "sub": "issuance", "desc": "Account model with sequential nonce, halving and a ~21 M cap. No premine."}, "commit": {"panel": "tech", "label": "Commit-reveal", "sub": "anchored prediction", "desc": "Publish sha256(signal‖nonce) before the fact and reveal it afterwards, in a strictly later block."}, "ramas": {"panel": "teoria", "label": "Branch universe", "sub": "the whole tree", "desc": "Every valid block is kept; the observed branch is the one with the most work. Nodes request whole branches."}, "ubr": {"panel": "tech", "label": "Advisory UBR", "sub": "neural network", "desc": "An integer MLP scores how much a branch survives perturbations. Advisory only: it never decides validity or fork-choice."}, "colapso": {"panel": "tech", "label": "Collapse", "sub": "tiebreaker", "desc": "Branches of identical work are broken by the Collatz conjecture, bounded by steps; if it failed, lexicographic order."}, "tunel": {"panel": "monedero", "label": "RAMI tunnel", "sub": "rami-net", "desc": "Ed25519 identity with proof of work, a handshake signed by both sides and traffic encrypted with ChaCha20-Poly1305."}, "nodo": {"panel": "empezar", "label": "Node", "sub": "rami-node", "desc": "Listens, syncs branch by branch, mines if you want and remembers its peers. Also the operator faucet."}, "monedero": {"panel": "monedero", "label": "Wallet", "sub": "rami-wallet", "desc": "Keys encrypted with your password (PBKDF2 + ChaCha20-Poly1305); the address is readable without it, to mine."}, "panel": {"panel": "monedero", "label": "Dashboard", "sub": "rami-gui · 5 languages", "desc": "Node, mining and wallet in one program with a local dashboard in your browser. Spanish, English, Chinese, Russian and Swahili."}, "fuentes": {"panel": "tech", "label": "Graded sources", "sub": "new in 0.7.3", "desc": "Every peer gets an Admiralty code: a letter for its history, a number for this session. It describes; it does not decide."}, "prediccion": {"panel": "tech", "label": "The exact word", "sub": "new in 0.7.3", "desc": "Predictions carry a term from the seven-term scale (“probable (55–80 %)”) and a local ledger measures their calibration."}, "actualizador": {"panel": "descargas", "label": "Updater", "sub": "verified", "desc": "Downloads the official installer, checks its SHA-256 against GitHub and only then applies it."}, "autoauditoria": {"panel": "monedero", "label": "Self-audit", "sub": "simulated malicious peer", "desc": "The wallet attacks its own node through the tunnel and checks that everything is rejected. Permissions, token and binary hash."}, "ciudad": {"panel": "monedero", "label": "RAMI City", "sub": "Tenerife 3D", "desc": "Parcels on open data of the island, companies, assets and leases on-chain. A simulation with no value."}, "faucet": {"panel": "faucet", "label": "Faucet", "sub": "free coins", "desc": "Any operator hands out coins from their own balance, with a drip and a cooldown. It never asks for payment."}}, EDGES=[["genesis", "consenso"], ["genesis", "tunel"], ["genesis", "ramas"], ["consenso", "cuentas"], ["consenso", "ramas"], ["cuentas", "commit"], ["ramas", "ubr"], ["ramas", "colapso"], ["tunel", "nodo"], ["nodo", "ramas"], ["nodo", "fuentes"], ["nodo", "panel"], ["nodo", "faucet"], ["monedero", "panel"], ["commit", "prediccion"], ["prediccion", "panel"], ["fuentes", "panel"], ["panel", "ciudad"], ["panel", "autoauditoria"], ["tunel", "autoauditoria"], ["actualizador", "panel"]], TOUR=["genesis", "consenso", "ramas", "nodo", "fuentes", "panel"], DEFAULT='monedero';
+  var reduced=function(){return window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches};
+  var orbit=document.querySelector('.orbit'), svg=orbit&&orbit.querySelector('.orbit-edges'), caption=document.getElementById('orbit-caption');
+  var hint=caption?caption.textContent:'';
+  var nodes={}; Array.prototype.forEach.call(document.querySelectorAll('.orbit-node'),function(n){nodes[n.getAttribute('data-node')]=n});
+  var panels=Array.prototype.slice.call(document.querySelectorAll('section.panel'));
+  var tabs=Array.prototype.slice.call(document.querySelectorAll('.panel-tabs [data-goto]'));
+  var lines={};
+  function center(n,box){var r=n.getBoundingClientRect();return{x:r.left-box.left+r.width/2,y:r.top-box.top+r.height/2,hw:r.width/2,hh:r.height/2}}
+  function trim(a,b){var dx=b.x-a.x,dy=b.y-a.y,l=Math.hypot(dx,dy)||1,ux=dx/l,uy=dy/l;
+    var cut=function(c){return Math.min(c.hw/Math.abs(ux||1e-6),c.hh/Math.abs(uy||1e-6))+4};var ca=cut(a),cb=cut(b);
+    return{x1:a.x+ux*ca,y1:a.y+uy*ca,x2:b.x-ux*cb,y2:b.y-uy*cb}}
+  function draw(){if(!orbit||!svg||getComputedStyle(svg).display==='none')return;var box=orbit.getBoundingClientRect();if(!box.width)return;
+    svg.setAttribute('viewBox','0 0 '+box.width+' '+box.height);
+    if(!svg.querySelector('defs'))svg.innerHTML='<defs><marker id="orbit-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="orbit-arrow" d="M0 0L10 5L0 10z"/></marker><marker id="orbit-arrow-lit" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="orbit-arrow-lit" d="M0 0L10 5L0 10z"/></marker></defs>';
+    var c={};for(var k in nodes)c[k]=center(nodes[k],box);
+    EDGES.forEach(function(e){var a=c[e[0]],b=c[e[1]];if(!a||!b)return;var key=e[0]+'>'+e[1],line=lines[key];
+      if(!line){line=document.createElementNS('http://www.w3.org/2000/svg','line');line.setAttribute('class','edge');line.setAttribute('data-from',e[0]);line.setAttribute('data-to',e[1]);svg.appendChild(line);lines[key]=line}
+      var t=trim(a,b);line.setAttribute('x1',t.x1);line.setAttribute('y1',t.y1);line.setAttribute('x2',t.x2);line.setAttribute('y2',t.y2)})}
+  function highlight(id){var feeds=EDGES.filter(function(e){return e[0]===id}).map(function(e){return e[1]}),fed=EDGES.filter(function(e){return e[1]===id}).map(function(e){return e[0]});
+    for(var k in lines){var l=lines[k],on=id&&(l.getAttribute('data-from')===id||l.getAttribute('data-to')===id);l.classList.toggle('lit',!!on);l.classList.toggle('dim',!!id&&!on)}
+    for(var n in nodes)nodes[n].classList.toggle('linked',!!id&&(feeds.indexOf(n)>=0||fed.indexOf(n)>=0));
+    if(!caption)return;if(!id||!NODES[id]){caption.textContent=hint;return}
+    var name=function(k){return NODES[k]?NODES[k].label:k};caption.innerHTML='';var b=document.createElement('b');b.textContent=NODES[id].label;caption.appendChild(b);caption.appendChild(document.createTextNode(' — '+NODES[id].desc));
+    var flow=[];if(feeds.length)flow.push('feeds: '+feeds.map(name).join(', '));if(fed.length)flow.push('fed by: '+fed.map(name).join(', '));
+    if(flow.length){caption.appendChild(document.createElement('br'));caption.appendChild(document.createTextNode(flow.join(' · ')))}}
+  var hovering=null,step=0;
+  function tick(){if(hovering||reduced()||document.hidden)return;var f=TOUR[step%TOUR.length],t=TOUR[(step+1)%TOUR.length];
+    for(var k in lines){var l=lines[k];l.classList.toggle('lit',l.getAttribute('data-from')===f&&l.getAttribute('data-to')===t);l.classList.remove('dim')}step++}
+  var current=DEFAULT;
+  function show(id){if(!panels.some(function(p){return p.id===id}))id=DEFAULT;current=id;
+    panels.forEach(function(p){p.hidden=p.id!==id});
+    tabs.forEach(function(t){if(t.getAttribute('data-goto')===id)t.setAttribute('aria-current','true');else t.removeAttribute('aria-current')});
+    for(var n in nodes){if(NODES[n].panel===id)nodes[n].setAttribute('aria-current','true');else nodes[n].removeAttribute('aria-current')}}
+  function scrollTo(el){if(el)el.scrollIntoView({behavior:reduced()?'auto':'smooth',block:'start'})}
+  function route(hash,scroll){var id=decodeURIComponent(String(hash||'').replace(/^#/,''));
+    if(!id){show(current);return}var target=document.getElementById(id);
+    if(!target){show(DEFAULT);return}var panel=target.closest('section.panel');if(panel)show(panel.id);else show(current);
+    if(scroll)requestAnimationFrame(function(){scrollTo(target)})}
+  function go(id){var h='#'+id;if(location.hash===h)route(h,true);else location.hash=h}
+  if(orbit){orbit.addEventListener('mouseover',function(e){var n=e.target.closest('.orbit-node');if(n){hovering=n.getAttribute('data-node');highlight(hovering)}});
+    orbit.addEventListener('mouseleave',function(){hovering=null;highlight(null)});
+    orbit.addEventListener('focusin',function(e){var n=e.target.closest('.orbit-node');if(n){hovering=n.getAttribute('data-node');highlight(hovering)}});
+    orbit.addEventListener('focusout',function(e){if(orbit.contains(e.relatedTarget))return;hovering=null;highlight(null)});
+    orbit.addEventListener('click',function(e){var n=e.target.closest('.orbit-node');if(!n)return;var s=NODES[n.getAttribute('data-node')];if(s)go(s.panel)})}
+  tabs.forEach(function(t){t.addEventListener('click',function(){go(t.getAttribute('data-goto'))})});
+  document.addEventListener('click',function(e){var a=e.target.closest('a[href^="#"]');if(!a)return;var id=a.getAttribute('href').slice(1),t=id&&document.getElementById(id),p=t&&t.closest('section.panel');if(p&&p.hidden)show(p.id)},true);
+  window.addEventListener('hashchange',function(){route(location.hash,true)});
+  var pending=false;function schedule(){if(pending)return;pending=true;requestAnimationFrame(function(){pending=false;draw()})}
+  if(orbit&&'ResizeObserver'in window)new ResizeObserver(schedule).observe(orbit);window.addEventListener('resize',schedule);
+  if(document.fonts&&document.fonts.ready)document.fonts.ready.then(schedule);
+  route(location.hash,!!location.hash);draw();if(!reduced())setInterval(tick,1400);
 })();
 </script>
 </body>

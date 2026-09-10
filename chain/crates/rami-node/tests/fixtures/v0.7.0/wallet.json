@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "kdf": "pbkdf2-hmac-sha256",
+  "iterations": 600000,
+  "salt": "bb8391e8caa0aad25522bdf9a2e1d367",
+  "entries": {
+    "otro": {
+      "pub": "546b2920e460263bb29268eeb7fd0bd2a40aba7fc598ea95113362212df96421",
+      "nonce": "9ebd67d62e369a9807506a73",
+      "ct": "34f54b51c3ea3447393a3c9d35b72102ce3cca2a53daea83b1c97e42f92c369f0511a55c725fb7c8e3da837d19353963"
+    },
+    "yo": {
+      "pub": "b6fe0561173ef711a28603c81a1a762caf0ef4106a9c163ea5ca7aece9bbf286",
+      "nonce": "9dfbb15b194a1a802af2a277",
+      "ct": "8eeb5830b8c2f2f910b816a4f8243168c811f371333b1cf342edd2da729f40b756045c1bac2ab9344e95451335df7102"
+    }
+  }
+}
