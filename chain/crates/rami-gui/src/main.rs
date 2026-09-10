@@ -27,6 +27,7 @@ use rami_core::params::Params;
 use rami_core::tx::{txid, Tx};
 
 use rami_node::{spawn, NodeConfig, NodeHandle};
+use rami_wallet::calibracion;
 use rami_wallet::{
     build_claim_parcel, build_commit, build_harvest, build_list_lease, build_mint_asset, build_rent,
     build_reveal, build_stake, build_transfer, build_transfer_asset, default_keystore_path, fmt_ram,
@@ -547,7 +548,57 @@ fn route(g: &Gui, req: Request) -> Response {
             let cid = txid(&tx);
             save_reveal(&g.chain_dir, &cid, &payload, &secret);
             match node.submit_tx(tx) {
-                Ok(id) => Response::json(&json!({"ok": true, "txid": id, "commit_txid": hex::encode(cid)})),
+                Ok(id) => {
+                    // La palabra exacta: si la predicción lleva un término de
+                    // la escala, queda apuntada en el libro local de
+                    // calibración (un archivo nuevo, aparte de los reveals).
+                    let termino = payload.get("termino").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    if calibracion::termino(&termino).is_some() {
+                        let texto = payload.get("texto").and_then(|v| v.as_str()).unwrap_or("").chars().take(200).collect();
+                        let _ = calibracion::apuntar(&g.chain_dir, calibracion::Prediccion {
+                            commit: hex::encode(cid),
+                            termino,
+                            texto,
+                            apuntada: rami_node::now_secs(),
+                            ..Default::default()
+                        });
+                    }
+                    Response::json(&json!({"ok": true, "txid": id, "commit_txid": hex::encode(cid)}))
+                }
+                Err(e) => err(e),
+            }
+        }
+
+        // ---- Libro local de calibración de predicciones (la palabra exacta) ----
+        ("GET", "/api/predicciones") => {
+            let libro = calibracion::cargar_libro(&g.chain_dir);
+            let resumen = calibracion::resumir(&libro);
+            let escala: Vec<Value> = calibracion::ESCALA
+                .iter()
+                .map(|t| json!({"clave": t.clave, "rango": t.rango(), "desde": t.desde, "hasta": t.hasta}))
+                .collect();
+            Response::json(&json!({ "ok": true, "libro": libro, "resumen": resumen, "escala": escala }))
+        }
+        ("POST", "/api/predicciones/resultado") => {
+            let b = body_json(&req);
+            let commit = str_field(&b, "commit").trim().to_string();
+            if hex::decode(&commit).ok().filter(|v| v.len() == 32).is_none() {
+                return err("commit txid inválido");
+            }
+            // Solo dos desenlaces: ocurrió o no. Nada de «a medias».
+            let Some(ocurrio) = b.get("ocurrio").and_then(|v| v.as_bool()) else {
+                return err("indica si ocurrió (true) o no (false)");
+            };
+            if !calibracion::cargar_libro(&g.chain_dir).iter().any(|p| p.commit == commit) {
+                return err("ese commit no está en el libro: solo se resuelven predicciones apuntadas con un término de la escala");
+            }
+            match calibracion::apuntar(&g.chain_dir, calibracion::Prediccion {
+                commit,
+                ocurrio: Some(ocurrio),
+                resuelta: rami_node::now_secs(),
+                ..Default::default()
+            }) {
+                Ok(libro) => Response::json(&json!({ "ok": true, "resumen": calibracion::resumir(&libro) })),
                 Err(e) => err(e),
             }
         }

@@ -16,6 +16,7 @@ pub mod portmap;
 /// Autoauditoría del Túnel RAMI (re-exportada para el monedero de escritorio).
 pub use rami_net::selftest;
 pub mod seeds;
+pub mod grado;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -37,6 +38,8 @@ use rami_core::tx::{merkle_root_txids, signer_of, txid, verify_tx, AccountId, Tx
 
 use rami_net::{Frame, NetConfig, NetEvent, Network, PeerId, TipInfo};
 use rami_net::identity::fingerprint as fingerprint_of;
+
+use crate::grado::{EvidenciaSesion, HistorialPar};
 
 /// Mensaje del coinbase (aparece en cada bloque minado).
 pub const CHANCELLOR: &str =
@@ -332,6 +335,26 @@ pub struct PeerView {
     pub tips: usize,
     /// Mayor trabajo acumulado entre sus puntas (u128 decimal).
     pub best_work: String,
+    /// Código Admiralty de este par como fuente («B2»): letra por historial,
+    /// número por lo observado en esta sesión. Ver `grado`.
+    pub fuente: String,
+    pub fiabilidad: String,
+    pub credibilidad: u8,
+    /// Por qué esa letra y ese número.
+    pub motivos: Vec<String>,
+}
+
+/// El hecho detrás del juicio «sincronizado»: alturas, no adjetivos.
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct SyncInfo {
+    pub mi_altura: u64,
+    /// Mejor altura declarada por un par (0 sin pares).
+    pub mejor_altura_pares: u64,
+    /// Pares que declaran una altura ≤ la nuestra.
+    pub pares_a_mi_altura: usize,
+    pub pares_total: usize,
+    /// Bloques que nos faltan respecto al mejor par (0 si vamos por delante).
+    pub atras: u64,
 }
 
 /// Estado del universo de ramas para el panel: el árbol completo (todas las
@@ -346,6 +369,8 @@ pub struct UniverseInfo {
     pub branches_synced: u64,
     /// Par del que llegó el último lote aplicado.
     pub last_sync_from: String,
+    /// Código de fuente de ese par cuando llegó el lote («B2»; vacío si no hay).
+    pub last_sync_fuente: String,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -373,6 +398,8 @@ pub struct NodeStatus {
     pub found: u64,
     pub netinfo: NetInfo,
     pub universe: UniverseInfo,
+    /// Alturas que sostienen (o no) el juicio `synced`.
+    pub sync: SyncInfo,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -777,6 +804,15 @@ impl PeerTips {
     }
 }
 
+/// Qué se apunta de un par al juzgar lo que envió (ver `grado`).
+#[derive(Clone, Copy)]
+enum Anota {
+    Valido,
+    Invalido,
+    Huerfano,
+    Rama,
+}
+
 /// Una petición `GetBranch` a un par por una punta.
 struct BranchReq {
     /// Último envío (ventana anti-spam y «activa» para el tope en vuelo).
@@ -798,6 +834,13 @@ struct Node {
     /// Bloques que NO se admitieron por inválidos (no por huérfanos): un par
     /// que los repita no nos hace revalidarlos. Acotado.
     bad_blocks: HashSet<Hash>,
+    /// Fuentes graduadas: historial por clave pública (peer-grades.json) y
+    /// evidencia de esta sesión por conexión. Descriptivo, nunca de consenso.
+    grados: HashMap<String, HistorialPar>,
+    sesion: HashMap<PeerId, EvidenciaSesion>,
+    grados_sucio: bool,
+    grados_guardado: Instant,
+    last_sync_fuente: String,
     peer_height: HashMap<rami_net::PeerId, u64>,
     /// Universo de ramas: puntas anunciadas por cada par.
     peer_tips: HashMap<PeerId, PeerTips>,
@@ -927,6 +970,7 @@ pub fn spawn(cfg: NodeConfig) -> Result<NodeHandle, String> {
         });
     }
 
+    let grados_cargados = crate::grado::cargar(&chain.root);
     let mut node = Node {
         tree,
         chain,
@@ -935,6 +979,13 @@ pub fn spawn(cfg: NodeConfig) -> Result<NodeHandle, String> {
         mempool: Vec::new(),
         seen_tx: HashSet::new(),
         bad_blocks: HashSet::new(),
+        grados: grados_cargados,
+        sesion: HashMap::new(),
+        grados_sucio: false,
+        // Restado un minuto: el PRIMER cambio se guarda al instante y a partir
+        // de ahí, como mucho cada 30 s.
+        grados_guardado: Instant::now().checked_sub(Duration::from_secs(60)).unwrap_or_else(Instant::now),
+        last_sync_fuente: String::new(),
         peer_height: HashMap::new(),
         peer_tips: HashMap::new(),
         inflight: HashMap::new(),
@@ -1049,6 +1100,88 @@ impl Node {
     }
 
     /// Etiqueta legible de un par (dirección remarcable o del socket).
+    /// Historial persistente del par (por clave pública autenticada).
+    fn historial_de(&mut self, peer: PeerId) -> &mut HistorialPar {
+        let pk = self.peer_ident.get(&peer).map(|(p, _)| p.clone()).unwrap_or_default();
+        self.grados.entry(pk).or_default()
+    }
+
+    /// Apunta una observación verificada por este nodo en el historial (letra)
+    /// y en la sesión (número). Nunca decide nada: describe.
+    fn anotar(&mut self, peer: PeerId, que: Anota) {
+        {
+            let h = self.historial_de(peer);
+            match que {
+                Anota::Valido => h.validos += 1,
+                Anota::Invalido => h.invalidos += 1,
+                Anota::Huerfano => h.huerfanos += 1,
+                Anota::Rama => h.ramas += 1,
+            }
+            h.visto = now_secs();
+        }
+        if let Some(e) = self.sesion.get_mut(&peer) {
+            match que {
+                Anota::Valido => e.validos += 1,
+                Anota::Invalido => e.invalidos += 1,
+                _ => {}
+            }
+        }
+        self.grados_sucio = true;
+        self.guardar_grados(false);
+    }
+
+    /// Persiste peer-grades.json si hay cambios; como mucho cada 30 s salvo
+    /// que se fuerce (desconexión). Un archivo nuevo, aditivo: la v0.7.0 no lo
+    /// mira y no le hace falta.
+    fn guardar_grados(&mut self, forzar: bool) {
+        if !self.grados_sucio {
+            return;
+        }
+        if !forzar && self.grados_guardado.elapsed() < Duration::from_secs(30) {
+            return;
+        }
+        crate::grado::guardar(&self.chain.root, &self.grados);
+        self.grados_sucio = false;
+        self.grados_guardado = Instant::now();
+    }
+
+    /// Evidencia de la sesión completada con lo que solo el nodo sabe: la
+    /// mejor altura ajena y si alguna punta suya está en nuestro árbol y la
+    /// anuncia también otro par.
+    fn evidencia_de(&self, peer: PeerId) -> EvidenciaSesion {
+        let mut e = self.sesion.get(&peer).cloned().unwrap_or_default();
+        e.altura = e.altura.max(self.peer_height.get(&peer).copied().unwrap_or(0));
+        e.mejor_altura_ajena =
+            self.peer_height.iter().filter(|(p, _)| **p != peer).map(|(_, h)| *h).max().unwrap_or(0);
+        if let Some(pt) = self.peer_tips.get(&peer) {
+            for (h, _, _) in &pt.tips {
+                if !self.tree.contains(h) {
+                    continue;
+                }
+                e.verificado = true;
+                let otro = self
+                    .peer_tips
+                    .iter()
+                    .any(|(p, t)| *p != peer && t.tips.iter().any(|(oh, _, _)| oh == h));
+                if otro {
+                    e.corroborado = true;
+                    break;
+                }
+            }
+        }
+        if e.validos > 0 {
+            e.verificado = true;
+        }
+        e
+    }
+
+    fn graduacion_de(&self, peer: PeerId) -> crate::grado::Graduacion {
+        let pk = self.peer_ident.get(&peer).map(|(p, _)| p.as_str()).unwrap_or("");
+        let vacio = HistorialPar::default();
+        let h = self.grados.get(pk).unwrap_or(&vacio);
+        crate::grado::graduar(h, &self.evidencia_de(peer))
+    }
+
     fn peer_label(&self, peer: PeerId) -> String {
         self.peer_meta
             .get(&peer)
@@ -1198,6 +1331,9 @@ impl Node {
             NetEvent::Connected { peer, addr, inbound, dial_addr, pubkey, fingerprint } => {
                 self.peer_height.insert(peer, 0);
                 self.peer_ident.insert(peer, (hex::encode(pubkey), fingerprint.clone()));
+                self.sesion.insert(peer, EvidenciaSesion::default());
+                self.historial_de(peer).visto = now_secs();
+                self.grados_sucio = true;
                 if let Some(d) = &dial_addr {
                     self.pin_identity(d, &pubkey, &fingerprint);
                 }
@@ -1219,6 +1355,8 @@ impl Node {
                 self.net.send(peer, Frame::GetPeers);
             }
             NetEvent::Disconnected { peer } => {
+                self.sesion.remove(&peer);
+                self.guardar_grados(true);
                 self.peer_height.remove(&peer);
                 self.peer_meta.remove(&peer);
                 self.peer_ident.remove(&peer);
@@ -1229,6 +1367,9 @@ impl Node {
             }
             NetEvent::Message { peer, frame } => self.on_frame(peer, frame),
         }
+        // El libro de fuentes se persiste aquí (con su límite de 30 s): así un
+        // par que se conecta y no manda bloques también queda apuntado.
+        self.guardar_grados(false);
         self.publish_status();
     }
 
@@ -1247,6 +1388,8 @@ impl Node {
                     .unwrap_or_else(|| "?".into());
                 let msg = format!("la identidad del par {addr} ha cambiado (huella {old_fp} → {fp})");
                 eprintln!("[net] AVISO: {msg}");
+                self.grados.entry(pk_hex.clone()).or_default().cambios_identidad += 1;
+                self.grados_sucio = true;
                 if let Ok(mut g) = self.netinfo.lock() {
                     if !g.identity_warnings.contains(&msg) {
                         if g.identity_warnings.len() >= IDENTITY_WARNINGS_CAP {
@@ -1271,6 +1414,9 @@ impl Node {
             Frame::Hello { .. } => {}
             Frame::Status { height, .. } => {
                 self.peer_height.insert(peer, height);
+                if let Some(e) = self.sesion.get_mut(&peer) {
+                    e.altura = e.altura.max(height);
+                }
             }
             Frame::Tips { tips, partial } => {
                 // Registra las puntas del par (completas o delta) y pide, por
@@ -1283,6 +1429,11 @@ impl Node {
                     Some((h, t.height, w))
                 });
                 let my_tips: HashSet<Hash> = self.tree.tips().into_iter().collect();
+                let entries: Vec<(Hash, u64, u128)> = entries.collect();
+                if let Some(e) = self.sesion.get_mut(&peer) {
+                    e.puntas_anunciadas += entries.len() as u64;
+                }
+                let entries = entries.into_iter();
                 let pt = self.peer_tips.entry(peer).or_default();
                 if partial {
                     pt.tips.extend(entries);
@@ -1352,14 +1503,17 @@ impl Node {
                         Ok(true) => {
                             accepted += 1;
                             cursor = Some(h);
+                            self.anotar(peer, Anota::Valido);
                         }
                         Ok(false) => cursor = Some(h),
                         Err(e) => {
                             all_in_tree = false;
                             if is_orphan_err(&e) {
                                 orphan = true;
+                                self.anotar(peer, Anota::Huerfano);
                             } else {
                                 self.remember_bad(h);
+                                self.anotar(peer, Anota::Invalido);
                             }
                         }
                     }
@@ -1367,6 +1521,8 @@ impl Node {
                 if accepted > 0 {
                     self.branches_synced += 1;
                     self.last_sync_from = self.peer_label(peer);
+                    self.anotar(peer, Anota::Rama);
+                    self.last_sync_fuente = self.graduacion_de(peer).codigo;
                     self.refresh_candidate();
                     self.maybe_broadcast_tips(false);
                 }
@@ -1398,17 +1554,20 @@ impl Node {
                 }
                 match self.accept_block(block, Some(peer)) {
                     Ok(true) => {
+                        self.anotar(peer, Anota::Valido);
                         self.refresh_candidate();
                         self.maybe_broadcast_tips(false);
                     }
                     Ok(false) => {}
                     Err(e) => {
                         if is_orphan_err(&e) {
+                            self.anotar(peer, Anota::Huerfano);
                             // nos falta el padre: pide la rama entera de este
                             // bloque a quien lo anuncia.
                             self.request_branch(peer, h, false, None);
                         } else {
                             self.remember_bad(h);
+                            self.anotar(peer, Anota::Invalido);
                         }
                     }
                 }
@@ -1672,6 +1831,7 @@ impl Node {
             .map(|(id, (addr, inbound, dial))| {
                 let pt = self.peer_tips.get(id);
                 let ident = self.peer_ident.get(id);
+                let g = self.graduacion_de(*id);
                 PeerView {
                     addr: dial.clone().unwrap_or_else(|| addr.clone()),
                     inbound: *inbound,
@@ -1680,6 +1840,10 @@ impl Node {
                     height: self.peer_height.get(id).copied().unwrap_or(0),
                     tips: pt.map(|t| t.tips.len()).unwrap_or(0),
                     best_work: pt.map(|t| t.best_work().to_string()).unwrap_or_default(),
+                    fuente: g.codigo,
+                    fiabilidad: g.fiabilidad.to_string(),
+                    credibilidad: g.credibilidad,
+                    motivos: g.motivos,
                 }
             })
             .collect();
@@ -1710,6 +1874,14 @@ impl Node {
                 tips,
                 branches_synced: self.branches_synced,
                 last_sync_from: self.last_sync_from.clone(),
+                last_sync_fuente: self.last_sync_fuente.clone(),
+            },
+            sync: SyncInfo {
+                mi_altura: height,
+                mejor_altura_pares: best_peer,
+                pares_a_mi_altura: self.peer_height.values().filter(|h| **h <= height).count(),
+                pares_total: self.peer_height.len(),
+                atras: best_peer.saturating_sub(height),
             },
         };
         if let Ok(mut g) = self.status.lock() {

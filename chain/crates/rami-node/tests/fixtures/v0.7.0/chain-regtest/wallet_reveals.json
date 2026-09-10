@@ -1,0 +1,10 @@
+{
+  "2a5151be4578d5fa6577bf7999dd8bcb57a8cd4e3f6d66b32e2e965d8994d43b": {
+    "payload": {
+      "pair": "BTC",
+      "dir": "LONG",
+      "termino": "probable"
+    },
+    "secret": "248d9a0adf17845b78caa49b5673710924a88b080642bf2dc00ed212e147efc1"
+  }
+}

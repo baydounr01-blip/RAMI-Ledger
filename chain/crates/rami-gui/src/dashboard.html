@@ -300,7 +300,7 @@
   <div class="pill">
     <span id="netName">testnet</span>
     <span id="syncDot" class="dot off"></span>
-    <span id="syncTxt">conectando…</span>
+    <span id="syncTxt">conectando…</span><span id="syncFact" class="muted" style="font-size:12px;margin-left:6px"></span>
   </div>
   <div class="spacer"></div>
   <select class="langsel" id="langSel" title="Idioma / Language" aria-label="Idioma">
@@ -622,6 +622,19 @@
         </p>
         <hr class="sep">
         <label class="field">
+          <span class="cap">Con qué probabilidad lo afirmas (escala de siete términos)</span>
+          <select id="commitTermino">
+            <option value="">sin término (no entra en el libro)</option>
+            <option value="remoto">remoto (1–5 %)</option>
+            <option value="muy improbable">muy improbable (5–20 %)</option>
+            <option value="improbable">improbable (20–45 %)</option>
+            <option value="posibilidad aproximadamente igual">posibilidad aproximadamente igual (45–55 %)</option>
+            <option value="probable">probable (55–80 %)</option>
+            <option value="muy probable">muy probable (80–95 %)</option>
+            <option value="casi seguro">casi seguro (95–99 %)</option>
+          </select>
+        </label>
+        <label class="field">
           <span class="cap">Payload (JSON) — lo que predices</span>
           <textarea id="commitPayload" placeholder='{"pair":"BTC","dir":"LONG"}'></textarea>
         </label>
@@ -650,6 +663,24 @@
         </div>
         <button class="btn green" id="revealBtn">Revelar</button>
         <div class="status" id="revealStatus"></div>
+      </div>
+
+      <div class="card" style="max-width:720px;margin-top:14px">
+        <strong>Libro de calibración de tus predicciones</strong>
+        <p class="note" style="margin-top:6px">Cada predicción con término queda apuntada aquí, solo en tu ordenador. Cuando sepas el desenlace, márcalo: el libro dice si tus «probable» ocurren entre el 55 y el 80 % de las veces. Mide si tus palabras significan lo que dicen; no mide acierto ni rentabilidad.</p>
+        <div class="note" id="predLectura" style="margin:0 0 10px"></div>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>Término</th><th>Rango</th><th class="num">Casos</th><th class="num">Ocurridos</th><th class="num">Desvío</th><th>Veredicto</th></tr></thead>
+            <tbody id="predBandas"></tbody>
+          </table>
+        </div>
+        <div class="tbl-wrap" style="margin-top:10px">
+          <table>
+            <thead><tr><th>Commit</th><th>Término</th><th>Predicción</th><th>Desenlace</th></tr></thead>
+            <tbody id="predLibro"><tr><td colspan="4" class="muted">Sin predicciones con término todavía.</td></tr></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -781,13 +812,14 @@
         <div class="tbl-wrap">
           <table>
             <thead>
-              <tr><th>Dirección</th><th>Huella</th><th>Sentido</th><th class="num">Altura</th><th class="num">Puntas</th></tr>
+              <tr><th>Dirección</th><th>Huella</th><th>Fuente</th><th>Sentido</th><th class="num">Altura</th><th class="num">Puntas</th></tr>
             </thead>
             <tbody id="peersBody">
-              <tr><td colspan="5" class="muted">Sin pares.</td></tr>
+              <tr><td colspan="6" class="muted">Sin pares.</td></tr>
             </tbody>
           </table>
         </div>
+        <p class="note">Fuente: el código Admiralty de cada par. Una letra por su historial (A, fiable con historial largo … F, sin historial) y un número por lo observado en esta sesión (1, corroborado por otro par … 6, sin nada todavía). Describe, no decide: cada bloque se revalida igual venga de quien venga. Pasa el ratón por el código para ver los motivos.</p>
         <p class="note">
           No hay servidor central. Cualquiera puede ejecutar un nodo y unirse a la red conectándose a otros pares; la cadena se
           replica de igual a igual (peer-to-peer).
@@ -850,7 +882,7 @@
     <div id="ovCorrupt" style="display:none">
       <h3>⚠ El archivo del monedero no se pudo leer</h3>
       <p class="sub">Existe un keystore en esta máquina pero está dañado o es ilegible.
-      <b>No se va a sobrescribir</b>: tus claves podrían seguir dentro.</p>
+      <b>No se va a sobrescribir</b>: tus claves siguen dentro y este programa no las toca.</p>
       <p class="sub">Haz una copia de seguridad del archivo, intenta restaurarlo, y si de verdad
       quieres empezar de cero, renómbralo a mano y vuelve a abrir la app. El nodo sigue
       funcionando (puedes explorar la cadena), pero el monedero queda deshabilitado por seguridad.</p>
@@ -934,7 +966,8 @@
     if(qtok){
       TOKEN = qtok;
       try{ localStorage.setItem(TOKKEY, qtok); }catch(e){}
-      history.replaceState(null, "", location.pathname);
+      // Se quita la llave de la URL pero se conserva el #pestaña, si venía.
+      history.replaceState(null, "", location.pathname + location.hash);
     } else {
       try{ TOKEN = localStorage.getItem(TOKKEY) || ""; }catch(e){}
       // Pestañas que vienen de la v0.7.1, que lo guardaba en sessionStorage.
@@ -1067,6 +1100,7 @@
     });
     if(v==="resumen") pollBlocks();
     if(v==="explorador") pollExplorer();
+    if(v==="predicciones") loadPredicciones();
     if(v==="actualizar") checkUpdate(true);
     if(v==="ciudad"){ loadCity(); if(c3d.mode==="3d") setCityMode("3d"); }
     else if(c3d.handle) c3d.handle.setVisible(false);
@@ -1089,6 +1123,13 @@
     } else {
       dot.className = "dot syncing";
       txt.textContent = t("sincronizando");
+    }
+    // «Sincronizado» es un juicio; el hecho son las alturas. Se enseñan las dos.
+    var f = document.getElementById("syncFact"), y = s && s.sync;
+    if(f){
+      if(!y) f.textContent = "";
+      else if(!y.pares_total) f.textContent = "· "+t("altura")+" "+fmtNum(y.mi_altura)+" · "+t("sin pares: nadie con quien comparar");
+      else f.textContent = "· "+t("altura")+" "+fmtNum(y.mi_altura)+" · "+t("mejor par")+" "+fmtNum(y.mejor_altura_pares)+(y.atras ? " · "+t("faltan")+" "+fmtNum(y.atras) : "");
     }
   }
 
@@ -1179,7 +1220,7 @@
     document.getElementById("uniTips").textContent   = fmtNum(uTips);
     document.getElementById("uniBlocks").textContent = fmtNum(uBlocks);
     document.getElementById("uniBranches").textContent = u.branches_synced != null ? fmtNum(u.branches_synced) : "—";
-    document.getElementById("uniFrom").textContent   = u.last_sync_from || "—";
+    document.getElementById("uniFrom").textContent   = (u.last_sync_from || "—") + (u.last_sync_fuente ? " · "+u.last_sync_fuente : "");
     var sec = document.getElementById("netSecure");
     if(s.secure) sec.innerHTML = '<span class="badge in">🔐 '+esc(t("cifrado y autenticado"))+'</span> '+esc(t("Protocolo RAMI-P2P v2: identidad Ed25519 con prueba de trabajo, acuerdo X25519, HKDF-SHA256, ChaCha20-Poly1305."));
     else if(s.secure === false) sec.textContent = t("Sin cifrado (nodo antiguo).");
@@ -1240,7 +1281,7 @@
   function renderPeers(peers){
     var body = document.getElementById("peersBody");
     if(!peers.length){
-      body.innerHTML = '<tr><td colspan="5" class="muted">'+esc(t("Sin pares."))+'</td></tr>';
+      body.innerHTML = '<tr><td colspan="6" class="muted">'+esc(t("Sin pares."))+'</td></tr>';
       return;
     }
     body.innerHTML = peers.map(function(p){
@@ -1248,7 +1289,8 @@
         ? '<span class="badge in">'+t("entrante")+'</span>'
         : '<span class="badge out">'+t("saliente")+'</span>';
       var fp = p.fingerprint ? ('<span class="mono" title="'+esc(p.pubkey||"")+'">🔐 '+esc(p.fingerprint)+'</span>') : '<span class="muted">—</span>';
-      return "<tr><td>"+esc(p.addr)+"</td><td>"+fp+"</td><td>"+badge+"</td><td class='num'>"+fmtNum(p.height)+"</td><td class='num'>"+(p.tips!=null?fmtNum(p.tips):"—")+"</td></tr>";
+      var fuente = p.fuente ? ('<span class="mono" title="'+esc((p.motivos||[]).join(" · "))+'">'+esc(p.fuente)+'</span>') : '<span class="muted">—</span>';
+      return "<tr><td>"+esc(p.addr)+"</td><td>"+fp+"</td><td>"+fuente+"</td><td>"+badge+"</td><td class='num'>"+fmtNum(p.height)+"</td><td class='num'>"+(p.tips!=null?fmtNum(p.tips):"—")+"</td></tr>";
     }).join("");
   }
 
@@ -1445,8 +1487,18 @@
     var st = document.getElementById("commitStatus");
     if(!payload){ showStatus(st, false, t("Escribe el payload JSON de tu predicción.")); return; }
     // validación ligera de JSON
-    try{ JSON.parse(payload); }
+    var obj;
+    try{ obj = JSON.parse(payload); }
     catch(e){ showStatus(st, false, t("El payload no es JSON válido.")); return; }
+    // La palabra exacta: el término va DENTRO del payload (bytes opacos para
+    // el consenso, así que no cambia ninguna regla), junto con su rango.
+    var termino = document.getElementById("commitTermino").value;
+    if(termino){
+      if(!obj || typeof obj !== "object" || Array.isArray(obj)){ showStatus(st, false, t("Para usar un término, el payload debe ser un objeto JSON.")); return; }
+      obj.termino = termino;
+      obj.rango = RANGOS[termino] || "";
+      payload = JSON.stringify(obj);
+    }
     var btn = this; btn.disabled = true;
     showStatus(st, true, '<span class="k">'+t("Comprometiendo…")+'</span>');
     jpost("/api/commit", {payload:payload, fee:Number(fee)||0})
@@ -1461,6 +1513,7 @@
           if(useBtn) useBtn.addEventListener("click", function(){
             document.getElementById("revealCommit").value = ctx;
           });
+          loadPredicciones();
         } else {
           showStatus(st, false, t("Error: ")+esc(r.error||t("desconocido")));
         }
@@ -1486,6 +1539,39 @@
       .then(function(){ btn.disabled = false; });
   });
 
+  // Libro de calibración de las predicciones propias (la palabra exacta).
+  var RANGOS = {"remoto":"1–5 %","muy improbable":"5–20 %","improbable":"20–45 %","posibilidad aproximadamente igual":"45–55 %","probable":"55–80 %","muy probable":"80–95 %","casi seguro":"95–99 %"};
+  function renderPredicciones(r){
+    var lect = document.getElementById("predLectura");
+    var res = r.resumen || {};
+    var brier = (res.brier_x10000 != null) ? (" · Brier "+(res.brier_x10000/10000).toFixed(4)) : "";
+    lect.textContent = (res.lectura || "") + brier;
+    var bandas = document.getElementById("predBandas");
+    bandas.innerHTML = (res.bandas || []).map(function(b){
+      var v = {dentro:t("dentro del rango"), exceso:t("se dijo más de lo que ocurrió"), defecto:t("se dijo menos de lo que ocurrió"), insuficiente:t("insuficiente")}[b.veredicto] || b.veredicto;
+      var desv = (b.desvio == null) ? "—" : ((b.desvio > 0 ? "+" : "")+b.desvio+" pp");
+      return "<tr><td>"+esc(b.termino)+"</td><td class='mono'>"+esc(b.rango)+"</td><td class='num'>"+b.n+"</td><td class='num'>"+b.ocurridos+"</td><td class='num'>"+esc(desv)+"</td><td>"+esc(v)+"</td></tr>";
+    }).join("");
+    var libro = document.getElementById("predLibro"), lista = r.libro || [];
+    if(!lista.length){ libro.innerHTML = '<tr><td colspan="4" class="muted">'+esc(t("Sin predicciones con término todavía."))+'</td></tr>'; return; }
+    libro.innerHTML = lista.slice().reverse().map(function(p){
+      var des = (p.ocurrio === true) ? ("✓ "+t("ocurrió")) : (p.ocurrio === false) ? ("✗ "+t("no ocurrió"))
+        : ('<button class="btn small" data-pred="'+esc(p.commit)+'" data-ocurrio="1">'+t("Ocurrió")+'</button> <button class="btn small" data-pred="'+esc(p.commit)+'" data-ocurrio="0">'+t("No ocurrió")+'</button>');
+      return "<tr><td class='mono'>"+esc(String(p.commit).slice(0,12))+"…</td><td>"+esc(p.termino)+"</td><td>"+esc(p.texto||"")+"</td><td>"+des+"</td></tr>";
+    }).join("");
+  }
+  function loadPredicciones(){
+    jget("/api/predicciones").then(function(r){ if(r.ok) renderPredicciones(r); }).catch(function(){});
+  }
+  document.getElementById("predLibro").addEventListener("click", function(e){
+    var b = e.target.closest("button[data-pred]"); if(!b) return;
+    b.disabled = true;
+    jpost("/api/predicciones/resultado", {commit: b.getAttribute("data-pred"), ocurrio: b.getAttribute("data-ocurrio") === "1"})
+      .then(function(r){ if(r.ok) loadPredicciones(); else alert(t("Error: ")+(r.error||t("desconocido"))); })
+      .catch(function(){ alert(t("Sin conexión con el nodo.")); })
+      .then(function(){ b.disabled = false; });
+  });
+
   // Autoauditoría
   document.getElementById("auditBtn").addEventListener("click", function(){
     var btn = this, st = document.getElementById("auditStatus"), list = document.getElementById("auditList");
@@ -1499,7 +1585,7 @@
         list.innerHTML = checks.map(function(c){
           return '<div style="display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.06)">'+
                  '<span style="color:'+(c.ok ? 'var(--green)' : '#ff6b6b')+';font-weight:700">'+(c.ok ? '✓' : '✗')+'</span>'+
-                 '<div><div>'+esc(c.name)+'</div><div class="note" style="margin:0">'+esc(c.detail)+' · '+esc(c.ms)+' ms</div></div></div>';
+                 '<div><div><span class="k">'+t("juicio")+':</span> '+esc(c.name)+'</div><div class="note" style="margin:0"><span class="k">'+t("hecho")+':</span> '+esc(c.detail)+' · '+esc(c.ms)+' ms</div></div></div>';
         }).join("");
         var failed = r.failed || 0;
         showStatus(st, failed === 0, failed === 0
@@ -2062,6 +2148,9 @@
   // Si ya se sabe que no hay llave, se dice de entrada en vez de esperar a que
   // falle la primera orden y dejar el panel a medio pintar.
   if(!TOKEN) tokenLost();
+  // Un enlace con #pestaña (p. ej. …/#red o …/#predicciones) abre esa pestaña:
+  // sirve para la documentación y para volver a un apartado concreto.
+  (function(){ var h = (location.hash || "").slice(1); if(views.indexOf(h) >= 0) setView(h); })();
   pollStatus();
   pollBlocks();
   setInterval(pollStatus, 2000);

@@ -217,8 +217,38 @@ cd chain && cargo test          # núcleo: decenas de tests (consenso, emisión,
 `rami-node verify` reconstruye la cadena desde `chain.jsonl` re-admitiendo cada
 bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
 
+## La palabra exacta (v0.7.3): fuentes graduadas, hechos y predicciones con término
+
+Doctrina de las agencias de análisis (ICD 203 / 206, código Admiralty)
+aplicada a lo que RAMI-Chain dice; detalle en `docs/PALABRA-EXACTA.md`.
+
+- **Pares como fuentes.** `rami-node/src/grado.rs` gradúa a cada par: letra
+  por historial (bloques válidos/inválidos verificados por este nodo, cambios
+  de identidad; `peer-grades.json`) y número por la sesión (retraso, bloques
+  inválidos, puntas verificadas, corroboración por otro par). Sale en
+  `PeerView.fuente` («B2») con `motivos`, y en el panel Red. Describe; el
+  consenso no lo mira.
+- **Hechos junto a los juicios.** `NodeStatus.sync` (mi altura, mejor altura
+  de los pares, cuántos faltan) acompaña a `synced`; la autoauditoría separa
+  juicio y hecho.
+- **Predicciones con término.** `rami-wallet/src/calibracion.rs`: escala de
+  siete términos, libro local `predicciones-libro.json`, Brier entero y tabla
+  por término (`GET /api/predicciones`, `POST /api/predicciones/resultado`).
+  El término va dentro del payload del commit: bytes opacos, cero cambios de
+  consenso.
+- **Léxico.** `tools/panel/lexico.py` (CI) falla ante «podría», «might»,
+  «可能», «возможно», «labda»… en panel, web, README y notas.
+- **Nada cambia de formato.** Solo se añaden archivos. `tests/compat_v070.rs`
+  abre ficheros escritos por la v0.7.0 y `tools/compat/roundtrip.sh` (CI)
+  ejecuta las dos versiones, una sobre lo que escribió la otra.
+
 ## Estado y hoja de ruta
 
+- **v0.7.3:** la palabra exacta — pares graduados como fuentes (Admiralty),
+  hechos junto a «sincronizado», predicciones con término ICD 203 y libro
+  local de calibración, léxico vigilado en cinco idiomas, web como mapa
+  orbital, compatibilidad probada con los binarios de la v0.7.0 en las dos
+  direcciones. Sin cambios de consenso ni de formato.
 - **v0.1:** consenso completo, minería, monedero CLI, commit/reveal, emisión,
   persistencia y verificación en una sola máquina.
 - **v0.2:** **gossip P2P** (TCP JSON-lines, `network-id` = hash del génesis;

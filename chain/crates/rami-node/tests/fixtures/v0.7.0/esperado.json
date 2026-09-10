@@ -1,0 +1,13 @@
+{
+  "version_origen": "v0.7.0",
+  "commit_origen": "e39ef12e6a9948b4c3e231c0d5c5d285b2ea6c44",
+  "password": "prueba-1234",
+  "yo": "b6fe0561173ef711a28603c81a1a762caf0ef4106a9c163ea5ca7aece9bbf286",
+  "otro": "546b2920e460263bb29268eeb7fd0bd2a40aba7fc598ea95113362212df96421",
+  "commit_txid": "2a5151be4578d5fa6577bf7999dd8bcb57a8cd4e3f6d66b32e2e965d8994d43b",
+  "altura": 9,
+  "bloques": 10,
+  "identidad_par_b": "9b796117fd24497fffc1f6fa09f34904853793093d9c9dd50cb02ba7cab5cc98",
+  "peer_b": "127.0.0.1:30392",
+  "identidad_propia": "f4d42ed59670ee800947a853f0b7b44f49a954dfa103fbf8092e3da6d1f2d772"
+}
