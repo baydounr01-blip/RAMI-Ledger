@@ -14,7 +14,7 @@
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -95,9 +95,15 @@ fn home_dir() -> Option<PathBuf> {
     None
 }
 
+/// Archivo del token dentro de una carpeta personal dada (parametrizado para
+/// poder probarlo sin tocar el `~/.rami` real del usuario).
+fn token_file(home: &Path, port: u16) -> PathBuf {
+    home.join(".rami").join(format!("panel-{port}.token"))
+}
+
 /// Archivo del token de sesión del panel de un puerto: `~/.rami/panel-<puerto>.token`.
 pub fn token_path(port: u16) -> Option<PathBuf> {
-    home_dir().map(|h| h.join(".rami").join(format!("panel-{port}.token")))
+    home_dir().map(|h| token_file(&h, port))
 }
 
 /// Token nuevo: 32 bytes del generador del sistema, en hex.
@@ -108,9 +114,12 @@ pub fn new_token() -> String {
     hex::encode(b)
 }
 
-/// Guarda el token con permisos 0600 (solo tu usuario puede leerlo).
-pub fn write_token(port: u16, token: &str) -> io::Result<()> {
-    let p = token_path(port).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "sin carpeta personal"))?;
+/// ¿Tiene forma de token del panel (64 caracteres hexadecimales)?
+fn token_is_valid(t: &str) -> bool {
+    t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn write_token_at(p: &Path, token: &str) -> io::Result<()> {
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d)?;
     }
@@ -121,26 +130,65 @@ pub fn write_token(port: u16, token: &str) -> io::Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         opts.mode(0o600);
     }
-    let mut f = opts.open(&p)?;
+    let mut f = opts.open(p)?;
     f.write_all(token.as_bytes())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+        let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600));
     }
     Ok(())
 }
 
-/// Lee el token del panel que escucha en `port` (si este usuario lo creó).
-pub fn read_token(port: u16) -> Option<String> {
-    let p = token_path(port)?;
+/// Guarda el token con permisos 0600 (solo tu usuario puede leerlo).
+pub fn write_token(port: u16, token: &str) -> io::Result<()> {
+    let p = token_path(port).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "sin carpeta personal"))?;
+    write_token_at(&p, token)
+}
+
+fn read_token_at(p: &Path) -> Option<String> {
     let t = std::fs::read_to_string(p).ok()?;
     let t = t.trim().to_string();
-    if t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit()) {
+    if token_is_valid(&t) {
         Some(t)
     } else {
         None
     }
+}
+
+/// Lee el token del panel que escucha en `port` (si este usuario lo creó).
+pub fn read_token(port: u16) -> Option<String> {
+    read_token_at(&token_path(port)?)
+}
+
+/// Token de sesión ESTABLE entre arranques: reutiliza el que ya haya en
+/// `<home>/.rami/panel-<puerto>.token` si sigue siendo válido, y solo crea uno
+/// nuevo cuando falta o está corrupto.
+///
+/// Por qué NO se rota en cada arranque, a diferencia del `.cookie` de Bitcoin
+/// Core: el cliente de este token es un NAVEGADOR, y un navegador no puede leer
+/// archivos. El panel guarda su token y, al detectar que el proceso cambió
+/// (una actualización), se recarga solo. Con un token distinto en cada arranque
+/// esa recarga mandaba el token viejo, el monedero respondía «sesión no
+/// autorizada» y quien tuviera el panel abierto antes de actualizar se quedaba
+/// fuera hasta reabrir desde la app (regresión de la v0.7.1). El archivo sigue
+/// siendo 0600: su vida útil es la de la cuenta del usuario, no la del proceso.
+pub fn load_or_create_token_in(home: &Path, port: u16) -> io::Result<String> {
+    let p = token_file(home, port);
+    if let Some(t) = read_token_at(&p) {
+        // Reafirma los permisos por si el archivo llegó de una copia o backup.
+        write_token_at(&p, &t)?;
+        return Ok(t);
+    }
+    let t = new_token();
+    write_token_at(&p, &t)?;
+    Ok(t)
+}
+
+/// Como [`load_or_create_token_in`], en la carpeta personal del usuario.
+pub fn load_or_create_token(port: u16) -> io::Result<String> {
+    let h = home_dir().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "sin carpeta personal"))?;
+    load_or_create_token_in(&h, port)
 }
 
 /// Comparación en tiempo constante (no depende de en qué byte difieren).
@@ -345,6 +393,61 @@ mod tests {
         let mut other = t.clone();
         other.replace_range(0..1, if t.starts_with('0') { "1" } else { "0" });
         assert!(!token_ok(&other, &t));
+    }
+
+    fn tmp_home(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("rami-token-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    /// REGRESIÓN v0.7.1: el token se generaba en cada arranque, así que tras
+    /// actualizar el panel ya abierto mandaba el viejo y se quedaba fuera del
+    /// monedero. El token debe sobrevivir a un reinicio.
+    #[test]
+    fn token_survives_a_restart() {
+        let home = tmp_home("restart");
+        let first = load_or_create_token_in(&home, 8645).unwrap();
+        assert!(token_is_valid(&first));
+        // Segundo arranque del monedero: mismo usuario, mismo puerto.
+        let second = load_or_create_token_in(&home, 8645).unwrap();
+        assert_eq!(first, second, "el token del panel debe sobrevivir a un reinicio");
+        // Y una tercera vez, por si acaso (una actualización más).
+        assert_eq!(first, load_or_create_token_in(&home, 8645).unwrap());
+        // Cada puerto tiene el suyo: dos monederos a la vez no se pisan.
+        assert_ne!(first, load_or_create_token_in(&home, 8646).unwrap());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// Un archivo de token ilegible o a medias no deja al usuario fuera: se
+    /// sustituye por uno nuevo, que a partir de ahí ya es estable.
+    #[test]
+    fn corrupt_token_file_is_replaced() {
+        let home = tmp_home("corrupt");
+        let p = token_file(&home, 8645);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "esto-no-es-un-token").unwrap();
+        let t = load_or_create_token_in(&home, 8645).unwrap();
+        assert!(token_is_valid(&t));
+        assert_eq!(t, load_or_create_token_in(&home, 8645).unwrap());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// Reutilizar el token no puede costar privacidad: el archivo sigue siendo
+    /// solo para su dueño.
+    #[cfg(unix)]
+    #[test]
+    fn reused_token_file_stays_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tmp_home("perms");
+        let p = token_file(&home, 8645);
+        load_or_create_token_in(&home, 8645).unwrap();
+        // Alguien deja el archivo legible por todos (una copia, un backup).
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        load_or_create_token_in(&home, 8645).unwrap();
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode & 0o077, 0, "otros usuarios no deben poder leer el token");
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

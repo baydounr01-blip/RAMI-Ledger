@@ -1354,12 +1354,19 @@ fn real_main(args: Vec<String>) -> ExitCode {
             "Cierra otras aplicaciones que usen esos puertos e inténtalo de nuevo.",
         );
     };
-    // Token de sesión del panel (como el .cookie de Bitcoin Core): el navegador
-    // lo recibe en la URL con la que la app lo abre y lo manda en cada orden.
-    let token = http::new_token();
-    if let Err(e) = http::write_token(dash_port, &token) {
-        dlog(&format!("aviso: no pude guardar el token del panel: {e}"));
-    }
+    // Token de sesión del panel: el navegador lo recibe en la URL con la que la
+    // app lo abre y lo manda en cada orden. Se REUTILIZA entre arranques (ver
+    // http::load_or_create_token): un token nuevo en cada arranque dejaba fuera
+    // del monedero a quien tuviera el panel abierto al actualizar.
+    let token = match http::load_or_create_token(dash_port) {
+        Ok(t) => t,
+        Err(e) => {
+            // Sin archivo no hay forma de recuperar la sesión en otra pestaña,
+            // pero la que abre la app sigue funcionando: se avisa y se sigue.
+            dlog(&format!("aviso: no pude guardar el token del panel ({e}); esta sesión usará uno temporal"));
+            http::new_token()
+        }
+    };
     let url = format!("http://127.0.0.1:{dash_port}/?t={token}");
     dlog(&format!("v{} panel escuchando en http://127.0.0.1:{dash_port} ({net_name})", env!("CARGO_PKG_VERSION")));
 
