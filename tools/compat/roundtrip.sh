@@ -19,9 +19,11 @@ OLD_TAG="${1:-v0.7.0}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 WORK="${COMPAT_WORK:-$(mktemp -d)}"
 OLD_SRC="$WORK/old-src"
-export HOME="$WORK/home"
+# No se toca HOME: rustup busca su toolchain en ~/.rustup (en el runner del
+# CI no hay «default» fuera de él). Todo va con --keystore y --chain explícitos.
+RAMI_HOME="$WORK/home"
 export RAMI_WALLET_PASSWORD=compat-1234
-mkdir -p "$HOME/.rami"
+mkdir -p "$RAMI_HOME/.rami"
 
 log() { printf '\n== %s\n' "$*"; }
 falla() { printf '✗ %s\n' "$*" >&2; exit 1; }
@@ -38,8 +40,8 @@ fi
 cargo build --release --locked --manifest-path "$OLD_SRC/chain/Cargo.toml" -p rami-wallet -p rami-node >/dev/null
 OLD="$OLD_SRC/chain/target/release"
 
-KS="$HOME/.rami/wallet.json"
-C="$HOME/.rami/chain-regtest"
+KS="$RAMI_HOME/.rami/wallet.json"
+C="$RAMI_HOME/.rami/chain-regtest"
 
 # ── 1. La versión antigua escribe ──────────────────────────────────────
 log "$OLD_TAG escribe monedero y cadena"
