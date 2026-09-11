@@ -13,7 +13,8 @@ de claves). Todo lo que sigue es verificable en el código.
   `SECURITY-INVENTORY.txt`; ahora el CI falla si aparece uno nuevo.
 - **Hallazgos corregidos en v0.7.1:** 2 altos, 6 medios, 4 bajos.
 - **Pendientes documentados:** 2 (cambio de consenso planeado y certificados
-  de plataforma).
+  de plataforma). *Actualización v0.8.0:* el cambio de consenso está hecho
+  (activación 2026‑10‑20); entra como pendiente la cota de timestamp.
 
 ## Hallazgos y correcciones
 
@@ -79,8 +80,10 @@ Autoauditoría), en la terminal (`rami-node audit --peer …`) y en el CI.
 
 ## Pendiente
 
-1. **Firma de transacción ligada a la red** (cambio de consenso v0.8,
-   activación por fecha).
+1. **Firma de transacción ligada a la red** — hecho en v0.8.0 (cambio de
+   consenso con activación el 2026‑10‑20 00:00 UTC; `docs/CONSENSO-V2.md`).
+   Queda abierto lo que salió al hacerlo: la cadena no acota el timestamp de
+   los bloques (ver `SECURITY.md`).
 2. **Certificados de plataforma** (Apple Developer ID / Authenticode) para
    instalar sin avisos; la firma Ed25519 de release se activa poniendo la
    clave pública en `RELEASE_PUBKEY_HEX` y la semilla en el secreto

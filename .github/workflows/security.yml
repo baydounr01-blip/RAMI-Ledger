@@ -99,5 +99,7 @@ jobs:
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      - name: Ida y vuelta v0.7.0 ⇄ esta versión
+      - name: Ida y vuelta v0.7.0 ⇄ esta versión (con activación de la regla v2)
         run: bash tools/compat/roundtrip.sh v0.7.0
+      - name: Ida y vuelta v0.7.3 (3c2c4bf) ⇄ esta versión
+        run: COMPAT_WORK="$RUNNER_TEMP/compat-v073" bash tools/compat/roundtrip.sh 3c2c4bf

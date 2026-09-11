@@ -789,6 +789,18 @@
       </div>
 
       <div class="card" style="margin-bottom:14px;max-width:720px">
+        <div class="lbl" style="margin-bottom:8px">📜 Regla de firma (cambio de consenso v0.8.0)</div>
+        <div class="grid tiles" style="margin-bottom:8px">
+          <div class="tile"><div class="lbl">Regla vigente</div><div class="val" id="conRegla">—</div><div class="note" id="conSoporta"></div></div>
+          <div class="tile"><div class="lbl">Activación de v2 (UTC)</div><div class="val" id="conDesde" style="font-size:14px">—</div></div>
+          <div class="tile"><div class="lbl">Pares que entienden v2</div><div class="val" id="conPares">—</div></div>
+          <div class="tile"><div class="lbl">Pendientes fuera de regla</div><div class="val" id="conFuera">—</div></div>
+        </div>
+        <div class="note" id="conJuicio" style="margin:0 0 8px"></div>
+        <p class="note" style="margin:0">Hecho: desde la activación, cada firma lleva dentro el identificador de esta red («RAMI-CHAIN/tx/v2» + network-id + transacción), así que una firma hecha para la testnet no vale en ninguna otra red. La regla la fija la fecha del bloque, la misma para todos los nodos con los mismos parámetros. Un monedero anterior a v0.8.0 sigue abriendo sus ficheros, pero desde la activación no admite los bloques nuevos: se queda en su altura hasta que se actualiza.</p>
+      </div>
+
+      <div class="card" style="margin-bottom:14px;max-width:720px">
         <div class="lbl" style="margin-bottom:6px">🔗 Conectar con otro ordenador</div>
         <div class="kv" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
           <div><span class="k">Código de conexión:</span> <span class="mono" id="netCode">—</span></div>
@@ -1133,6 +1145,40 @@
     }
   }
 
+  // Cambio de consenso (regla de firma v2): hechos en las fichas, juicio aparte.
+  function fmtFaltan(sec){
+    var d = Math.floor(sec/86400), h = Math.floor((sec%86400)/3600), m = Math.floor((sec%3600)/60);
+    if(d) return d+" d "+h+" h";
+    if(h) return h+" h "+m+" min";
+    return m+" min";
+  }
+  function renderConsenso(c, peers){
+    var elR = document.getElementById("conRegla");
+    if(!elR) return;
+    if(!c){ elR.textContent = "—"; return; }
+    var vig = c.regla_vigente || 1, sop = c.regla_soportada || 1;
+    elR.textContent = "v"+vig;
+    document.getElementById("conSoporta").textContent = t("este monedero entiende hasta")+" v"+sop;
+    var d = document.getElementById("conDesde");
+    if(c.v2_desde == null) d.textContent = t("sin activación en esta red");
+    else {
+      var iso = new Date(c.v2_desde*1000).toISOString().slice(0,16).replace("T"," ");
+      d.textContent = iso + (c.faltan_segundos ? " · "+t("faltan")+" "+fmtFaltan(c.faltan_segundos) : " · "+t("ya rige"));
+    }
+    document.getElementById("conPares").textContent = (c.pares_total ? fmtNum(c.pares_v2)+" / "+fmtNum(c.pares_total) : "—");
+    document.getElementById("conFuera").textContent = fmtNum(c.mempool_fuera_de_regla||0);
+    var j = document.getElementById("conJuicio"), sinV2 = (c.pares_total||0) - (c.pares_v2||0), txt;
+    if(c.v2_desde == null) txt = t("Juicio: esta red no tiene activación programada; rige la regla v1 y nada cambia.");
+    else if(vig < 2){
+      if(!c.pares_total) txt = t("Juicio: sin pares no hay con quién comparar la preparación; solo cuenta que este monedero entiende v2.");
+      else if(!sinV2) txt = t("Juicio: todos los pares conectados anuncian v2; con lo visto hasta ahora, la activación no deja fuera a ninguno de ellos.");
+      else txt = t("Juicio:")+" "+fmtNum(sinV2)+" "+t("par(es) no anuncia(n) v2: al activarse la regla dejará(n) de seguir la cadena si no se actualiza(n).");
+    } else {
+      txt = t("Juicio: rige v2. Un par que no la anuncie no sigue la cadena desde la activación; las transacciones firmadas antes con v1 que no se minaron hay que volver a enviarlas.");
+    }
+    j.textContent = txt;
+  }
+
   // ---------- render status ----------
   var bootVersion = "", bootPid = 0;
   function renderStatus(s){
@@ -1221,6 +1267,7 @@
     document.getElementById("uniBlocks").textContent = fmtNum(uBlocks);
     document.getElementById("uniBranches").textContent = u.branches_synced != null ? fmtNum(u.branches_synced) : "—";
     document.getElementById("uniFrom").textContent   = (u.last_sync_from || "—") + (u.last_sync_fuente ? " · "+u.last_sync_fuente : "");
+    renderConsenso(s.consenso, (s.peers||[]));
     var sec = document.getElementById("netSecure");
     if(s.secure) sec.innerHTML = '<span class="badge in">🔐 '+esc(t("cifrado y autenticado"))+'</span> '+esc(t("Protocolo RAMI-P2P v2: identidad Ed25519 con prueba de trabajo, acuerdo X25519, HKDF-SHA256, ChaCha20-Poly1305."));
     else if(s.secure === false) sec.textContent = t("Sin cifrado (nodo antiguo).");

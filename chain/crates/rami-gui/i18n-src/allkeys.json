@@ -413,5 +413,20 @@
 "no ocurrió",
 "Ocurrió",
 "No ocurrió",
-": tus claves siguen dentro y este programa no las toca."
+": tus claves siguen dentro y este programa no las toca.",
+"📜 Regla de firma (cambio de consenso v0.8.0)",
+"Regla vigente",
+"Activación de v2 (UTC)",
+"Pares que entienden v2",
+"Pendientes fuera de regla",
+"Hecho: desde la activación, cada firma lleva dentro el identificador de esta red («RAMI-CHAIN/tx/v2» + network-id + transacción), así que una firma hecha para la testnet no vale en ninguna otra red. La regla la fija la fecha del bloque, la misma para todos los nodos con los mismos parámetros. Un monedero anterior a v0.8.0 sigue abriendo sus ficheros, pero desde la activación no admite los bloques nuevos: se queda en su altura hasta que se actualiza.",
+"este monedero entiende hasta",
+"sin activación en esta red",
+"ya rige",
+"Juicio: esta red no tiene activación programada; rige la regla v1 y nada cambia.",
+"Juicio: sin pares no hay con quién comparar la preparación; solo cuenta que este monedero entiende v2.",
+"Juicio: todos los pares conectados anuncian v2; con lo visto hasta ahora, la activación no deja fuera a ninguno de ellos.",
+"Juicio:",
+"par(es) no anuncia(n) v2: al activarse la regla dejará(n) de seguir la cadena si no se actualiza(n).",
+"Juicio: rige v2. Un par que no la anuncie no sigue la cadena desde la activación; las transacciones firmadas antes con v1 que no se minaron hay que volver a enviarlas."
 ]

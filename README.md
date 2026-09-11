@@ -217,6 +217,32 @@ cd chain && cargo test          # núcleo: decenas de tests (consenso, emisión,
 `rami-node verify` reconstruye la cadena desde `chain.jsonl` re-admitiendo cada
 bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
 
+## La firma ligada a la red (v0.8.0): primer cambio de consenso, con fecha
+
+Desde el **20 de octubre de 2026, 00:00 UTC**, cada firma de transacción
+lleva dentro el identificador de la red: el mensaje pasa de
+`"RAMI-CHAIN/tx/v1" || cuerpo` a `"RAMI-CHAIN/tx/v2" || network-id || cuerpo`.
+Una transacción firmada para la testnet no vale en ninguna otra red. Detalle
+en `docs/CONSENSO-V2.md`.
+
+- **Antes de la fecha no cambia nada:** la 0.8.0 se habla con la 0.7.x, firma
+  igual y abre los mismos archivos. Después, los nodos anteriores se quedan en
+  su altura sin romperse (probado con los binarios reales de la v0.7.0 y la
+  v0.7.3 en `tools/compat/roundtrip.sh`, paso 4).
+- **La regla la fija el timestamp del bloque** frente a la fecha de los
+  parámetros (`Params.firma_v2_desde`), sin periodo mixto, y **no retrocede**
+  dentro de una rama (`BlockNode.firma_v2`). Regtest no tiene fecha salvo
+  `--firma-v2-desde <unix>`.
+- **Mempool, minero y carteras** trabajan con un `FirmaCtx` (regla + red):
+  `verify_tx_con`, `build_candidate`, `NodeHandle::firma()`, todas las
+  `build_*` del monedero. Al activarse, el nodo poda lo firmado con v1 (hay
+  que reenviarlo).
+- **Hechos en el panel:** Red → «📜 Regla de firma» (regla vigente, cuenta
+  atrás, pares que anuncian v2 por el campo nuevo `Status.rule`, pendientes
+  fuera de regla) y un juicio aparte. El protocolo sigue siendo el v2.
+- **Dicho entero:** la cadena no acota el timestamp de los bloques; un minero
+  puede adelantar la activación para su rama, no retrasarla (`SECURITY.md`).
+
 ## La palabra exacta (v0.7.3): fuentes graduadas, hechos y predicciones con término
 
 Doctrina de las agencias de análisis (ICD 203 / 206, código Admiralty)
@@ -244,6 +270,12 @@ aplicada a lo que RAMI-Chain dice; detalle en `docs/PALABRA-EXACTA.md`.
 
 ## Estado y hoja de ruta
 
+- **v0.8.0:** primer cambio de consenso — firma de transacción ligada a la
+  red (`"RAMI-CHAIN/tx/v2" || network-id || cuerpo`) con activación el
+  2026‑10‑20 00:00 UTC, sin periodo mixto y sin retroceso dentro de una rama;
+  `Status.rule` en el protocolo (mismo `PROTO_VERSION`); ficha «Regla de
+  firma» en el panel; compatibilidad probada con los binarios de la v0.7.0 y
+  la v0.7.3 antes y después de la activación. Pendiente: cota de timestamp.
 - **v0.7.3:** la palabra exacta — pares graduados como fuentes (Admiralty),
   hechos junto a «sincronizado», predicciones con término ICD 203 y libro
   local de calibración, léxico vigilado en cinco idiomas, web como mapa
@@ -583,8 +615,8 @@ aplicada a lo que RAMI-Chain dice; detalle en `docs/PALABRA-EXACTA.md`.
   otra red, PoW inválida, firma manipulada, trama sin autenticar, trama
   gigante, 256 puntas falsas) y comprobaciones locales (permisos 0600, panel
   solo local, hash del ejecutable frente a `BINARIES-SHA256.txt` del release).
-  Pendiente y documentado: firma de tx ligada a la red (v0.8) y certificados
-  de plataforma.
+  Pendiente y documentado entonces: firma de tx ligada a la red (hecho en
+  v0.8.0) y certificados de plataforma.
 - **v0.7.2 (esto): arreglo urgente del acceso al panel.** La v0.7.1 generaba
   una llave de sesión nueva en cada arranque, así que quien tuviera el panel
   abierto en el navegador al actualizar se quedaba fuera («sesión no

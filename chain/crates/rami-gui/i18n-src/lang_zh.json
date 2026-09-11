@@ -413,5 +413,20 @@
 "no ocurrió": "未发生",
 "Ocurrió": "已发生",
 "No ocurrió": "未发生",
-": tus claves siguen dentro y este programa no las toca.": "：你的密钥仍在其中，本程序不会触碰它们。"
+": tus claves siguen dentro y este programa no las toca.": "：你的密钥仍在其中，本程序不会触碰它们。",
+"📜 Regla de firma (cambio de consenso v0.8.0)": "📜 签名规则（v0.8.0 共识变更）",
+"Regla vigente": "当前规则",
+"Activación de v2 (UTC)": "v2 启用时间（UTC）",
+"Pares que entienden v2": "支持 v2 的节点",
+"Pendientes fuera de regla": "不符合规则的待处理交易",
+"Hecho: desde la activación, cada firma lleva dentro el identificador de esta red («RAMI-CHAIN/tx/v2» + network-id + transacción), así que una firma hecha para la testnet no vale en ninguna otra red. La regla la fija la fecha del bloque, la misma para todos los nodos con los mismos parámetros. Un monedero anterior a v0.8.0 sigue abriendo sus ficheros, pero desde la activación no admite los bloques nuevos: se queda en su altura hasta que se actualiza.": "事实：自启用起，每个签名内部都包含本网络的标识（“RAMI-CHAIN/tx/v2”+ network-id + 交易），因此为测试网生成的签名在任何其他网络上都无效。规则由区块日期决定，对参数相同的所有节点一致。v0.8.0 之前的钱包仍能打开其文件，但自启用起不再接受新区块：它会停留在原高度，直到更新。",
+"este monedero entiende hasta": "本钱包支持到",
+"sin activación en esta red": "本网络无启用计划",
+"ya rige": "已生效",
+"Juicio: esta red no tiene activación programada; rige la regla v1 y nada cambia.": "判断：本网络没有计划中的启用；v1 规则生效，一切不变。",
+"Juicio: sin pares no hay con quién comparar la preparación; solo cuenta que este monedero entiende v2.": "判断：没有节点就无从比较准备情况；只能确定本钱包支持 v2。",
+"Juicio: todos los pares conectados anuncian v2; con lo visto hasta ahora, la activación no deja fuera a ninguno de ellos.": "判断：所有已连接节点都宣告支持 v2；就目前所见，启用不会把它们中的任何一个排除在外。",
+"Juicio:": "判断：",
+"par(es) no anuncia(n) v2: al activarse la regla dejará(n) de seguir la cadena si no se actualiza(n).": "个节点未宣告支持 v2：规则启用后，若不更新将无法继续跟随链。",
+"Juicio: rige v2. Un par que no la anuncie no sigue la cadena desde la activación; las transacciones firmadas antes con v1 que no se minaron hay que volver a enviarlas.": "判断：v2 已生效。未宣告支持它的节点自启用起不再跟随链；此前用 v1 签名且未被打包的交易需要重新发送。"
 }

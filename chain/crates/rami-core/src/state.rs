@@ -13,7 +13,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::block::Block;
-use crate::tx::{fee_of, merkle_root_txids, txid, verify_tx, AccountId, Amount, Tx, TxId};
+use crate::tx::{fee_of, merkle_root_txids, txid, verify_tx_con, AccountId, Amount, FirmaCtx, Tx, TxId};
 
 /// 1 RAMI = 100_000_000 ramiwei (8 decimales, como BTC).
 pub const COIN: Amount = 100_000_000;
@@ -135,9 +135,19 @@ impl State {
     }
 }
 
+/// Aplica un bloque bajo la regla de firma v1 (la de v0.7.x). Sólo para
+/// pruebas: el árbol de bloques usa `apply_block_con` con la regla que rige
+/// según el timestamp del bloque.
+#[cfg(test)]
+pub fn apply_block(state: &mut State, block: &Block, expected_height: u64) -> Result<(), String> {
+    apply_block_con(state, block, expected_height, &FirmaCtx::v1())
+}
+
 /// Aplica un bloque al estado (que debe ser el estado tras el bloque padre).
 /// Devuelve `Ok(())` y muta `state`, o `Err` con el motivo (bloque inválido).
-pub fn apply_block(state: &mut State, block: &Block, expected_height: u64) -> Result<(), String> {
+/// `firma` fija la regla con la que se verifican las firmas de las tx del
+/// bloque (v1 o v2 ligada a la red); la decide el árbol por el timestamp.
+pub fn apply_block_con(state: &mut State, block: &Block, expected_height: u64, firma: &FirmaCtx) -> Result<(), String> {
     if block.header.height != expected_height {
         return Err(format!(
             "altura {} != esperada {}",
@@ -172,7 +182,7 @@ pub fn apply_block(state: &mut State, block: &Block, expected_height: u64) -> Re
 
     // 3) Verificación sin estado de todas las tx (estructura + firma).
     for tx in &block.txs {
-        verify_tx(tx)?;
+        verify_tx_con(tx, firma)?;
     }
 
     // 4) Suma de comisiones de las tx no-coinbase (para acotar la recompensa).

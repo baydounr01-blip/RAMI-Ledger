@@ -24,7 +24,7 @@ use sha2::Sha256;
 
 use rami_core::crypto::KeyPair;
 use rami_core::state::COIN;
-use rami_core::tx::{commit_hash, signing_message, AccountId, Tx};
+use rami_core::tx::{commit_hash, AccountId, FirmaCtx, Tx};
 
 /// Carpeta home REAL del usuario. En Windows `HOME` no suele existir
 /// (`USERPROFILE` sí); caer al directorio de trabajo actual haría que cadena y
@@ -399,9 +399,10 @@ pub fn parse_pubkey(hexs: &str) -> Result<AccountId, String> {
     Ok(a)
 }
 
-/// Firma una tx rellenando su campo `sig`.
-pub fn sign_into(kp: &KeyPair, mut tx: Tx) -> Tx {
-    let sig = kp.sign(&signing_message(&tx));
+/// Firma una tx rellenando su campo `sig` con el mensaje que dicta `firma`
+/// (regla v1 hasta la activación; v2 ligada a la red desde ella).
+pub fn sign_into(firma: &FirmaCtx, kp: &KeyPair, mut tx: Tx) -> Tx {
+    let sig = kp.sign(&firma.mensaje(&tx));
     match &mut tx {
         Tx::Transfer { sig: s, .. }
         | Tx::Stake { sig: s, .. }
@@ -419,22 +420,23 @@ pub fn sign_into(kp: &KeyPair, mut tx: Tx) -> Tx {
     tx
 }
 
-pub fn build_transfer(kp: &KeyPair, to: AccountId, amount: u64, fee: u64, nonce: u64) -> Tx {
-    sign_into(kp, Tx::Transfer { from: kp.public_bytes(), to, amount, fee, nonce, sig: [0u8; 64] })
+pub fn build_transfer(firma: &FirmaCtx, kp: &KeyPair, to: AccountId, amount: u64, fee: u64, nonce: u64) -> Tx {
+    sign_into(firma, kp, Tx::Transfer { from: kp.public_bytes(), to, amount, fee, nonce, sig: [0u8; 64] })
 }
 
-pub fn build_stake(kp: &KeyPair, amount: u64, fee: u64, nonce: u64, unstake: bool) -> Tx {
+pub fn build_stake(firma: &FirmaCtx, kp: &KeyPair, amount: u64, fee: u64, nonce: u64, unstake: bool) -> Tx {
     let who = kp.public_bytes();
     if unstake {
-        sign_into(kp, Tx::Unstake { who, amount, fee, nonce, sig: [0u8; 64] })
+        sign_into(firma, kp, Tx::Unstake { who, amount, fee, nonce, sig: [0u8; 64] })
     } else {
-        sign_into(kp, Tx::Stake { who, amount, fee, nonce, sig: [0u8; 64] })
+        sign_into(firma, kp, Tx::Stake { who, amount, fee, nonce, sig: [0u8; 64] })
     }
 }
 
 /// Construye un Commit firmado; devuelve (tx, secreto de 32 bytes). El llamante
 /// DEBE guardar (payload, secreto) para poder revelar después.
 pub fn build_commit(
+    firma: &FirmaCtx,
     kp: &KeyPair,
     payload: &serde_json::Value,
     fee: u64,
@@ -442,11 +444,12 @@ pub fn build_commit(
 ) -> Result<(Tx, [u8; 32]), String> {
     let secret = KeyPair::generate().secret_bytes(); // 32 bytes aleatorios del sistema
     let commitment = commit_hash(payload, &secret)?;
-    let tx = sign_into(kp, Tx::Commit { by: kp.public_bytes(), commitment, fee, nonce, sig: [0u8; 64] });
+    let tx = sign_into(firma, kp, Tx::Commit { by: kp.public_bytes(), commitment, fee, nonce, sig: [0u8; 64] });
     Ok((tx, secret))
 }
 
 pub fn build_reveal(
+    firma: &FirmaCtx,
     kp: &KeyPair,
     commit_txid: [u8; 32],
     payload: &serde_json::Value,
@@ -456,29 +459,30 @@ pub fn build_reveal(
 ) -> Tx {
     let payload_bytes = serde_json::to_vec(payload).unwrap_or_default();
     sign_into(
+        firma,
         kp,
         Tx::Reveal { by: kp.public_bytes(), commit_txid, payload: payload_bytes, secret, fee, nonce, sig: [0u8; 64] },
     )
 }
 
 // ---------- Ciudad RAMI (metaverso, fase 0) ----------
-pub fn build_claim_parcel(kp: &KeyPair, x: u16, y: u16, name: &str, kind: u8, fee: u64, nonce: u64) -> Tx {
-    sign_into(kp, Tx::ClaimParcel { who: kp.public_bytes(), x, y, name: name.as_bytes().to_vec(), kind, fee, nonce, sig: [0u8; 64] })
+pub fn build_claim_parcel(firma: &FirmaCtx, kp: &KeyPair, x: u16, y: u16, name: &str, kind: u8, fee: u64, nonce: u64) -> Tx {
+    sign_into(firma, kp, Tx::ClaimParcel { who: kp.public_bytes(), x, y, name: name.as_bytes().to_vec(), kind, fee, nonce, sig: [0u8; 64] })
 }
-pub fn build_mint_asset(kp: &KeyPair, x: u16, y: u16, kind: u8, meta: &str, fee: u64, nonce: u64) -> Tx {
-    sign_into(kp, Tx::MintAsset { who: kp.public_bytes(), x, y, kind, meta: meta.as_bytes().to_vec(), fee, nonce, sig: [0u8; 64] })
+pub fn build_mint_asset(firma: &FirmaCtx, kp: &KeyPair, x: u16, y: u16, kind: u8, meta: &str, fee: u64, nonce: u64) -> Tx {
+    sign_into(firma, kp, Tx::MintAsset { who: kp.public_bytes(), x, y, kind, meta: meta.as_bytes().to_vec(), fee, nonce, sig: [0u8; 64] })
 }
-pub fn build_transfer_asset(kp: &KeyPair, asset: [u8; 32], to: AccountId, fee: u64, nonce: u64) -> Tx {
-    sign_into(kp, Tx::TransferAsset { from: kp.public_bytes(), asset, to, fee, nonce, sig: [0u8; 64] })
+pub fn build_transfer_asset(firma: &FirmaCtx, kp: &KeyPair, asset: [u8; 32], to: AccountId, fee: u64, nonce: u64) -> Tx {
+    sign_into(firma, kp, Tx::TransferAsset { from: kp.public_bytes(), asset, to, fee, nonce, sig: [0u8; 64] })
 }
-pub fn build_list_lease(kp: &KeyPair, asset: [u8; 32], price: u64, term: u64, fee: u64, nonce: u64) -> Tx {
-    sign_into(kp, Tx::ListLease { who: kp.public_bytes(), asset, price, term, fee, nonce, sig: [0u8; 64] })
+pub fn build_list_lease(firma: &FirmaCtx, kp: &KeyPair, asset: [u8; 32], price: u64, term: u64, fee: u64, nonce: u64) -> Tx {
+    sign_into(firma, kp, Tx::ListLease { who: kp.public_bytes(), asset, price, term, fee, nonce, sig: [0u8; 64] })
 }
-pub fn build_rent(kp: &KeyPair, asset: [u8; 32], fee: u64, nonce: u64) -> Tx {
-    sign_into(kp, Tx::Rent { who: kp.public_bytes(), asset, fee, nonce, sig: [0u8; 64] })
+pub fn build_rent(firma: &FirmaCtx, kp: &KeyPair, asset: [u8; 32], fee: u64, nonce: u64) -> Tx {
+    sign_into(firma, kp, Tx::Rent { who: kp.public_bytes(), asset, fee, nonce, sig: [0u8; 64] })
 }
-pub fn build_harvest(kp: &KeyPair, x: u16, y: u16, total: u64, fee: u64, nonce: u64) -> Tx {
-    sign_into(kp, Tx::Harvest { who: kp.public_bytes(), x, y, total, fee, nonce, sig: [0u8; 64] })
+pub fn build_harvest(firma: &FirmaCtx, kp: &KeyPair, x: u16, y: u16, total: u64, fee: u64, nonce: u64) -> Tx {
+    sign_into(firma, kp, Tx::Harvest { who: kp.public_bytes(), x, y, total, fee, nonce, sig: [0u8; 64] })
 }
 
 /// Almacén local de reveals (payload+secreto) por txid de commit. Nunca se
@@ -528,7 +532,7 @@ mod tests {
     fn commit_then_reveal_matches() {
         let kp = KeyPair::from_secret(&[3u8; 32]);
         let payload = serde_json::json!({"pair": "BTC", "dir": "LONG"});
-        let (_tx, secret) = build_commit(&kp, &payload, 1, 0).unwrap();
+        let (_tx, secret) = build_commit(&FirmaCtx::v1(), &kp, &payload, 1, 0).unwrap();
         // el reveal reproduce el mismo commitment
         let c1 = commit_hash(&payload, &secret).unwrap();
         let c2 = commit_hash(&payload, &secret).unwrap();

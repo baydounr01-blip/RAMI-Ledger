@@ -413,5 +413,20 @@
 "no ocurrió": "haikutokea",
 "Ocurrió": "Ilitokea",
 "No ocurrió": "Haikutokea",
-": tus claves siguen dentro y este programa no las toca.": ": funguo zako bado zimo ndani na programu hii haizigusi."
+": tus claves siguen dentro y este programa no las toca.": ": funguo zako bado zimo ndani na programu hii haizigusi.",
+"📜 Regla de firma (cambio de consenso v0.8.0)": "📜 Kanuni ya sahihi (mabadiliko ya makubaliano v0.8.0)",
+"Regla vigente": "Kanuni inayotumika",
+"Activación de v2 (UTC)": "Kuanzishwa kwa v2 (UTC)",
+"Pares que entienden v2": "Nodi zinazoelewa v2",
+"Pendientes fuera de regla": "Zinazosubiri nje ya kanuni",
+"Hecho: desde la activación, cada firma lleva dentro el identificador de esta red («RAMI-CHAIN/tx/v2» + network-id + transacción), así que una firma hecha para la testnet no vale en ninguna otra red. La regla la fija la fecha del bloque, la misma para todos los nodos con los mismos parámetros. Un monedero anterior a v0.8.0 sigue abriendo sus ficheros, pero desde la activación no admite los bloques nuevos: se queda en su altura hasta que se actualiza.": "Ukweli: kuanzia kuanzishwa, kila sahihi hubeba ndani yake kitambulisho cha mtandao huu («RAMI-CHAIN/tx/v2» + network-id + muamala), hivyo sahihi iliyotengenezwa kwa testnet haifai katika mtandao mwingine wowote. Kanuni huwekwa na tarehe ya bloku, ile ile kwa nodi zote zenye vigezo sawa. Pochi ya kabla ya v0.8.0 bado hufungua faili zake, lakini kuanzia kuanzishwa haikubali bloku mpya: hubaki kwenye urefu wake hadi isasishwe.",
+"este monedero entiende hasta": "pochi hii inaelewa hadi",
+"sin activación en esta red": "hakuna kuanzishwa kwenye mtandao huu",
+"ya rige": "tayari inatumika",
+"Juicio: esta red no tiene activación programada; rige la regla v1 y nada cambia.": "Hukumu: mtandao huu hauna kuanzishwa kulikopangwa; kanuni v1 inatumika na hakuna kinachobadilika.",
+"Juicio: sin pares no hay con quién comparar la preparación; solo cuenta que este monedero entiende v2.": "Hukumu: bila nodi hakuna wa kulinganisha naye utayari; kinachohesabika ni kwamba pochi hii inaelewa v2.",
+"Juicio: todos los pares conectados anuncian v2; con lo visto hasta ahora, la activación no deja fuera a ninguno de ellos.": "Hukumu: nodi zote zilizounganishwa zinatangaza v2; kwa kilichoonekana hadi sasa, kuanzishwa hakumwachi nje yeyote kati yao.",
+"Juicio:": "Hukumu:",
+"par(es) no anuncia(n) v2: al activarse la regla dejará(n) de seguir la cadena si no se actualiza(n).": "nodi hazitangazi v2: kanuni itakapoanzishwa zitaacha kufuata mnyororo zisiposasishwa.",
+"Juicio: rige v2. Un par que no la anuncie no sigue la cadena desde la activación; las transacciones firmadas antes con v1 que no se minaron hay que volver a enviarlas.": "Hukumu: v2 inatumika. Nodi isiyoitangaza haifuati mnyororo tangu kuanzishwa; miamala iliyosainiwa awali kwa v1 ambayo haikuchimbwa lazima itumwe tena."
 }

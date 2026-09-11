@@ -53,9 +53,14 @@ fn is_testnet(args: &[String]) -> bool {
 }
 fn params_of(args: &[String]) -> Params {
     if is_testnet(args) {
+        // En testnet la activación de la regla de firma v2 es la de consenso
+        // (rami_core::params::FIRMA_V2_DESDE_TESTNET); no se puede cambiar.
         Params::testnet()
     } else {
-        Params::regtest()
+        // En regtest no hay activación salvo que se fuerce (pruebas y la
+        // comprobación de compatibilidad): `--firma-v2-desde <unix-utc>`.
+        let desde = arg(args, "--firma-v2-desde").and_then(|s| s.parse::<u64>().ok());
+        Params::regtest().con_firma_v2_desde(desde)
     }
 }
 
@@ -175,7 +180,8 @@ fn cmd_mine(args: &[String]) -> ExitCode {
             Ok(s) => s,
             Err(e) => return die(&e),
         };
-        let (block, _ids) = build_block(height, head, bits, miner, &state, &mempool, *b"main");
+        let (block, _ids) =
+            build_block(height, head, bits, miner, &state, &mempool, *b"main", &tree.firma_ctx(rami_node::now_secs()));
         match tree.insert(block.clone()) {
             Ok(h) => {
                 if let Err(e) = chain.append_block(&block) {
@@ -290,14 +296,17 @@ fn cmd_faucet(args: &[String]) -> ExitCode {
                 }
                 // nonce = estado + pendientes del faucet en el mempool; el saldo
                 // debe cubrir también los goteos aún no minados (drip + fee cada uno).
-                let (nonce, balance, pending) = match chain.load_tree(params).and_then(|t| t.head_state()) {
-                    Ok(st) => {
+                let (nonce, balance, pending, firma) = match chain
+                    .load_tree(params)
+                    .and_then(|t| t.head_state().map(|st| (st, t.firma_ctx(now))))
+                {
+                    Ok((st, firma)) => {
                         let pending = chain
                             .load_mempool()
                             .iter()
-                            .filter(|t| rami_core::tx::signer_of(t) == Some(&me))
+                            .filter(|t| rami_core::tx::signer_of(t) == Some(&me) && rami_core::tx::verify_tx_con(t, &firma).is_ok())
                             .count() as u64;
-                        (st.nonce_of(&me) + pending, st.balance_of(&me) as u128, pending as u128)
+                        (st.nonce_of(&me) + pending, st.balance_of(&me) as u128, pending as u128, firma)
                     }
                     Err(e) => return Response::json(&serde_json::json!({"ok": false, "error": e})),
                 };
@@ -308,7 +317,7 @@ fn cmd_faucet(args: &[String]) -> ExitCode {
                         "error": "faucet sin fondos ahora mismo — mina tú mismo desde el monedero: es la vía principal"
                     }));
                 }
-                let tx = build_transfer(&kp, to, drip, 1, nonce);
+                let tx = build_transfer(&firma, &kp, to, drip, 1, nonce);
                 let id = hex::encode(rami_core::tx::txid(&tx));
                 match chain.append_mempool(&tx) {
                     Ok(()) => {

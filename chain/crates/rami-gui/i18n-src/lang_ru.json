@@ -413,5 +413,20 @@
 "no ocurrió": "не сбылось",
 "Ocurrió": "Сбылось",
 "No ocurrió": "Не сбылось",
-": tus claves siguen dentro y este programa no las toca.": ": ваши ключи по-прежнему внутри, и эта программа их не трогает."
+": tus claves siguen dentro y este programa no las toca.": ": ваши ключи по-прежнему внутри, и эта программа их не трогает.",
+"📜 Regla de firma (cambio de consenso v0.8.0)": "📜 Правило подписи (изменение консенсуса v0.8.0)",
+"Regla vigente": "Действующее правило",
+"Activación de v2 (UTC)": "Активация v2 (UTC)",
+"Pares que entienden v2": "Узлы, понимающие v2",
+"Pendientes fuera de regla": "Ожидающие вне правила",
+"Hecho: desde la activación, cada firma lleva dentro el identificador de esta red («RAMI-CHAIN/tx/v2» + network-id + transacción), así que una firma hecha para la testnet no vale en ninguna otra red. La regla la fija la fecha del bloque, la misma para todos los nodos con los mismos parámetros. Un monedero anterior a v0.8.0 sigue abriendo sus ficheros, pero desde la activación no admite los bloques nuevos: se queda en su altura hasta que se actualiza.": "Факт: с момента активации каждая подпись содержит внутри идентификатор этой сети («RAMI-CHAIN/tx/v2» + network-id + транзакция), поэтому подпись, сделанная для тестовой сети, не годится ни в какой другой. Правило задаётся датой блока — одинаково для всех узлов с теми же параметрами. Кошелёк старше v0.8.0 по-прежнему открывает свои файлы, но с момента активации не принимает новые блоки: он остаётся на своей высоте, пока не обновится.",
+"este monedero entiende hasta": "этот кошелёк понимает до",
+"sin activación en esta red": "на этой сети активации нет",
+"ya rige": "уже действует",
+"Juicio: esta red no tiene activación programada; rige la regla v1 y nada cambia.": "Суждение: на этой сети активация не запланирована; действует правило v1, ничего не меняется.",
+"Juicio: sin pares no hay con quién comparar la preparación; solo cuenta que este monedero entiende v2.": "Суждение: без узлов не с кем сравнивать готовность; известно лишь, что этот кошелёк понимает v2.",
+"Juicio: todos los pares conectados anuncian v2; con lo visto hasta ahora, la activación no deja fuera a ninguno de ellos.": "Суждение: все подключённые узлы объявляют v2; по тому, что видно на данный момент, активация не отсекает ни одного из них.",
+"Juicio:": "Суждение:",
+"par(es) no anuncia(n) v2: al activarse la regla dejará(n) de seguir la cadena si no se actualiza(n).": "узел(ы) не объявляют v2: при активации правила они перестанут следовать за цепочкой, если не обновятся.",
+"Juicio: rige v2. Un par que no la anuncie no sigue la cadena desde la activación; las transacciones firmadas antes con v1 que no se minaron hay que volver a enviarlas.": "Суждение: действует v2. Узел, который её не объявляет, не следует за цепочкой с момента активации; транзакции, подписанные ранее по v1 и не добытые, нужно отправить заново."
 }

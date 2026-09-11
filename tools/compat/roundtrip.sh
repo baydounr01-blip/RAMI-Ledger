@@ -11,6 +11,10 @@
 #      escribir: verify, status, saldo, y un nodo antiguo se conecta a un
 #      nodo nuevo (mismo protocolo). Si algo de esto falla, actualizar —o
 #      volver atrás— rompe el archivo de alguien, y el CI se pone en rojo.
+#   4. Activación de la regla de firma v2 (v0.8.0), forzada en regtest: la
+#      nueva mina bloques con firmas ligadas a la red y la antigua vuelve a
+#      abrir el directorio sin romperse (se queda en su altura, como pasará
+#      en la testnet con quien no se actualice).
 #
 # Uso: tools/compat/roundtrip.sh [OLD_TAG]   (desde la raíz del repositorio)
 set -euo pipefail
@@ -94,4 +98,41 @@ log "$OLD_TAG vuelve a abrir el directorio escrito por la versión nueva"
 timeout 6 "$OLD/rami-node" run --chain "$C" --network regtest --listen 30493 --no-lan --no-portmap >"$WORK/old-node-2.log" 2>&1 || true
 grep -qi "panic\|error" "$WORK/old-node-2.log" && falla "el nodo antiguo se quejó al abrir el directorio: $(head -3 "$WORK/old-node-2.log")"
 "$OLD/rami-node" verify --chain "$C" --network regtest | grep -q "íntegra" || falla "cadena no íntegra tras la ida y vuelta"
-log "OK: ida y vuelta $OLD_TAG ⇄ versión nueva sin pérdidas (directorio: $WORK)"
+
+# ── 4. Activación de la regla de firma v2 (v0.8.0) sobre lo que escribió la antigua ──
+# En regtest la activación se fuerza con --firma-v2-desde. La versión nueva
+# firma y mina bajo la regla v2; la ANTIGUA vuelve a abrir el mismo
+# directorio: no se rompe (abre, lee saldo, arranca), pero se queda en su
+# altura porque no entiende los bloques con firmas v2. Es exactamente lo que
+# pasará en la testnet el día de la activación con quien no se actualice.
+log "activación v2: la nueva mina con firmas ligadas a la red; $OLD_TAG vuelve a abrir"
+D="$WORK/activacion"; rm -rf "$D"; cp -r "$C" "$D"
+DESDE=$(( $(date +%s) - 1 ))
+ALTURA_ANTES=$("$NEW/rami-node" status --chain "$D" --network regtest | awk '/altura/{print $3}')
+# Una tx firmada bajo v1 (sin el flag) NO puede entrar en un bloque v2: se queda fuera, sin romper nada.
+"$NEW/rami-wallet" send --chain "$D" --network regtest --to "$OTRO" --amount 1 --fee 1 --label yo --keystore "$KS" >/dev/null
+"$NEW/rami-wallet" send --chain "$D" --network regtest --firma-v2-desde "$DESDE" --to "$OTRO" --amount 1 --fee 1 --label yo --keystore "$KS" >/dev/null
+"$NEW/rami-node" mine --chain "$D" --network regtest --firma-v2-desde "$DESDE" --address "$YO" --blocks 2 >/dev/null
+"$NEW/rami-node" verify --chain "$D" --network regtest --firma-v2-desde "$DESDE" | grep -q "íntegra" || falla "verify de la nueva con la regla v2 activada"
+ALTURA_V2=$("$NEW/rami-node" status --chain "$D" --network regtest --firma-v2-desde "$DESDE" | awk '/altura/{print $3}')
+[ "$ALTURA_V2" = "$((ALTURA_ANTES + 2))" ] || falla "la nueva con v2 no avanzó 2 bloques ($ALTURA_ANTES → $ALTURA_V2)"
+# El primer bloque v2 lleva la tx firmada v2 (la v1 quedó fuera): sin el flag, la MISMA versión nueva
+# aplica la regla v1 y no admite esos bloques. La regla depende de los parámetros, no del binario.
+ALTURA_SIN=$("$NEW/rami-node" status --chain "$D" --network regtest 2>/dev/null | awk '/altura/{print $3}')
+[ "$ALTURA_SIN" = "$ALTURA_ANTES" ] || falla "sin activación se admitieron bloques v2 ($ALTURA_ANTES → $ALTURA_SIN): la tx v2 no estaba en el primer bloque o la regla no se aplicó"
+# La ANTIGUA abre el directorio con bloques v2: no rompe, no avanza.
+"$OLD/rami-node" verify --chain "$D" --network regtest 2>"$WORK/old-verify-v2.err" | grep -q "íntegra" || falla "la antigua no abre el directorio con bloques v2"
+grep -q "no se re-admitieron" "$WORK/old-verify-v2.err" || falla "la antigua no informó de los bloques que no entiende"
+ALTURA_OLD_V2=$("$OLD/rami-node" status --chain "$D" --network regtest 2>/dev/null | awk '/altura/{print $3}')
+[ "$ALTURA_OLD_V2" = "$ALTURA_ANTES" ] || falla "la antigua debería quedarse en $ALTURA_ANTES y está en $ALTURA_OLD_V2"
+"$OLD/rami-wallet" balance --chain "$D" --network regtest --label yo --keystore "$KS" >/dev/null || falla "saldo con la antigua tras la activación"
+"$OLD/rami-node" mine --chain "$D" --network regtest --address "$YO" --blocks 1 >/dev/null || falla "la antigua no puede minar su rama tras la activación"
+timeout 6 "$OLD/rami-node" run --chain "$D" --network regtest --listen 30494 --no-lan --no-portmap >"$WORK/old-node-v2.log" 2>&1 || true
+grep -qi "panic" "$WORK/old-node-v2.log" && falla "el nodo antiguo cayó al abrir un directorio con bloques v2: $(head -3 "$WORK/old-node-v2.log")"
+# Y la nueva (con la regla) sigue abriendo lo que la antigua acaba de escribir: la rama v2 sigue siendo la cabeza.
+"$NEW/rami-node" verify --chain "$D" --network regtest --firma-v2-desde "$DESDE" | grep -q "íntegra" || falla "la nueva no abre lo que la antigua escribió tras la activación"
+ALTURA_FIN=$("$NEW/rami-node" status --chain "$D" --network regtest --firma-v2-desde "$DESDE" | awk '/altura/{print $3}')
+[ "$ALTURA_FIN" = "$ALTURA_V2" ] || falla "la cabeza v2 cambió tras minar la antigua ($ALTURA_V2 → $ALTURA_FIN)"
+echo "activación: antes $ALTURA_ANTES · nueva con v2 $ALTURA_V2 · antigua se queda en $ALTURA_OLD_V2 · sin la fecha $ALTURA_SIN"
+
+log "OK: ida y vuelta $OLD_TAG ⇄ versión nueva sin pérdidas, activación v2 incluida (directorio: $WORK)"
