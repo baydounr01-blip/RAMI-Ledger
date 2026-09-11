@@ -32,7 +32,15 @@ pub enum Frame {
     /// auto-conexiones y duplicados; `port` es el puerto de escucha anunciado.
     Hello { net: String, node: u64, port: u16, ver: u32 },
     /// Anuncio de punta de cadena tras el handshake (y cuando cambia).
-    Status { height: u64, best: String, work: String },
+    /// `rule` (v0.8.0): regla de firma más alta que entiende el emisor; los
+    /// binarios anteriores no la envían (→ 0) y la ignoran al recibirla.
+    Status {
+        height: u64,
+        best: String,
+        work: String,
+        #[serde(default)]
+        rule: u32,
+    },
     /// Anuncio de puntas del árbol (universo de ramas), las más pesadas
     /// primero (la cabeza siempre viaja) y acotado por el emisor. `partial ==
     /// false`: conjunto completo (tras el handshake y como latido periódico),
@@ -80,7 +88,7 @@ mod tests {
     fn frames_roundtrip() {
         let cases = vec![
             Frame::Hello { net: "ab".repeat(32), node: 42, port: 30301, ver: PROTO_VERSION },
-            Frame::Status { height: 7, best: "00".repeat(32), work: "123456789".into() },
+            Frame::Status { height: 7, best: "00".repeat(32), work: "123456789".into(), rule: 2 },
             Frame::Tips {
                 tips: vec![
                     TipInfo { hash: "11".repeat(32), height: 7, work: u128::MAX.to_string() },
@@ -101,6 +109,25 @@ mod tests {
             assert!(!line.contains('\n'), "una línea no puede llevar saltos");
             assert_eq!(Frame::from_line(&line), Some(f));
         }
+    }
+
+    #[test]
+    fn status_rule_es_opcional_en_ambos_sentidos() {
+        // Un `Status` de v0.7.x (sin `rule`) se lee como regla 0.
+        let viejo = r#"{"Status":{"height":3,"best":"ab","work":"9"}}"#;
+        assert_eq!(
+            Frame::from_line(viejo),
+            Some(Frame::Status { height: 3, best: "ab".into(), work: "9".into(), rule: 0 })
+        );
+        // Y un `Status` de v0.8.0 (con `rule`) lo lee un enum con la forma
+        // de v0.7.x: serde ignora los campos desconocidos.
+        #[derive(Debug, PartialEq, serde::Deserialize)]
+        enum FrameViejo {
+            Status { height: u64, best: String, work: String },
+        }
+        let nuevo = Frame::Status { height: 3, best: "ab".into(), work: "9".into(), rule: 2 }.to_line();
+        let leido: FrameViejo = serde_json::from_str(&nuevo).unwrap();
+        assert_eq!(leido, FrameViejo::Status { height: 3, best: "ab".into(), work: "9".into() });
     }
 
     #[test]

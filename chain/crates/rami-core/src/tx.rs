@@ -275,11 +275,83 @@ pub fn fee_of(tx: &Tx) -> Amount {
     }
 }
 
-/// Mensaje firmado = DS_TAG || cuerpo(sin firma).
+/// Mensaje firmado (regla v1) = DS_TAG || cuerpo(sin firma).
 pub fn signing_message(tx: &Tx) -> Vec<u8> {
     let mut m = DS_TAG.to_vec();
     m.extend_from_slice(&encode_body(tx));
     m
+}
+
+/// Etiqueta de dominio de la regla v2 (v0.8.0): la firma queda ligada a la red.
+pub const DS_TAG_V2: &[u8] = b"RAMI-CHAIN/tx/v2";
+
+/// Mensaje firmado (regla v2) = DS_TAG_V2 || network_id || cuerpo(sin firma).
+/// `net` es el hash del génesis de la red: una firma de testnet no vale en
+/// regtest ni en ninguna otra red con el mismo cuerpo de transacción.
+pub fn signing_message_v2(tx: &Tx, net: &[u8; 32]) -> Vec<u8> {
+    let mut m = DS_TAG_V2.to_vec();
+    m.extend_from_slice(net);
+    m.extend_from_slice(&encode_body(tx));
+    m
+}
+
+/// Regla de firma vigente para una transacción. Se decide por el timestamp
+/// del bloque que la incluye (o por «ahora» en el mempool y las carteras).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Regla {
+    /// `RAMI-CHAIN/tx/v1 || cuerpo` (hasta la activación).
+    V1,
+    /// `RAMI-CHAIN/tx/v2 || network_id || cuerpo` (desde la activación).
+    V2,
+}
+
+/// Regla que rige en `timestamp` dada la fecha de activación `v2_desde`.
+/// Sin fecha (regtest por defecto) rige v1 para siempre; con fecha, v2 rige
+/// exactamente desde ese segundo (inclusive). Es una función pura y total:
+/// dos nodos con los mismos parámetros llegan a la misma regla para el mismo
+/// bloque, que es lo que evita la bifurcación.
+pub fn regla_para(v2_desde: Option<u64>, timestamp: u64) -> Regla {
+    match v2_desde {
+        Some(desde) if timestamp >= desde => Regla::V2,
+        _ => Regla::V1,
+    }
+}
+
+/// Contexto de firma: la regla y la red. Se pasa a `verify_tx_con` y a las
+/// carteras para que produzcan/acepten exactamente el mensaje que rige.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FirmaCtx {
+    pub regla: Regla,
+    pub net: [u8; 32],
+}
+
+impl FirmaCtx {
+    /// Regla v1 pura (la red no interviene en el mensaje).
+    pub fn v1() -> Self {
+        FirmaCtx { regla: Regla::V1, net: [0u8; 32] }
+    }
+    /// Regla v2 sobre la red `net`.
+    pub fn v2(net: [u8; 32]) -> Self {
+        FirmaCtx { regla: Regla::V2, net }
+    }
+    /// Contexto para un instante dado, según la activación de los parámetros.
+    pub fn para(v2_desde: Option<u64>, timestamp: u64, net: [u8; 32]) -> Self {
+        FirmaCtx { regla: regla_para(v2_desde, timestamp), net }
+    }
+    /// Mensaje que debe firmar/verificar esta transacción bajo el contexto.
+    pub fn mensaje(&self, tx: &Tx) -> Vec<u8> {
+        match self.regla {
+            Regla::V1 => signing_message(tx),
+            Regla::V2 => signing_message_v2(tx, &self.net),
+        }
+    }
+    /// Número de regla tal y como se anuncia por la red (`Status.rule`).
+    pub fn numero(&self) -> u32 {
+        match self.regla {
+            Regla::V1 => 1,
+            Regla::V2 => 2,
+        }
+    }
 }
 
 fn sha256d(data: &[u8]) -> [u8; 32] {
@@ -336,6 +408,13 @@ pub fn merkle_root_txids(txids: &[TxId]) -> [u8; 32] {
 /// (saldo, orden de nonce, cota de recompensa, suficiencia de stake) y las de
 /// commit/reveal con estado se hacen en la transición de estado.
 pub fn verify_tx(tx: &Tx) -> Result<(), String> {
+    verify_tx_con(tx, &FirmaCtx::v1())
+}
+
+/// Como `verify_tx`, pero la firma se comprueba contra el mensaje que dicta
+/// `ctx` (regla v1 o v2 sobre una red concreta). Una firma v1 no pasa bajo v2
+/// ni al revés: el mensaje es distinto en la etiqueta y en la red.
+pub fn verify_tx_con(tx: &Tx, ctx: &FirmaCtx) -> Result<(), String> {
     // Cotas estructurales (anti-DoS / anti-bloat), sin estado.
     match tx {
         Tx::Reveal { payload, .. } if payload.len() > MAX_PAYLOAD_BYTES => {
@@ -388,8 +467,11 @@ pub fn verify_tx(tx: &Tx) -> Result<(), String> {
     let vk = VerifyingKey::from_bytes(pk_bytes).map_err(|_| "pubkey inválida".to_string())?;
     let signature = Signature::from_bytes(sig_bytes);
     // verify_strict rechaza claves de orden pequeño / no canónicas.
-    vk.verify_strict(&signing_message(tx), &signature)
-        .map_err(|_| "firma inválida".to_string())
+    vk.verify_strict(&ctx.mensaje(tx), &signature)
+        .map_err(|_| match ctx.regla {
+            Regla::V1 => "firma inválida".to_string(),
+            Regla::V2 => "firma inválida bajo la regla v2 (etiqueta+red)".to_string(),
+        })
 }
 
 #[cfg(test)]
@@ -449,5 +531,66 @@ mod tests {
     #[test]
     fn empty_merkle_is_zero() {
         assert_eq!(merkle_root_txids(&[]), [0u8; 32]);
+    }
+
+    fn signed_transfer_con(kp: &KeyPair, ctx: &FirmaCtx, nonce: u64) -> Tx {
+        let mut tx = Tx::Transfer { from: kp.public_bytes(), to: [7u8; 32], amount: 3, fee: 1, nonce, sig: [0u8; 64] };
+        let sig = kp.sign(&ctx.mensaje(&tx));
+        if let Tx::Transfer { sig: s, .. } = &mut tx {
+            *s = sig;
+        }
+        tx
+    }
+
+    #[test]
+    fn regla_se_decide_por_fecha_inclusive() {
+        assert_eq!(regla_para(None, u64::MAX), Regla::V1);
+        assert_eq!(regla_para(Some(1000), 999), Regla::V1);
+        assert_eq!(regla_para(Some(1000), 1000), Regla::V2);
+        assert_eq!(regla_para(Some(1000), 1001), Regla::V2);
+        assert_eq!(regla_para(Some(0), 0), Regla::V2);
+    }
+
+    #[test]
+    fn firma_v1_no_vale_bajo_v2_ni_al_reves() {
+        let kp = KeyPair::from_secret(&[5u8; 32]);
+        let net = [0xABu8; 32];
+        let v1 = FirmaCtx::v1();
+        let v2 = FirmaCtx::v2(net);
+        let tx1 = signed_transfer_con(&kp, &v1, 0);
+        let tx2 = signed_transfer_con(&kp, &v2, 0);
+        assert!(verify_tx_con(&tx1, &v1).is_ok());
+        assert!(verify_tx_con(&tx2, &v2).is_ok());
+        assert!(verify_tx_con(&tx1, &v2).is_err(), "una firma v1 no debe pasar bajo v2");
+        assert!(verify_tx_con(&tx2, &v1).is_err(), "una firma v2 no debe pasar bajo v1");
+        // `verify_tx` sigue siendo la regla v1 (compatibilidad con v0.7.x).
+        assert!(verify_tx(&tx1).is_ok());
+        assert!(verify_tx(&tx2).is_err());
+    }
+
+    #[test]
+    fn firma_v2_queda_ligada_a_la_red() {
+        let kp = KeyPair::from_secret(&[6u8; 32]);
+        let red_a = FirmaCtx::v2([1u8; 32]);
+        let red_b = FirmaCtx::v2([2u8; 32]);
+        let tx = signed_transfer_con(&kp, &red_a, 0);
+        assert!(verify_tx_con(&tx, &red_a).is_ok());
+        assert!(verify_tx_con(&tx, &red_b).is_err(), "misma tx, otra red: rechazada");
+        // El txid no depende de la regla: cubre cuerpo y firma, no la etiqueta.
+        assert_eq!(txid(&tx), txid(&tx.clone()));
+    }
+
+    #[test]
+    fn mensajes_v1_y_v2_difieren_en_etiqueta_y_red() {
+        let kp = KeyPair::from_secret(&[8u8; 32]);
+        let tx = signed_transfer_con(&kp, &FirmaCtx::v1(), 0);
+        let m1 = signing_message(&tx);
+        let m2 = signing_message_v2(&tx, &[9u8; 32]);
+        assert!(m1.starts_with(DS_TAG));
+        assert!(m2.starts_with(DS_TAG_V2));
+        assert_eq!(&m2[DS_TAG_V2.len()..DS_TAG_V2.len() + 32], &[9u8; 32]);
+        assert_eq!(&m1[DS_TAG.len()..], &m2[DS_TAG_V2.len() + 32..], "el cuerpo es el mismo");
+        assert_eq!(FirmaCtx::v1().numero(), 1);
+        assert_eq!(FirmaCtx::v2([0u8; 32]).numero(), 2);
     }
 }

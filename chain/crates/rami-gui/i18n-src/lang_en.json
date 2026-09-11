@@ -413,5 +413,20 @@
 "no ocurrió": "did not happen",
 "Ocurrió": "Happened",
 "No ocurrió": "Did not happen",
-": tus claves siguen dentro y este programa no las toca.": ": your keys are still inside and this program does not touch them."
+": tus claves siguen dentro y este programa no las toca.": ": your keys are still inside and this program does not touch them.",
+"📜 Regla de firma (cambio de consenso v0.8.0)": "📜 Signature rule (consensus change v0.8.0)",
+"Regla vigente": "Rule in force",
+"Activación de v2 (UTC)": "v2 activation (UTC)",
+"Pares que entienden v2": "Peers that understand v2",
+"Pendientes fuera de regla": "Pending outside the rule",
+"Hecho: desde la activación, cada firma lleva dentro el identificador de esta red («RAMI-CHAIN/tx/v2» + network-id + transacción), así que una firma hecha para la testnet no vale en ninguna otra red. La regla la fija la fecha del bloque, la misma para todos los nodos con los mismos parámetros. Un monedero anterior a v0.8.0 sigue abriendo sus ficheros, pero desde la activación no admite los bloques nuevos: se queda en su altura hasta que se actualiza.": "Fact: from activation on, every signature carries this network's identifier inside it (\"RAMI-CHAIN/tx/v2\" + network-id + transaction), so a signature made for the testnet is worthless on any other network. The rule is set by the block's date, the same for every node with the same parameters. A wallet older than v0.8.0 still opens its files, but from activation on it does not accept the new blocks: it stays at its height until it updates.",
+"este monedero entiende hasta": "this wallet understands up to",
+"sin activación en esta red": "no activation on this network",
+"ya rige": "already in force",
+"Juicio: esta red no tiene activación programada; rige la regla v1 y nada cambia.": "Judgement: this network has no scheduled activation; rule v1 is in force and nothing changes.",
+"Juicio: sin pares no hay con quién comparar la preparación; solo cuenta que este monedero entiende v2.": "Judgement: with no peers there is no one to compare readiness against; all that counts is that this wallet understands v2.",
+"Juicio: todos los pares conectados anuncian v2; con lo visto hasta ahora, la activación no deja fuera a ninguno de ellos.": "Judgement: every connected peer announces v2; on what has been seen so far, activation leaves none of them out.",
+"Juicio:": "Judgement:",
+"par(es) no anuncia(n) v2: al activarse la regla dejará(n) de seguir la cadena si no se actualiza(n).": "peer(s) do not announce v2: when the rule activates they will stop following the chain unless they update.",
+"Juicio: rige v2. Un par que no la anuncie no sigue la cadena desde la activación; las transacciones firmadas antes con v1 que no se minaron hay que volver a enviarlas.": "Judgement: v2 is in force. A peer that does not announce it has not followed the chain since activation; transactions signed earlier with v1 that were not mined must be sent again."
 }

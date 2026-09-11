@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use rami_core::crypto::{address_from_pubkey, KeyPair};
 use rami_core::params::Params;
-use rami_core::tx::{txid, Tx};
+use rami_core::tx::{txid, FirmaCtx, Tx};
 
 use rami_node::{spawn, NodeConfig, NodeHandle};
 use rami_wallet::calibracion;
@@ -239,7 +239,7 @@ fn password_field(b: &Value) -> String {
 
 /// Firma con el monedero (desbloqueado) y envía al nodo: camino común de todas
 /// las acciones de la ciudad.
-fn signed_submit(g: &Gui, build: impl FnOnce(&KeyPair, u64) -> Tx) -> Response {
+fn signed_submit(g: &Gui, build: impl FnOnce(&FirmaCtx, &KeyPair, u64) -> Tx) -> Response {
     let w = g.wallet.lock().unwrap_or_else(|e| e.into_inner());
     let Some(kp) = w.kp.as_ref() else { return err("monedero bloqueado: desbloquéalo con tu contraseña") };
     let node = match g.node_ready() {
@@ -247,7 +247,7 @@ fn signed_submit(g: &Gui, build: impl FnOnce(&KeyPair, u64) -> Tx) -> Response {
         Err(r) => return r,
     };
     let nonce = node.next_nonce(kp.public_bytes());
-    let tx = build(kp, nonce);
+    let tx = build(&node.firma(), kp, nonce);
     match node.submit_tx(tx) {
         Ok(id) => Response::json(&json!({"ok": true, "txid": id})),
         Err(e) => err(e),
@@ -505,7 +505,7 @@ fn route(g: &Gui, req: Request) -> Response {
             let Some(kp) = w.kp.as_ref() else { return err("monedero bloqueado: desbloquéalo con tu contraseña") };
             let node = match g.node_ready() { Ok(n) => n, Err(r) => return r };
             let nonce = node.next_nonce(kp.public_bytes());
-            let tx = build_transfer(kp, to, amount, fee_of(&b), nonce);
+            let tx = build_transfer(&node.firma(), kp, to, amount, fee_of(&b), nonce);
             match node.submit_tx(tx) {
                 Ok(id) => Response::json(&json!({"ok": true, "txid": id})),
                 Err(e) => err(e),
@@ -523,7 +523,7 @@ fn route(g: &Gui, req: Request) -> Response {
             let Some(kp) = w.kp.as_ref() else { return err("monedero bloqueado: desbloquéalo con tu contraseña") };
             let node = match g.node_ready() { Ok(n) => n, Err(r) => return r };
             let nonce = node.next_nonce(kp.public_bytes());
-            let tx = build_stake(kp, amount, fee_of(&b), nonce, unstake);
+            let tx = build_stake(&node.firma(), kp, amount, fee_of(&b), nonce, unstake);
             match node.submit_tx(tx) {
                 Ok(id) => Response::json(&json!({"ok": true, "txid": id})),
                 Err(e) => err(e),
@@ -541,7 +541,7 @@ fn route(g: &Gui, req: Request) -> Response {
             let Some(kp) = w.kp.as_ref() else { return err("monedero bloqueado: desbloquéalo con tu contraseña") };
             let node = match g.node_ready() { Ok(n) => n, Err(r) => return r };
             let nonce = node.next_nonce(kp.public_bytes());
-            let (tx, secret) = match build_commit(kp, &payload, fee_of(&b), nonce) {
+            let (tx, secret) = match build_commit(&node.firma(), kp, &payload, fee_of(&b), nonce) {
                 Ok(v) => v,
                 Err(e) => return err(e),
             };
@@ -621,7 +621,7 @@ fn route(g: &Gui, req: Request) -> Response {
             let Some(kp) = w.kp.as_ref() else { return err("monedero bloqueado: desbloquéalo con tu contraseña") };
             let node = match g.node_ready() { Ok(n) => n, Err(r) => return r };
             let nonce = node.next_nonce(kp.public_bytes());
-            let tx = build_reveal(kp, commit_txid, &payload, secret, fee_of(&b), nonce);
+            let tx = build_reveal(&node.firma(), kp, commit_txid, &payload, secret, fee_of(&b), nonce);
             match node.submit_tx(tx) {
                 Ok(id) => Response::json(&json!({"ok": true, "txid": id})),
                 Err(e) => err(e),
@@ -649,7 +649,7 @@ fn route(g: &Gui, req: Request) -> Response {
                 return err("tipo de parcela desconocido");
             }
             let fee = fee_of(&b);
-            signed_submit(g, move |kp, nonce| build_claim_parcel(kp, x, y, &name, kind as u8, fee, nonce))
+            signed_submit(g, move |firma, kp, nonce| build_claim_parcel(firma, kp, x, y, &name, kind as u8, fee, nonce))
         }
         ("POST", "/api/city/mint") => {
             let b = body_json(&req);
@@ -663,14 +663,14 @@ fn route(g: &Gui, req: Request) -> Response {
                 return err("tipo de activo desconocido");
             }
             let fee = fee_of(&b);
-            signed_submit(g, move |kp, nonce| build_mint_asset(kp, x, y, kind as u8, &meta, fee, nonce))
+            signed_submit(g, move |firma, kp, nonce| build_mint_asset(firma, kp, x, y, kind as u8, &meta, fee, nonce))
         }
         ("POST", "/api/city/transfer") => {
             let b = body_json(&req);
             let asset = match asset_id(&b) { Ok(a) => a, Err(e) => return err(e) };
             let to = match parse_pubkey(str_field(&b, "to")) { Ok(a) => a, Err(e) => return err(e) };
             let fee = fee_of(&b);
-            signed_submit(g, move |kp, nonce| build_transfer_asset(kp, asset, to, fee, nonce))
+            signed_submit(g, move |firma, kp, nonce| build_transfer_asset(firma, kp, asset, to, fee, nonce))
         }
         ("POST", "/api/city/list") => {
             let b = body_json(&req);
@@ -681,20 +681,20 @@ fn route(g: &Gui, req: Request) -> Response {
                 return err("plazo (en bloques) fuera de rango");
             }
             let fee = fee_of(&b);
-            signed_submit(g, move |kp, nonce| build_list_lease(kp, asset, price, term, fee, nonce))
+            signed_submit(g, move |firma, kp, nonce| build_list_lease(firma, kp, asset, price, term, fee, nonce))
         }
         ("POST", "/api/city/rent") => {
             let b = body_json(&req);
             let asset = match asset_id(&b) { Ok(a) => a, Err(e) => return err(e) };
             let fee = fee_of(&b);
-            signed_submit(g, move |kp, nonce| build_rent(kp, asset, fee, nonce))
+            signed_submit(g, move |firma, kp, nonce| build_rent(firma, kp, asset, fee, nonce))
         }
         ("POST", "/api/city/harvest") => {
             let b = body_json(&req);
             let (x, y) = match (coord(&b, "x"), coord(&b, "y")) { (Ok(x), Ok(y)) => (x, y), (Err(e), _) | (_, Err(e)) => return err(e) };
             let total = match parse_ram(str_field(&b, "total")) { Ok(a) => a, Err(e) => return err(e) };
             let fee = fee_of(&b);
-            signed_submit(g, move |kp, nonce| build_harvest(kp, x, y, total, fee, nonce))
+            signed_submit(g, move |firma, kp, nonce| build_harvest(firma, kp, x, y, total, fee, nonce))
         }
 
         ("POST", "/api/peer") => {
@@ -1263,7 +1263,12 @@ fn main() -> ExitCode {
 fn real_main(args: Vec<String>) -> ExitCode {
 
     let is_testnet = arg(&args, "--network").as_deref() != Some("regtest"); // testnet por defecto
-    let params = if is_testnet { Params::testnet() } else { Params::regtest() };
+    let params = if is_testnet {
+        Params::testnet()
+    } else {
+        // Regtest: activación de la regla de firma v2 solo si se fuerza (pruebas).
+        Params::regtest().con_firma_v2_desde(arg(&args, "--firma-v2-desde").and_then(|s| s.parse::<u64>().ok()))
+    };
     let net_name = if is_testnet { "testnet" } else { "regtest" };
 
     let home = rami_wallet::home_dir();

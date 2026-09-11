@@ -17,7 +17,7 @@ use std::process::ExitCode;
 use rami_core::crypto::{address_from_pubkey, KeyPair};
 use rami_core::params::Params;
 use rami_core::store::ChainDir;
-use rami_core::tx::{signer_of, txid, AccountId, Tx};
+use rami_core::tx::{signer_of, txid, verify_tx_con, AccountId, FirmaCtx, Tx};
 
 use rami_wallet::{
     build_commit, build_reveal, build_stake, build_transfer, default_keystore_path, fmt_ram,
@@ -45,21 +45,41 @@ fn keypair_from(args: &[String]) -> Result<KeyPair, String> {
     keystore_of(args).keypair(&label, password_of(args).as_deref())
 }
 fn params_of(args: &[String]) -> Params {
-    match arg(args, "--network").as_deref() {
+    let p = match arg(args, "--network").as_deref() {
         Some("testnet") => Params::testnet(),
         _ => Params::regtest(),
+    };
+    // Solo para pruebas en regtest: fuerza la fecha de activación de la
+    // regla de firma v2 (Unix, UTC). En testnet la fecha es la de consenso.
+    match arg(args, "--firma-v2-desde").and_then(|s| s.parse::<u64>().ok()) {
+        Some(t) if !matches!(arg(args, "--network").as_deref(), Some("testnet")) => p.con_firma_v2_desde(Some(t)),
+        _ => p,
     }
 }
 fn fee_of(args: &[String]) -> u64 {
     arg(args, "--fee").and_then(|s| s.parse().ok()).unwrap_or(1)
 }
 
-/// nonce siguiente = nonce en cadena + tx pendientes de este firmante.
-fn next_nonce(chain: &ChainDir, params: Params, me: &AccountId) -> Result<u64, String> {
+/// nonce siguiente = nonce en cadena + tx pendientes de este firmante, y el
+/// contexto de firma que rige AHORA en esta cadena (regla v1 o v2 ligada a la
+/// red): con él se firma para que el nodo admita la tx.
+fn next_nonce(chain: &ChainDir, params: Params, me: &AccountId) -> Result<(u64, FirmaCtx), String> {
     let tree = chain.load_tree(params)?;
     let base = tree.head_state()?.nonce_of(me);
-    let pending = chain.load_mempool().iter().filter(|t| signer_of(t) == Some(me)).count() as u64;
-    Ok(base + pending)
+    let ahora = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let firma = tree.firma_ctx(ahora);
+    // Solo cuentan las pendientes que AÚN valen bajo la regla vigente: una tx
+    // firmada con v1 antes de la activación ya no entrará en ningún bloque,
+    // así que su nonce sigue libre (el nodo la poda; aquí se ignora).
+    let pending = chain
+        .load_mempool()
+        .iter()
+        .filter(|t| signer_of(t) == Some(me) && verify_tx_con(t, &firma).is_ok())
+        .count() as u64;
+    Ok((base + pending, firma))
 }
 
 fn submit(chain: &ChainDir, tx: &Tx) -> ExitCode {
@@ -175,11 +195,11 @@ fn cmd_send(args: &[String]) -> ExitCode {
         Err(e) => return die(&e),
     };
     let chain = ChainDir::new(&dir);
-    let nonce = match next_nonce(&chain, params_of(args), &kp.public_bytes()) {
+    let (nonce, firma) = match next_nonce(&chain, params_of(args), &kp.public_bytes()) {
         Ok(n) => n,
         Err(e) => return die(&e),
     };
-    submit(&chain, &build_transfer(&kp, to, amount, fee_of(args), nonce))
+    submit(&chain, &build_transfer(&firma, &kp, to, amount, fee_of(args), nonce))
 }
 
 fn cmd_stake(args: &[String], unstake: bool) -> ExitCode {
@@ -194,11 +214,11 @@ fn cmd_stake(args: &[String], unstake: bool) -> ExitCode {
         Err(e) => return die(&e),
     };
     let chain = ChainDir::new(&dir);
-    let nonce = match next_nonce(&chain, params_of(args), &kp.public_bytes()) {
+    let (nonce, firma) = match next_nonce(&chain, params_of(args), &kp.public_bytes()) {
         Ok(n) => n,
         Err(e) => return die(&e),
     };
-    submit(&chain, &build_stake(&kp, amount, fee_of(args), nonce, unstake))
+    submit(&chain, &build_stake(&firma, &kp, amount, fee_of(args), nonce, unstake))
 }
 
 fn cmd_commit(args: &[String]) -> ExitCode {
@@ -213,11 +233,11 @@ fn cmd_commit(args: &[String]) -> ExitCode {
         Err(e) => return die(&e),
     };
     let chain = ChainDir::new(&dir);
-    let nonce = match next_nonce(&chain, params_of(args), &kp.public_bytes()) {
+    let (nonce, firma) = match next_nonce(&chain, params_of(args), &kp.public_bytes()) {
         Ok(n) => n,
         Err(e) => return die(&e),
     };
-    let (tx, secret) = match build_commit(&kp, &payload, fee_of(args), nonce) {
+    let (tx, secret) = match build_commit(&firma, &kp, &payload, fee_of(args), nonce) {
         Ok(v) => v,
         Err(e) => return die(&e),
     };
@@ -247,11 +267,11 @@ fn cmd_reveal(args: &[String]) -> ExitCode {
         }
         None => return die("commit txid inválido"),
     };
-    let nonce = match next_nonce(&chain, params_of(args), &kp.public_bytes()) {
+    let (nonce, firma) = match next_nonce(&chain, params_of(args), &kp.public_bytes()) {
         Ok(n) => n,
         Err(e) => return die(&e),
     };
-    submit(&chain, &build_reveal(&kp, commit_txid, &payload, secret, fee_of(args), nonce))
+    submit(&chain, &build_reveal(&firma, &kp, commit_txid, &payload, secret, fee_of(args), nonce))
 }
 
 // ---- firma de release (Ed25519, la misma criptografía de la cadena) ----

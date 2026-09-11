@@ -16,12 +16,16 @@ use std::collections::{HashMap, HashSet};
 use crate::block::{Block, Hash, ZERO_HASH};
 use crate::params::Params;
 use crate::pow::{difficulty_from_bits, lwma_next_bits, meets_target, LWMA_N};
-use crate::state::{apply_block, State};
+use crate::state::{apply_block_con, State};
+use crate::tx::{regla_para, FirmaCtx, Regla};
 use crate::tiebreak::canonical_tip_order;
 
 pub struct BlockNode {
     pub block: Block,
     pub cum_work: u128,
+    /// La regla de firma v2 rige en este bloque (por su timestamp o porque ya
+    /// regía en su padre: una vez activada en una rama, no se vuelve atrás).
+    pub firma_v2: bool,
 }
 
 /// Prefijo inequívoco del error de `insert` cuando falta el padre (huérfano).
@@ -73,11 +77,12 @@ impl BlockTree {
             return Err("el génesis no cumple el objetivo de PoW".into());
         }
         let mut state = State::default();
-        apply_block(&mut state, &genesis, 0)?;
+        let firma_v2 = regla_para(params.firma_v2_desde, genesis.header.timestamp) == Regla::V2;
+        apply_block_con(&mut state, &genesis, 0, &Self::ctx_de(firma_v2, h))?;
         let cum_work = difficulty_from_bits(genesis.header.bits);
 
         let mut nodes = HashMap::new();
-        nodes.insert(h, BlockNode { block: genesis, cum_work });
+        nodes.insert(h, BlockNode { block: genesis, cum_work, firma_v2 });
         let mut tip_state = HashMap::new();
         tip_state.insert(h, state);
         Ok(BlockTree { nodes, children: HashMap::new(), tip_state, genesis: h, params })
@@ -139,13 +144,43 @@ impl BlockTree {
         lwma_next_bits(&self.lwma_window(parent), self.params.min_difficulty)
     }
 
+    fn ctx_de(firma_v2: bool, net: Hash) -> FirmaCtx {
+        FirmaCtx { regla: if firma_v2 { Regla::V2 } else { Regla::V1 }, net }
+    }
+
+    /// ¿Rige la regla v2 para un bloque hijo de `parent` con ese timestamp?
+    /// Sí si su timestamp alcanza la fecha de activación O si ya regía en el
+    /// padre. Lo segundo es lo que impide que, activada la regla, un minero
+    /// ponga un timestamp anterior a la fecha para colar firmas v1 (no hay
+    /// cota de timestamp en la cadena): en una rama la regla sólo avanza.
+    pub fn firma_v2_sobre(&self, parent: &Hash, timestamp: u64) -> bool {
+        let padre_v2 = self.nodes.get(parent).map(|n| n.firma_v2).unwrap_or(false);
+        padre_v2 || regla_para(self.params.firma_v2_desde, timestamp) == Regla::V2
+    }
+
+    /// Contexto de firma para un bloque hijo de `parent` con ese timestamp.
+    pub fn firma_ctx_sobre(&self, parent: &Hash, timestamp: u64) -> FirmaCtx {
+        Self::ctx_de(self.firma_v2_sobre(parent, timestamp), self.genesis)
+    }
+
+    /// Contexto de firma que rige para lo que se construya AHORA sobre la
+    /// cabeza (mempool, candidato, carteras): red = génesis.
+    pub fn firma_ctx(&self, timestamp: u64) -> FirmaCtx {
+        self.firma_ctx_sobre(&self.head(), timestamp)
+    }
+
+    /// Parámetros de consenso con los que se construyó el árbol.
+    pub fn params(&self) -> &Params {
+        &self.params
+    }
+
     /// Reproduce el estado a lo largo de la rama que termina en `h` (para puntas
     /// de las que no guardamos estado, p. ej. al bifurcar en un bloque interior).
     fn replay_state(&self, h: &Hash) -> Result<State, String> {
         let mut state = State::default();
         for (i, bh) in self.chain_to(h).iter().enumerate() {
             let node = self.nodes.get(bh).ok_or("bloque ausente al reproducir")?;
-            apply_block(&mut state, &node.block, i as u64)?;
+            apply_block_con(&mut state, &node.block, i as u64, &Self::ctx_de(node.firma_v2, self.genesis))?;
         }
         Ok(state)
     }
@@ -184,12 +219,13 @@ impl BlockTree {
             Some(s) => s.clone(),
             None => self.replay_state(&parent)?,
         };
-        apply_block(&mut parent_state, &block, block.header.height)?;
+        let firma_v2 = parent_node.firma_v2 || regla_para(self.params.firma_v2_desde, block.header.timestamp) == Regla::V2;
+        apply_block_con(&mut parent_state, &block, block.header.height, &Self::ctx_de(firma_v2, self.genesis))?;
 
         let cum_work = parent_node.cum_work + difficulty_from_bits(block.header.bits);
 
         // Insertar.
-        self.nodes.insert(h, BlockNode { block, cum_work });
+        self.nodes.insert(h, BlockNode { block, cum_work, firma_v2 });
         self.children.entry(parent).or_default().push(h);
         // El padre deja de ser hoja; el hijo pasa a ser hoja.
         self.tip_state.remove(&parent);

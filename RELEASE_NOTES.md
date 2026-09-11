@@ -1,3 +1,48 @@
+## Novedades de v0.8.0 — la firma ligada a la red: primer cambio de consenso, con fecha de activación
+
+**Actualiza antes del 20 de octubre de 2026 (00:00 UTC).** Hasta esa fecha
+nada cambia: la 0.8.0 se habla con la 0.7.0 y la 0.7.3, firma igual, mina
+igual y abre los mismos archivos (probado con los binarios reales, ver abajo).
+Desde esa fecha, la firma de cada transacción lleva dentro el identificador de
+la red y los nodos anteriores dejan de seguir la cadena: no se rompen, se
+quedan en su altura hasta que se actualizan.
+
+- **La regla v2.** El mensaje firmado pasa de `"RAMI-CHAIN/tx/v1" || cuerpo`
+  a `"RAMI-CHAIN/tx/v2" || network‑id || cuerpo`. Una transacción firmada
+  para la testnet no vale en regtest ni en ninguna otra red (era el pendiente
+  documentado en `SECURITY.md` desde la 0.7.1). El txid no cambia de fórmula.
+- **Activación por fecha, sin periodo mixto.** La regla la fija el timestamp
+  del bloque frente a la fecha de los parámetros de la red: antes, v1 y solo
+  v1; desde, v2 y solo v2. Y **no retrocede dentro de una rama**: una vez que
+  un bloque exige v2, todos sus descendientes la exigen, lleven el timestamp
+  que lleven (así nadie cuela firmas v1 tras la fecha). Regtest no tiene
+  fecha salvo que la fuerces con `--firma-v2-desde <unix>` en `rami-node`,
+  `rami-wallet` y `rami-gui`.
+- **Mempool y monedero.** El nodo admite cada transacción bajo la regla que
+  rige ahora, el minero solo incluye lo que vale para el timestamp del bloque
+  y, al cruzar la fecha, poda lo que quedó firmado con v1 (su nonce sigue
+  libre: hay que **volver a enviar** lo que estuviera pendiente justo
+  entonces). Las carteras firman con el contexto que les da el nodo.
+- **Lo que ve la red, en el panel.** `Status` anuncia la regla que entiende
+  cada nodo (campo nuevo `rule`, que las versiones anteriores ignoran; el
+  protocolo sigue siendo el v2). Red → «📜 Regla de firma» enseña los hechos:
+  regla vigente, fecha y cuenta atrás, pares que anuncian v2, pendientes
+  fuera de regla; y un juicio aparte («todos los pares conectados anuncian
+  v2…»). Cada par que no anuncie v2 lleva el motivo en su código de fuente.
+- **Lo que se dice entero.** La cadena no acota el timestamp de los bloques
+  (pendiente anterior, ahora escrito en `SECURITY.md`): un minero puede
+  adelantar la activación para su rama con un timestamp futuro; no puede
+  retrasarla. Detalle, pruebas y lista para operadores en
+  `docs/CONSENSO-V2.md`.
+- **Compatibilidad probada con los binarios reales.** `tools/compat/roundtrip.sh`
+  (CI) añade un cuarto paso: la nueva fuerza la activación en regtest, envía
+  una tx v1 y otra v2 y mina; la misma versión sin la fecha no admite esos
+  bloques; la **v0.7.0** abre el directorio, avisa de los bloques que no
+  entiende, lee el saldo, mina su rama y arranca el nodo sin caerse; y la
+  nueva vuelve a abrir lo que la v0.7.0 escribió. El mismo recorrido se
+  ejecuta contra la **v0.7.3**. `tests/compat_v070.rs` sigue en verde y
+  `activacion_v2.rs` prueba la activación con las piezas reales.
+
 ## Novedades de v0.7.3 — la palabra exacta: fuentes graduadas, hechos junto a los juicios, predicciones con término
 
 Esta versión no cambia el consenso, no cambia el protocolo (la v0.7.0 y la
@@ -51,6 +96,51 @@ binarios reales de la v0.7.0, en las dos direcciones (ver abajo).
   cadena, lee el saldo, revela un commit hecho por la nueva y arranca su
   nodo). Si un cambio de formato rompiera la actualización —o la vuelta
   atrás—, el CI se pone en rojo.
+
+## What's new in v0.8.0 — the signature bound to the network: first consensus change, with an activation date
+
+**Update before 20 October 2026 (00:00 UTC).** Until that date nothing
+changes: 0.8.0 talks to 0.7.0 and 0.7.3, signs the same way, mines the same
+way and opens the same files (tested with the real binaries, see below). From
+that date on, every transaction signature carries the network identifier
+inside it and older nodes stop following the chain: they do not break, they
+stay at their height until they update.
+
+- **Rule v2.** The signed message goes from `"RAMI-CHAIN/tx/v1" || body` to
+  `"RAMI-CHAIN/tx/v2" || network‑id || body`. A transaction signed for the
+  testnet is worthless on regtest or any other network (the open item
+  documented in `SECURITY.md` since 0.7.1). The txid formula does not change.
+- **Activation by date, no mixed period.** The rule is set by the block's
+  timestamp against the network parameters' date: before it, v1 and only v1;
+  from it, v2 and only v2. And **it never goes back within a branch**: once a
+  block requires v2, every descendant requires it whatever its timestamp
+  (so nobody slips v1 signatures in after the date). Regtest has no date
+  unless you force one with `--firma-v2-desde <unix>` on `rami-node`,
+  `rami-wallet` and `rami-gui`.
+- **Mempool and wallet.** The node admits each transaction under the rule in
+  force now, the miner only includes what is valid for the block's timestamp
+  and, when the date is crossed, prunes what was left signed with v1 (its
+  nonce stays free: whatever was pending right then must be **sent again**).
+  Wallets sign with the context the node gives them.
+- **What the network sees, on the dashboard.** `Status` announces the rule
+  each node understands (new `rule` field, ignored by older versions; the
+  protocol is still v2). Network → "📜 Signature rule" shows the facts: rule
+  in force, date and countdown, peers announcing v2, pending outside the
+  rule; and a separate judgement ("every connected peer announces v2…").
+  Every peer that does not announce v2 carries the reason in its source code.
+- **Said in full.** The chain does not bound block timestamps (an older open
+  item, now written down in `SECURITY.md`): a miner can bring activation
+  forward for its branch with a future timestamp; it cannot push it back.
+  Details, tests and the operator checklist are in `docs/CONSENSO-V2.md`.
+- **Compatibility tested with the real binaries.** `tools/compat/roundtrip.sh`
+  (CI) gains a fourth step: the new version forces activation on regtest,
+  sends a v1 and a v2 transaction and mines; the same version without the
+  date does not admit those blocks; **v0.7.0** opens the directory, reports
+  the blocks it does not understand, reads the balance, mines its own branch
+  and starts its node without crashing; and the new version reopens what
+  v0.7.0 wrote. The same run is executed against **v0.7.3**.
+  `tests/compat_v070.rs` stays green and `activacion_v2.rs` tests activation
+  with the real pieces.
 
 ## What's new in v0.7.3 — the exact word: graded sources, facts next to judgements, predictions with a term
 

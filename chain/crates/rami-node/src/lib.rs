@@ -34,7 +34,7 @@ use rami_core::params::Params;
 use rami_core::pow::{difficulty_from_bits, meets_target, pow_hash};
 use rami_core::state::{block_reward, Account, State, COIN};
 use rami_core::store::ChainDir;
-use rami_core::tx::{merkle_root_txids, signer_of, txid, verify_tx, AccountId, Tx, TxId};
+use rami_core::tx::{merkle_root_txids, signer_of, txid, verify_tx_con, AccountId, FirmaCtx, Tx, TxId};
 
 use rami_net::{Frame, NetConfig, NetEvent, Network, PeerId, TipInfo};
 use rami_net::identity::fingerprint as fingerprint_of;
@@ -142,12 +142,16 @@ pub fn build_candidate(
     mempool: &[Tx],
     tag: [u8; 4],
     timestamp: u64,
+    firma: &FirmaCtx,
 ) -> (BlockHeader, Vec<Tx>, Vec<TxId>) {
     let mut sim = state.clone();
     let mut included: Vec<Tx> = Vec::new();
     let mut fees: u128 = 0;
     for tx in mempool {
-        if verify_tx(tx).is_err() {
+        // Solo entran las tx firmadas bajo la regla que rige para ESTE
+        // timestamp: así el bloque candidato es válido para todos los nodos
+        // con los mismos parámetros (v1 antes de la activación, v2 después).
+        if verify_tx_con(tx, firma).is_err() {
             continue;
         }
         if try_apply(&mut sim, tx, height).is_ok() {
@@ -197,10 +201,14 @@ pub fn build_block(
     state: &State,
     mempool: &[Tx],
     tag: [u8; 4],
+    firma: &FirmaCtx,
 ) -> (Block, Vec<TxId>) {
-    let (header, txs, ids) = build_candidate(height, prev, bits, miner, state, mempool, tag, now_secs());
+    let (header, txs, ids) = build_candidate(height, prev, bits, miner, state, mempool, tag, now_secs(), firma);
     (Block { header: mine_header(header), txs }, ids)
 }
+
+/// Regla de firma más alta que entiende este binario (se anuncia en `Status.rule`).
+pub const REGLA_SOPORTADA: u32 = 2;
 
 /// El bloque génesis para inicializar una cadena. Testnet = génesis canónico
 /// fijo (network-id estable); regtest = uno minado localmente.
@@ -342,6 +350,28 @@ pub struct PeerView {
     pub credibilidad: u8,
     /// Por qué esa letra y ese número.
     pub motivos: Vec<String>,
+    /// Regla de firma más alta que anuncia el par en `Status.rule` (0 si no
+    /// la anuncia: binario anterior a v0.8.0, que solo entiende v1).
+    pub regla_tx: u32,
+}
+
+/// Hechos del cambio de consenso (regla de firma v2 ligada a la red).
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct ConsensoInfo {
+    /// Regla que rige AHORA para las tx nuevas (1 o 2).
+    pub regla_vigente: u32,
+    /// Regla más alta que entiende este binario.
+    pub regla_soportada: u32,
+    /// Instante de activación (Unix, UTC); `None` si esta red no la tiene.
+    pub v2_desde: Option<u64>,
+    /// Segundos hasta la activación (0 si ya rige o no hay fecha).
+    pub faltan_segundos: u64,
+    /// Pares que anuncian entender la regla v2.
+    pub pares_v2: usize,
+    pub pares_total: usize,
+    /// Tx del mempool que NO valen bajo la regla vigente (quedan a la espera
+    /// de que su autor las vuelva a firmar; se podan al activarse).
+    pub mempool_fuera_de_regla: usize,
 }
 
 /// El hecho detrás del juicio «sincronizado»: alturas, no adjetivos.
@@ -398,6 +428,7 @@ pub struct NodeStatus {
     pub found: u64,
     pub netinfo: NetInfo,
     pub universe: UniverseInfo,
+    pub consenso: ConsensoInfo,
     /// Alturas que sostienen (o no) el juicio `synced`.
     pub sync: SyncInfo,
 }
@@ -702,6 +733,8 @@ enum NodeCmd {
     RecentBlocks(usize, Sender<Vec<BlockView>>),
     GetBlock(u64, Sender<Option<BlockDetail>>),
     GetCity(Sender<CityView>),
+    /// Contexto de firma que rige ahora sobre la cabeza (para las carteras).
+    Firma(Sender<FirmaCtx>),
 }
 
 /// Manejador del nodo para la CLI y el monedero de escritorio.
@@ -714,6 +747,16 @@ pub struct NodeHandle {
 impl NodeHandle {
     pub fn status(&self) -> NodeStatus {
         self.status.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+    /// Contexto de firma que rige AHORA sobre la cabeza del nodo: con él
+    /// firman las carteras para que el nodo admita la tx y el próximo bloque
+    /// la incluya. Si el nodo no responde, la regla v1 (la de siempre).
+    pub fn firma(&self) -> FirmaCtx {
+        let (r, rx) = channel();
+        if self.tx.send(NodeMsg::Cmd(NodeCmd::Firma(r))).is_err() {
+            return FirmaCtx::v1();
+        }
+        rx.recv_timeout(Duration::from_secs(3)).unwrap_or_else(|_| FirmaCtx::v1())
     }
     pub fn set_mining(&self, on: bool) {
         let _ = self.tx.send(NodeMsg::Cmd(NodeCmd::SetMining(on)));
@@ -842,6 +885,8 @@ struct Node {
     grados_guardado: Instant,
     last_sync_fuente: String,
     peer_height: HashMap<rami_net::PeerId, u64>,
+    /// Regla de firma anunciada por cada par (`Status.rule`; 0 = no anuncia).
+    peer_rule: HashMap<rami_net::PeerId, u32>,
     /// Universo de ramas: puntas anunciadas por cada par.
     peer_tips: HashMap<PeerId, PeerTips>,
     /// Peticiones `GetBranch` por par y punta (rondas, ventana, cursor). Se
@@ -987,6 +1032,7 @@ pub fn spawn(cfg: NodeConfig) -> Result<NodeHandle, String> {
         grados_guardado: Instant::now().checked_sub(Duration::from_secs(60)).unwrap_or_else(Instant::now),
         last_sync_fuente: String::new(),
         peer_height: HashMap::new(),
+        peer_rule: HashMap::new(),
         peer_tips: HashMap::new(),
         inflight: HashMap::new(),
         strikes: HashMap::new(),
@@ -1046,12 +1092,18 @@ impl Node {
         }
     }
 
+    /// Contexto de firma que rige para un instante en esta red.
+    fn firma_ctx(&self, ts: u64) -> FirmaCtx {
+        self.tree.firma_ctx(ts)
+    }
+
     fn my_status_frame(&self) -> Frame {
         let head = self.tree.head();
         Frame::Status {
             height: self.head_height(),
             best: hex::encode(head),
             work: self.tree.get(&head).map(|n| n.cum_work).unwrap_or(0).to_string(),
+            rule: REGLA_SOPORTADA,
         }
     }
 
@@ -1358,6 +1410,7 @@ impl Node {
                 self.sesion.remove(&peer);
                 self.guardar_grados(true);
                 self.peer_height.remove(&peer);
+                self.peer_rule.remove(&peer);
                 self.peer_meta.remove(&peer);
                 self.peer_ident.remove(&peer);
                 self.peer_tips.remove(&peer);
@@ -1412,8 +1465,9 @@ impl Node {
     fn on_frame(&mut self, peer: rami_net::PeerId, frame: Frame) {
         match frame {
             Frame::Hello { .. } => {}
-            Frame::Status { height, .. } => {
+            Frame::Status { height, rule, .. } => {
                 self.peer_height.insert(peer, height);
+                self.peer_rule.insert(peer, rule);
                 if let Some(e) = self.sesion.get_mut(&peer) {
                     e.altura = e.altura.max(height);
                 }
@@ -1622,7 +1676,10 @@ impl Node {
         if matches!(tx, Tx::Coinbase { .. }) {
             return Err("coinbase no se retransmite".into());
         }
-        verify_tx(&tx).map_err(|e| format!("firma/estructura: {e}"))?;
+        // La regla que rige AHORA (por fecha): una tx firmada bajo la regla
+        // anterior/siguiente no entra en el mempool, y se dice por qué.
+        let firma = self.firma_ctx(now_secs());
+        verify_tx_con(&tx, &firma).map_err(|e| format!("firma/estructura: {e} (rige la regla v{})", firma.numero()))?;
         let id = txid(&tx);
         if self.seen_tx.contains(&id) {
             return Ok(hex::encode(id));
@@ -1689,6 +1746,7 @@ impl Node {
             self.pump_peer(p);
         }
         self.maybe_broadcast_tips(false);
+        self.podar_mempool_por_regla();
         // Refresca el candidato cada ~30 s para renovar el timestamp del bloque.
         if self.mining_on && now_secs().saturating_sub(self.last_candidate_ts) >= 30 {
             self.refresh_candidate();
@@ -1716,9 +1774,19 @@ impl Node {
                 let acc: Account = st.accounts.get(&a).cloned().unwrap_or_default();
                 let _ = reply.send(AccountView { balance: acc.balance, staked: acc.staked, nonce: acc.nonce });
             }
+            NodeCmd::Firma(reply) => {
+                let _ = reply.send(self.firma_ctx(now_secs()));
+            }
             NodeCmd::NextNonce(a, reply) => {
                 let base = self.tree.head_state().map(|s| s.nonce_of(&a)).unwrap_or(0);
-                let pending = self.mempool.iter().filter(|t| signer_of(t) == Some(&a)).count() as u64;
+                // Sólo cuentan las pendientes que aún valen bajo la regla vigente
+                // (las demás se podan y su nonce sigue libre).
+                let firma = self.firma_ctx(now_secs());
+                let pending = self
+                    .mempool
+                    .iter()
+                    .filter(|t| signer_of(t) == Some(&a) && verify_tx_con(t, &firma).is_ok())
+                    .count() as u64;
                 let _ = reply.send(base + pending);
             }
             NodeCmd::RecentBlocks(n, reply) => {
@@ -1800,12 +1868,36 @@ impl Node {
             Err(_) => return,
         };
         let ts = now_secs();
+        let firma = self.firma_ctx(ts);
         let (header, txs, _ids) =
-            build_candidate(height, head, bits, miner, &state, &self.mempool, *b"main", ts);
+            build_candidate(height, head, bits, miner, &state, &self.mempool, *b"main", ts, &firma);
         *self.mining.job.lock().unwrap() = Some(MiningJob { header, txs });
         self.mining.epoch.fetch_add(1, Ordering::Relaxed);
         self.mining.on.store(true, Ordering::Relaxed);
         self.last_candidate_ts = ts;
+    }
+
+    /// Tx del mempool que no valen bajo la regla que rige ahora.
+    fn mempool_fuera_de_regla(&self) -> usize {
+        let firma = self.firma_ctx(now_secs());
+        self.mempool.iter().filter(|t| verify_tx_con(t, &firma).is_err()).count()
+    }
+
+    /// Al activarse la regla v2, las tx firmadas bajo v1 que seguían en el
+    /// mempool ya no pueden entrar en ningún bloque: se retiran (su autor
+    /// debe volver a firmarlas; el nonce no se consumió). Solo actúa al cruzar
+    /// la fecha: antes de ella el mempool no cambia.
+    fn podar_mempool_por_regla(&mut self) {
+        let firma = self.firma_ctx(now_secs());
+        if firma.regla != rami_core::tx::Regla::V2 {
+            return;
+        }
+        let antes = self.mempool.len();
+        self.mempool.retain(|t| verify_tx_con(t, &firma).is_ok());
+        if self.mempool.len() != antes {
+            self.persist_mempool();
+            self.refresh_candidate();
+        }
     }
 
     fn persist_mempool(&self) {
@@ -1831,7 +1923,22 @@ impl Node {
             .map(|(id, (addr, inbound, dial))| {
                 let pt = self.peer_tips.get(id);
                 let ident = self.peer_ident.get(id);
-                let g = self.graduacion_de(*id);
+                let mut g = self.graduacion_de(*id);
+                let regla_tx = self.peer_rule.get(id).copied().unwrap_or(0);
+                if self.tree.params().firma_v2_desde.is_some() && regla_tx < REGLA_SOPORTADA {
+                    // Hecho, no juicio: lo que anuncia el par y lo que eso
+                    // significa según rija ya la regla v2 o todavía no.
+                    let que = match regla_tx {
+                        0 => "no anuncia regla de firma (binario anterior a v0.8.0)".to_string(),
+                        r => format!("anuncia regla de firma v{r}"),
+                    };
+                    let efecto = if self.firma_ctx(now_secs()).regla == rami_core::tx::Regla::V2 {
+                        "no sigue la cadena desde la activación de la regla v2"
+                    } else {
+                        "quedará fuera al activarse la regla v2"
+                    };
+                    g.motivos.push(format!("{que}: {efecto}"));
+                }
                 PeerView {
                     addr: dial.clone().unwrap_or_else(|| addr.clone()),
                     inbound: *inbound,
@@ -1844,6 +1951,7 @@ impl Node {
                     fiabilidad: g.fiabilidad.to_string(),
                     credibilidad: g.credibilidad,
                     motivos: g.motivos,
+                    regla_tx,
                 }
             })
             .collect();
@@ -1875,6 +1983,19 @@ impl Node {
                 branches_synced: self.branches_synced,
                 last_sync_from: self.last_sync_from.clone(),
                 last_sync_fuente: self.last_sync_fuente.clone(),
+            },
+            consenso: {
+                let ahora = now_secs();
+                let v2_desde = self.tree.params().firma_v2_desde;
+                ConsensoInfo {
+                    regla_vigente: self.firma_ctx(ahora).numero(),
+                    regla_soportada: REGLA_SOPORTADA,
+                    v2_desde,
+                    faltan_segundos: v2_desde.map(|d| d.saturating_sub(ahora)).unwrap_or(0),
+                    pares_v2: self.peer_rule.values().filter(|r| **r >= REGLA_SOPORTADA).count(),
+                    pares_total: self.peer_meta.len(),
+                    mempool_fuera_de_regla: self.mempool_fuera_de_regla(),
+                }
             },
             sync: SyncInfo {
                 mi_altura: height,

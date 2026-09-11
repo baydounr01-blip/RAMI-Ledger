@@ -40,10 +40,20 @@ ejecutable frente a `BINARIES-SHA256.txt` del release.
 
 ## Lo que NO está resuelto (honestidad)
 
-- **Firmas de transacción no ligadas a la red.** El mensaje firmado es
-  `"RAMI-CHAIN/tx/v1" || cuerpo`; una tx de regtest podría repetirse en
-  testnet con la misma clave y nonce. Arreglo planeado (v0.8, cambio de
-  consenso con activación por fecha): `"RAMI-CHAIN/tx/v2" || network_id || cuerpo`.
+- **Firmas de transacción no ligadas a la red — resuelto en v0.8.0, con
+  activación el 2026‑10‑20 00:00 UTC.** Hasta esa fecha el mensaje firmado
+  sigue siendo `"RAMI-CHAIN/tx/v1" || cuerpo` y una tx de regtest se puede
+  repetir en testnet con la misma clave y nonce. Desde esa fecha el mensaje
+  es `"RAMI-CHAIN/tx/v2" || network_id || cuerpo`, la regla no retrocede
+  dentro de una rama y los nodos anteriores dejan de seguir la cadena (sin
+  romperse). Detalle y pruebas: `docs/CONSENSO-V2.md`.
+- **Sin cota de timestamp en los bloques.** La cadena no exige que el
+  timestamp de un bloque supere la mediana de los anteriores ni que no se
+  adelante al reloj más de un margen: un minero puede poner el que quiera.
+  Afecta al retarget LWMA (ya conocido) y a la activación por fecha de la
+  regla v2 (un minero puede adelantarla para su rama con un timestamp
+  futuro; no puede retrasarla, porque la regla no retrocede). La cota es
+  otro cambio de consenso y queda planificada, no hecha.
 - **Bloques baratos a dificultad mínima.** Como toda cadena de trabajo joven,
   un atacante con CPU puede minar hermanos sobre bloques antiguos y hacer
   crecer el árbol (todo se conserva). Mitigación futura: trabajo mínimo
