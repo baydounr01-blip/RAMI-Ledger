@@ -49,11 +49,18 @@ fn params_of(args: &[String]) -> Params {
         Some("testnet") => Params::testnet(),
         _ => Params::regtest(),
     };
-    // Solo para pruebas en regtest: fuerza la fecha de activación de la
-    // regla de firma v2 (Unix, UTC). En testnet la fecha es la de consenso.
-    match arg(args, "--firma-v2-desde").and_then(|s| s.parse::<u64>().ok()) {
-        Some(t) if !matches!(arg(args, "--network").as_deref(), Some("testnet")) => p.con_firma_v2_desde(Some(t)),
-        _ => p,
+    // Solo para pruebas en regtest: fuerza las fechas de activación de la
+    // regla de firma v2 y de Dubái (Unix, UTC). En testnet son las de consenso.
+    if matches!(arg(args, "--network").as_deref(), Some("testnet")) {
+        return p;
+    }
+    let p = match arg(args, "--firma-v2-desde").and_then(|s| s.parse::<u64>().ok()) {
+        Some(t) => p.con_firma_v2_desde(Some(t)),
+        None => p,
+    };
+    match arg(args, "--dubai-desde").and_then(|s| s.parse::<u64>().ok()) {
+        Some(t) => p.con_dubai_desde(Some(t)),
+        None => p,
     }
 }
 fn fee_of(args: &[String]) -> u64 {

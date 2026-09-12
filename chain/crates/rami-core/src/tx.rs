@@ -50,8 +50,15 @@ const T_TRANSFER_ASSET: u8 = 0x12;
 const T_LIST_LEASE: u8 = 0x13;
 const T_RENT: u8 = 0x14;
 const T_HARVEST: u8 = 0x15;
+// Dubái RAMI (fase 1, v0.9.0): mercado de compra/venta en RAMI. Solo válidas
+// desde la activación (`FirmaCtx.dubai`).
+const T_SELL_ASSET: u8 = 0x20;
+const T_BUY_ASSET: u8 = 0x21;
+const T_SELL_PARCEL: u8 = 0x22;
+const T_BUY_PARCEL: u8 = 0x23;
 
-/// Lado de la cuadrícula de la ciudad (parcelas 0..CITY_SIZE en x e y).
+/// Lado de la cuadrícula de la ciudad HASTA la activación de Dubái (parcelas
+/// 0..CITY_SIZE en x e y). Desde Dubái: `crate::ciudad::CITY_SIZE_DUBAI` (64).
 pub const CITY_SIZE: u16 = 32;
 /// Tope del nombre de una parcela/empresa (bytes UTF-8).
 pub const MAX_NAME_BYTES: usize = 32;
@@ -59,9 +66,11 @@ pub const MAX_NAME_BYTES: usize = 32;
 pub const MAX_META_BYTES: usize = 64;
 /// Plazo máximo de un alquiler, en bloques (~1 año a 60 s/bloque).
 pub const MAX_LEASE_TERM: u64 = 525_600;
-/// Tipos de parcela: 0 empresa, 1 granja, 2 tienda, 3 oficina.
+/// Tipos de parcela hasta Dubái: 0 empresa, 1 granja, 2 tienda, 3 oficina.
+/// Desde Dubái: los 30 sectores de `crate::ciudad::SECTORES`.
 pub const MAX_PARCEL_KIND: u8 = 3;
-/// Tipos de activo: 0 planta (cosecha), 1 objeto.
+/// Tipos de activo hasta Dubái: 0 planta (cosecha), 1 objeto. Desde Dubái
+/// también 2 vehículo y 3 local (`crate::ciudad::MAX_ASSET_KIND_DUBAI`).
 pub const MAX_ASSET_KIND: u8 = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +111,17 @@ pub enum Tx {
     /// Cosecha: el dueño de la parcela reparte `total` de SU saldo a partes
     /// iguales entre los arrendatarios activos de las plantas de esa parcela.
     Harvest { who: AccountId, x: u16, y: u16, total: Amount, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
+    // ---------- Dubái RAMI (metaverso, fase 1): mercado en RAMI ----------
+    /// Pone un activo propio en venta por `price` RAMI (0 = retira la venta).
+    SellAsset { who: AccountId, asset: TxId, price: Amount, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
+    /// Compra un activo en venta: paga el precio al dueño y el activo cambia de
+    /// manos en la misma transacción. `max_price` protege al comprador si el
+    /// vendedor cambia el precio antes de que se mine.
+    BuyAsset { who: AccountId, asset: TxId, max_price: Amount, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
+    /// Pone una parcela propia (la empresa) en venta por `price` RAMI (0 = retira).
+    SellParcel { who: AccountId, x: u16, y: u16, price: Amount, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
+    /// Compra una parcela en venta: paga al dueño y la parcela pasa al comprador.
+    BuyParcel { who: AccountId, x: u16, y: u16, max_price: Amount, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
 }
 
 fn put_u8(o: &mut Vec<u8>, x: u8) {
@@ -220,6 +240,40 @@ pub fn encode_body(tx: &Tx) -> Vec<u8> {
             put_u64(&mut o, *fee);
             put_u64(&mut o, *nonce);
         }
+        Tx::SellAsset { who, asset, price, fee, nonce, .. } => {
+            put_u8(&mut o, T_SELL_ASSET);
+            put_32(&mut o, who);
+            put_32(&mut o, asset);
+            put_u64(&mut o, *price);
+            put_u64(&mut o, *fee);
+            put_u64(&mut o, *nonce);
+        }
+        Tx::BuyAsset { who, asset, max_price, fee, nonce, .. } => {
+            put_u8(&mut o, T_BUY_ASSET);
+            put_32(&mut o, who);
+            put_32(&mut o, asset);
+            put_u64(&mut o, *max_price);
+            put_u64(&mut o, *fee);
+            put_u64(&mut o, *nonce);
+        }
+        Tx::SellParcel { who, x, y, price, fee, nonce, .. } => {
+            put_u8(&mut o, T_SELL_PARCEL);
+            put_32(&mut o, who);
+            put_u64(&mut o, *x as u64);
+            put_u64(&mut o, *y as u64);
+            put_u64(&mut o, *price);
+            put_u64(&mut o, *fee);
+            put_u64(&mut o, *nonce);
+        }
+        Tx::BuyParcel { who, x, y, max_price, fee, nonce, .. } => {
+            put_u8(&mut o, T_BUY_PARCEL);
+            put_32(&mut o, who);
+            put_u64(&mut o, *x as u64);
+            put_u64(&mut o, *y as u64);
+            put_u64(&mut o, *max_price);
+            put_u64(&mut o, *fee);
+            put_u64(&mut o, *nonce);
+        }
     }
     o
 }
@@ -237,7 +291,11 @@ fn sig_of(tx: &Tx) -> Option<&[u8; 64]> {
         | Tx::TransferAsset { sig, .. }
         | Tx::ListLease { sig, .. }
         | Tx::Rent { sig, .. }
-        | Tx::Harvest { sig, .. } => Some(sig),
+        | Tx::Harvest { sig, .. }
+        | Tx::SellAsset { sig, .. }
+        | Tx::BuyAsset { sig, .. }
+        | Tx::SellParcel { sig, .. }
+        | Tx::BuyParcel { sig, .. } => Some(sig),
     }
 }
 
@@ -252,7 +310,11 @@ pub fn signer_of(tx: &Tx) -> Option<&AccountId> {
         | Tx::MintAsset { who, .. }
         | Tx::ListLease { who, .. }
         | Tx::Rent { who, .. }
-        | Tx::Harvest { who, .. } => Some(who),
+        | Tx::Harvest { who, .. }
+        | Tx::SellAsset { who, .. }
+        | Tx::BuyAsset { who, .. }
+        | Tx::SellParcel { who, .. }
+        | Tx::BuyParcel { who, .. } => Some(who),
         Tx::TransferAsset { from, .. } => Some(from),
     }
 }
@@ -271,8 +333,17 @@ pub fn fee_of(tx: &Tx) -> Amount {
         | Tx::TransferAsset { fee, .. }
         | Tx::ListLease { fee, .. }
         | Tx::Rent { fee, .. }
-        | Tx::Harvest { fee, .. } => *fee,
+        | Tx::Harvest { fee, .. }
+        | Tx::SellAsset { fee, .. }
+        | Tx::BuyAsset { fee, .. }
+        | Tx::SellParcel { fee, .. }
+        | Tx::BuyParcel { fee, .. } => *fee,
     }
+}
+
+/// ¿Es una transacción de la fase Dubái (solo válida desde la activación)?
+pub fn es_tx_dubai(tx: &Tx) -> bool {
+    matches!(tx, Tx::SellAsset { .. } | Tx::BuyAsset { .. } | Tx::SellParcel { .. } | Tx::BuyParcel { .. })
 }
 
 /// Mensaje firmado (regla v1) = DS_TAG || cuerpo(sin firma).
@@ -317,26 +388,55 @@ pub fn regla_para(v2_desde: Option<u64>, timestamp: u64) -> Regla {
     }
 }
 
-/// Contexto de firma: la regla y la red. Se pasa a `verify_tx_con` y a las
-/// carteras para que produzcan/acepten exactamente el mensaje que rige.
+/// Contexto de las reglas que rigen: la regla de firma, la red y si rigen ya
+/// las reglas de **Dubái** (`crate::ciudad`). Se pasa a `verify_tx_con`, a la
+/// transición de estado y a las carteras para que produzcan/acepten
+/// exactamente lo que rige. (Conserva el nombre de la v0.8.0 para que nada de
+/// esa versión cambie de significado.)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FirmaCtx {
     pub regla: Regla,
     pub net: [u8; 32],
+    /// Rigen las reglas de Dubái (cuadrícula 64×64, sectores, fondo de la
+    /// ciudad, mercado). Lo decide el árbol por la fecha del bloque y no
+    /// retrocede dentro de una rama, igual que la regla v2.
+    pub dubai: bool,
 }
 
 impl FirmaCtx {
-    /// Regla v1 pura (la red no interviene en el mensaje).
+    /// Regla v1 pura (la red no interviene en el mensaje), sin Dubái.
     pub fn v1() -> Self {
-        FirmaCtx { regla: Regla::V1, net: [0u8; 32] }
+        FirmaCtx { regla: Regla::V1, net: [0u8; 32], dubai: false }
     }
-    /// Regla v2 sobre la red `net`.
+    /// Regla v2 sobre la red `net`, sin Dubái.
     pub fn v2(net: [u8; 32]) -> Self {
-        FirmaCtx { regla: Regla::V2, net }
+        FirmaCtx { regla: Regla::V2, net, dubai: false }
     }
-    /// Contexto para un instante dado, según la activación de los parámetros.
+    /// Contexto para un instante dado, según la activación de los parámetros
+    /// (firma v2 y Dubái, cada una con su fecha).
     pub fn para(v2_desde: Option<u64>, timestamp: u64, net: [u8; 32]) -> Self {
-        FirmaCtx { regla: regla_para(v2_desde, timestamp), net }
+        FirmaCtx { regla: regla_para(v2_desde, timestamp), net, dubai: false }
+    }
+    /// El mismo contexto con las reglas de Dubái activadas o no.
+    pub fn con_dubai(mut self, dubai: bool) -> Self {
+        self.dubai = dubai;
+        self
+    }
+    /// ¿Rigen las reglas de Dubái en `timestamp` dada su fecha de activación?
+    pub fn dubai_para(dubai_desde: Option<u64>, timestamp: u64) -> bool {
+        matches!(dubai_desde, Some(desde) if timestamp >= desde)
+    }
+    /// Lado de la cuadrícula que rige en este contexto.
+    pub fn city_size(&self) -> u16 {
+        if self.dubai { crate::ciudad::CITY_SIZE_DUBAI } else { CITY_SIZE }
+    }
+    /// Sector/tipo de parcela más alto que rige en este contexto.
+    pub fn max_parcel_kind(&self) -> u8 {
+        if self.dubai { crate::ciudad::MAX_SECTOR } else { MAX_PARCEL_KIND }
+    }
+    /// Tipo de activo más alto que rige en este contexto.
+    pub fn max_asset_kind(&self) -> u8 {
+        if self.dubai { crate::ciudad::MAX_ASSET_KIND_DUBAI } else { MAX_ASSET_KIND }
     }
     /// Mensaje que debe firmar/verificar esta transacción bajo el contexto.
     pub fn mensaje(&self, tx: &Tx) -> Vec<u8> {
@@ -345,11 +445,13 @@ impl FirmaCtx {
             Regla::V2 => signing_message_v2(tx, &self.net),
         }
     }
-    /// Número de regla tal y como se anuncia por la red (`Status.rule`).
+    /// Número de regla tal y como se anuncia por la red (`Status.rule`):
+    /// 1 firma v1, 2 firma v2, 3 firma v2 con las reglas de Dubái.
     pub fn numero(&self) -> u32 {
-        match self.regla {
-            Regla::V1 => 1,
-            Regla::V2 => 2,
+        match (self.regla, self.dubai) {
+            (Regla::V1, false) => 1,
+            (Regla::V2, false) => 2,
+            (_, true) => 3,
         }
     }
 }
@@ -415,30 +517,32 @@ pub fn verify_tx(tx: &Tx) -> Result<(), String> {
 /// `ctx` (regla v1 o v2 sobre una red concreta). Una firma v1 no pasa bajo v2
 /// ni al revés: el mensaje es distinto en la etiqueta y en la red.
 pub fn verify_tx_con(tx: &Tx, ctx: &FirmaCtx) -> Result<(), String> {
-    // Cotas estructurales (anti-DoS / anti-bloat), sin estado.
+    // Cotas estructurales (anti-DoS / anti-bloat), sin estado. La cuadrícula y
+    // los catálogos dependen de si rigen ya las reglas de Dubái (`ctx.dubai`).
+    let size = ctx.city_size();
     match tx {
         Tx::Reveal { payload, .. } if payload.len() > MAX_PAYLOAD_BYTES => {
             return Err("payload de reveal excede MAX_PAYLOAD_BYTES".into());
         }
         Tx::ClaimParcel { x, y, name, kind, .. } => {
-            if *x >= CITY_SIZE || *y >= CITY_SIZE {
+            if *x >= size || *y >= size {
                 return Err("parcela fuera de la ciudad".into());
             }
             if name.is_empty() || name.len() > MAX_NAME_BYTES || std::str::from_utf8(name).is_err() {
                 return Err("nombre de parcela vacío, demasiado largo o no UTF-8".into());
             }
-            if *kind > MAX_PARCEL_KIND {
+            if *kind > ctx.max_parcel_kind() {
                 return Err("tipo de parcela desconocido".into());
             }
         }
         Tx::MintAsset { x, y, kind, meta, .. } => {
-            if *x >= CITY_SIZE || *y >= CITY_SIZE {
+            if *x >= size || *y >= size {
                 return Err("parcela fuera de la ciudad".into());
             }
             if meta.len() > MAX_META_BYTES || std::str::from_utf8(meta).is_err() {
                 return Err("metadatos del activo demasiado largos o no UTF-8".into());
             }
-            if *kind > MAX_ASSET_KIND {
+            if *kind > ctx.max_asset_kind() {
                 return Err("tipo de activo desconocido".into());
             }
         }
@@ -448,12 +552,23 @@ pub fn verify_tx_con(tx: &Tx, ctx: &FirmaCtx) -> Result<(), String> {
             }
         }
         Tx::Harvest { x, y, total, .. } => {
-            if *x >= CITY_SIZE || *y >= CITY_SIZE {
+            if *x >= size || *y >= size {
                 return Err("parcela fuera de la ciudad".into());
             }
             if *total == 0 {
                 return Err("la cosecha debe repartir algo".into());
             }
+        }
+        Tx::SellAsset { .. } | Tx::BuyAsset { .. } | Tx::SellParcel { .. } | Tx::BuyParcel { .. } if !ctx.dubai => {
+            return Err("transacción de Dubái antes de su activación".into());
+        }
+        Tx::SellParcel { x, y, .. } | Tx::BuyParcel { x, y, .. } => {
+            if *x >= size || *y >= size {
+                return Err("parcela fuera de la ciudad".into());
+            }
+        }
+        Tx::BuyAsset { max_price, .. } if *max_price == 0 => {
+            return Err("el precio máximo de compra debe ser mayor que cero".into());
         }
         _ => {}
     }
@@ -578,6 +693,39 @@ mod tests {
         assert!(verify_tx_con(&tx, &red_b).is_err(), "misma tx, otra red: rechazada");
         // El txid no depende de la regla: cubre cuerpo y firma, no la etiqueta.
         assert_eq!(txid(&tx), txid(&tx.clone()));
+    }
+
+    #[test]
+    fn las_tx_de_dubai_solo_valen_con_la_regla_activa_y_la_cuadricula_crece() {
+        let kp = KeyPair::from_secret(&[21u8; 32]);
+        let net = [3u8; 32];
+        let sin = FirmaCtx::v2(net);
+        let con = FirmaCtx::v2(net).con_dubai(true);
+        assert_eq!(sin.numero(), 2);
+        assert_eq!(con.numero(), 3);
+        assert_eq!(sin.city_size(), 32);
+        assert_eq!(con.city_size(), 64);
+        assert!(FirmaCtx::dubai_para(Some(100), 100) && !FirmaCtx::dubai_para(Some(100), 99) && !FirmaCtx::dubai_para(None, u64::MAX));
+        let mut venta = Tx::SellParcel { who: kp.public_bytes(), x: 50, y: 40, price: 5, fee: 1, nonce: 0, sig: [0u8; 64] };
+        let sig = kp.sign(&con.mensaje(&venta));
+        if let Tx::SellParcel { sig: s, .. } = &mut venta { *s = sig; }
+        assert!(es_tx_dubai(&venta));
+        assert!(verify_tx_con(&venta, &con).is_ok());
+        let err = verify_tx_con(&venta, &sin).unwrap_err();
+        assert!(err.contains("Dubái"), "motivo: {err}");
+        // Una parcela (50, 40) queda fuera de la ciudad de 32×32, dentro de la de 64×64.
+        let mut claim = Tx::ClaimParcel { who: kp.public_bytes(), x: 50, y: 40, name: b"Hotel".to_vec(), kind: 5, fee: 1, nonce: 0, sig: [0u8; 64] };
+        let sig = kp.sign(&con.mensaje(&claim));
+        if let Tx::ClaimParcel { sig: s, .. } = &mut claim { *s = sig; }
+        assert!(verify_tx_con(&claim, &con).is_ok());
+        assert!(verify_tx_con(&claim, &sin).is_err());
+        // Un sector > 3 tampoco vale antes de Dubái, aunque la parcela quepa.
+        let mut claim2 = Tx::ClaimParcel { who: kp.public_bytes(), x: 5, y: 5, name: b"Hotel".to_vec(), kind: 5, fee: 1, nonce: 0, sig: [0u8; 64] };
+        let sig = kp.sign(&sin.mensaje(&claim2));
+        if let Tx::ClaimParcel { sig: s, .. } = &mut claim2 { *s = sig; }
+        assert!(verify_tx_con(&claim2, &sin).is_err());
+        // El mensaje firmado no depende del bit Dubái: la firma es la misma.
+        assert_eq!(sin.mensaje(&venta), con.mensaje(&venta));
     }
 
     #[test]

@@ -1,3 +1,104 @@
+## Novedades de v0.9.0 — Dubái RAMI: el metaverso como reglas de consenso, con fecha de activación
+
+**Actualiza antes del 1 de diciembre de 2026 (00:00 UTC).** Hasta esa fecha
+nada cambia: la 0.9.0 se habla con la 0.8.0, firma igual (la regla v2 sigue
+activándose el 20 de octubre), mina igual y abre los mismos archivos. Desde
+esa fecha rigen las reglas de Dubái y los nodos anteriores se quedan en su
+altura sin romperse.
+
+- **La Ciudad RAMI se traslada a Dubái.** 64×64 parcelas de 650 m sobre una
+  réplica hecha con datos abiertos (relieve de Mapzen/AWS Terrain Tiles;
+  Palm Jumeirah, The World, Bluewaters, el Creek y los canales dibujados a
+  mano y documentados como tales), 56 hitos modelados uno a uno, skylines por
+  barrio, tráfico por las grandes vías, ciclo de día y noche con las ventanas
+  encendidas. Tus parcelas conservan sus coordenadas (x, y).
+- **Reglas de consenso nuevas** (`docs/DUBAI.md`): 35 distritos con precio de
+  parcela propio (se quema), 30 sectores que se necesitan unos a otros, fondo
+  de la ciudad con el 20 % de la emisión de cada bloque y reparto del 1 % del
+  fondo por bloque según demanda, distrito, afinidad e insumos; el 40 % de
+  cada ingreso paga a los proveedores más cercanos y lo que nadie ofrece se
+  importa y se quema. La recompensa del minero baja al 80 % de la emisión;
+  las comisiones siguen enteras. Activación por fecha sin periodo mixto y sin
+  retroceso dentro de una rama; `Status.rule` anuncia 3.
+- **Mercado en RAMI.** Parcelas y activos (planta, objeto, vehículo —solo lo
+  acuña un concesionario— y local) se ponen en venta y se compran en una sola
+  transacción con precio máximo. Las últimas 256 operaciones quedan en el
+  estado y alimentan la **cotización interna**: pares parcela/RAMI por
+  distrito y activo/RAMI, órdenes abiertas, cierres, fondo, quemado e índice.
+  Pestaña **Mercado** en el panel, `rami-node market` (API pública de solo
+  lectura en formato de agregador) y pestaña **Cotización** en la web, que
+  lee los nodos de `web/market.json`. RAMI no cotiza en euros ni en otras
+  criptomonedas; `docs/COTIZACION.md` dice qué haría falta fuera del
+  software.
+- **El mentor y la escuela de negocios.** Una regla pública (no una persona)
+  calcula con las mismas funciones del reparto qué cobraría hoy cada sector
+  en la parcela elegida, qué insumos faltan en la ciudad, cuántos
+  competidores hay y en cuántos bloques se recupera la entrada; responde a
+  preguntas escritas y ofrece ocho lecciones cortas. Cifras del estado
+  actual, no promesas.
+- **Personas en la ciudad.** Avatares y chat entre los visitantes conectados,
+  por el túnel RAMI, firmados con la identidad del nodo y acotados en ritmo,
+  tamaño y memoria; nada se guarda ni entra en el consenso. Modo **a pie**
+  (WASD, mirar arrastrando, Q/E para volar) y **gafas VR** con mandos
+  (palanca para andar, giro por saltos, gatillo para teletransporte) y factor
+  de framebuffer alto en calidad «ultra» para pantallas 4K; presets de
+  calidad y hora del día en la barra de la ciudad.
+- **Compatibilidad.** El protocolo sigue siendo el v2 y ningún fichero
+  existente cambia de formato; `tools/compat/roundtrip.sh` sigue en verde
+  con los binarios de la v0.7.0 y la v0.7.3. Un binario v0.8.0 que abra un
+  `chain.jsonl` escrito por la 0.9.0 con transacciones de mercado no lo lee
+  (por red nunca las recibe): la salida es volver a la 0.9.0.
+
+## What's new in v0.9.0 — RAMI Dubai: the metaverse as consensus rules, with an activation date
+
+**Update before 1 December 2026 (00:00 UTC).** Until that date nothing
+changes: 0.9.0 talks to 0.8.0, signs the same way (rule v2 still activates on
+20 October), mines the same way and opens the same files. From that date on
+the Dubai rules apply and older nodes stay at their height without breaking.
+
+- **RAMI City moves to Dubai.** 64×64 parcels of 650 m on a replica built
+  from open data (Mapzen/AWS Terrain Tiles relief; Palm Jumeirah, The World,
+  Bluewaters, the Creek and the canals drawn by hand and documented as
+  such), 56 landmarks modelled one by one, skylines per district, traffic on
+  the main roads, a day/night cycle with lit windows. Your parcels keep their
+  (x, y) coordinates.
+- **New consensus rules** (`docs/DUBAI.md`): 35 districts with their own
+  parcel price (burned), 30 sectors that need one another, a city fund fed
+  with 20 % of every block's issuance and a payout of 1 % of the fund per
+  block by demand, district, affinity and inputs; 40 % of every income pays
+  the nearest suppliers and whatever nobody offers is imported and burned.
+  The miner reward drops to 80 % of the issuance; fees stay whole. Activation
+  by date, no mixed period, never going back within a branch; `Status.rule`
+  announces 3.
+- **A market in RAMI.** Parcels and assets (plant, object, vehicle — minted
+  only by a car dealership — and premises) are listed and bought in a single
+  transaction with a maximum price. The last 256 trades stay in the state and
+  feed the **internal quotation**: parcel/RAMI pairs per district and
+  asset/RAMI pairs, open asks, fills, fund, burned and an index. A **Market**
+  tab in the dashboard, `rami-node market` (a public read-only API in
+  aggregator format) and a **Quotation** tab on the website, which reads the
+  nodes listed in `web/market.json`. RAMI is not quoted in euros or in any other
+  cryptocurrency; `docs/COTIZACION.md` states what it would take outside the
+  software.
+- **The mentor and the business school.** A public rule (not a person)
+  computes, with the same payout functions, what each sector would earn today
+  on the chosen parcel, which inputs the city lacks, how many competitors
+  there are and in how many blocks the entry price is recovered; it answers
+  typed questions and offers eight short lessons. Figures of the current
+  state, not promises.
+- **People in the city.** Avatars and chat among connected visitors, over
+  the RAMI tunnel, signed with the node identity and bounded in rate, size
+  and memory; nothing is stored and nothing enters consensus. **Walk** mode
+  (WASD, drag to look, Q/E to fly) and **VR headsets** with controllers
+  (stick to walk, snap turn, trigger to teleport) and a high framebuffer
+  scale in "ultra" quality for 4K displays; quality presets and time of day
+  in the city toolbar.
+- **Compatibility.** The protocol is still v2 and no existing file changes
+  format; `tools/compat/roundtrip.sh` stays green with the v0.7.0 and v0.7.3
+  binaries. A v0.8.0 binary that opens a `chain.jsonl` written by 0.9.0 with
+  market transactions does not read it (over the network it never receives
+  them): the way out is to go back to 0.9.0.
+
 ## Novedades de v0.8.0 — la firma ligada a la red: primer cambio de consenso, con fecha de activación
 
 **Actualiza antes del 20 de octubre de 2026 (00:00 UTC).** Hasta esa fecha

@@ -60,6 +60,30 @@ pub enum Frame {
     NewBlock { block: Block },
     /// Retransmite una transacción de mempool.
     NewTx { tx: Tx },
+    /// Dubái (v0.9.0): presencia efímera de un visitante del metaverso. NO es
+    /// consenso ni se guarda: posición del avatar en la cuadrícula (metros
+    /// locales, enteros) firmada con la identidad del nodo que la emite
+    /// (`pk`, la misma del Túnel RAMI). `seq` crece; `hops` acota la
+    /// retransmisión. Un binario anterior la ignora (frame desconocido).
+    Presence {
+        pk: String,
+        /// Nonce de la prueba de trabajo de la identidad (se comprueba al
+        /// recibir: sin CPU gastada no hay avatar).
+        pow: u64,
+        seq: u64,
+        ts: u64,
+        name: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        yaw: i32,
+        avatar: u8,
+        hops: u8,
+        sig: String,
+    },
+    /// Dubái (v0.9.0): mensaje de chat efímero del metaverso (≤ 280 bytes),
+    /// firmado con la identidad del nodo. Misma retransmisión acotada.
+    Chat { pk: String, pow: u64, seq: u64, ts: u64, name: String, text: String, hops: u8, sig: String },
     /// Pide direcciones de otros pares (intercambio de peers).
     GetPeers,
     /// Comparte direcciones `host:puerto` conocidas.
@@ -103,6 +127,8 @@ mod tests {
             Frame::Peers { addrs: vec!["1.2.3.4:30301".into()] },
             Frame::Ping { nonce: 99 },
             Frame::Pong { nonce: 99 },
+            Frame::Presence { pk: "ab".repeat(32), pow: 9, seq: 3, ts: 1, name: "Rami".into(), x: 12_000, y: 3, z: -900, yaw: 180, avatar: 2, hops: 1, sig: "cd".repeat(64) },
+            Frame::Chat { pk: "ab".repeat(32), pow: 9, seq: 4, ts: 1, name: "Rami".into(), text: "hola Dubái".into(), hops: 0, sig: "cd".repeat(64) },
         ];
         for f in cases {
             let line = f.to_line();
@@ -128,6 +154,19 @@ mod tests {
         let nuevo = Frame::Status { height: 3, best: "ab".into(), work: "9".into(), rule: 2 }.to_line();
         let leido: FrameViejo = serde_json::from_str(&nuevo).unwrap();
         assert_eq!(leido, FrameViejo::Status { height: 3, best: "ab".into(), work: "9".into() });
+    }
+
+    #[test]
+    fn presencia_y_chat_son_desconocidos_para_un_binario_anterior() {
+        // La forma de v0.8.0 (sin las variantes nuevas): un frame Presence no
+        // parsea y el transporte lo ignora (`FrameError::Parse => continue`).
+        #[derive(Debug, PartialEq, serde::Deserialize)]
+        enum FrameViejo {
+            Ping { nonce: u64 },
+        }
+        let p = Frame::Presence { pk: "ab".repeat(32), pow: 0, seq: 1, ts: 1, name: "x".into(), x: 0, y: 0, z: 0, yaw: 0, avatar: 0, hops: 0, sig: "cd".repeat(64) }.to_line();
+        assert!(serde_json::from_str::<FrameViejo>(&p).is_err());
+        assert_eq!(serde_json::from_str::<FrameViejo>(&Frame::Ping { nonce: 1 }.to_line()).unwrap(), FrameViejo::Ping { nonce: 1 });
     }
 
     #[test]

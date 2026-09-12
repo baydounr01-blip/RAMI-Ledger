@@ -21,6 +21,8 @@ lo encuentre en `docs/AUDITORIA-2026-09.md`.
 | **Red P2P** (`0.0.0.0:30301`) | cualquier par de Internet | Túnel RAMI: identidad Ed25519 con **prueba de trabajo**, saludo firmado por ambas partes, X25519 efímero, HKDF-SHA256, ChaCha20-Poly1305 con contador; frames ≤ 16 MiB comprobados antes de reservar memoria; ≤ 4 peticiones de rama en vuelo por par, rondas por (par, punta), expulsión por cola llena; **topes de consenso** (≤ 4096 tx y ≤ 2 MiB por bloque) y de mempool (5000 tx, 64 por firmante); TOFU de identidades |
 | **Actualizador** | quien controle la red (MITM) o el espejo web, pero no GitHub | HTTPS con rustls; `SHA256SUMS.txt` **solo desde GitHub** (el espejo solo sirve bytes); nombres de archivo saneados; nunca se instala nada con hash distinto; sin *downgrade*; **firma Ed25519 de release** (`SHA256SUMS.sig`) exigida en cuanto el monedero lleva la clave pública del mantenedor |
 | **Claves** | robo del disco, corte de luz a mitad de escritura | keystore cifrado con PBKDF2-HMAC-SHA256 (600 000 iteraciones) + ChaCha20-Poly1305 con AAD; `node.key` y token con permisos 0600; escritura **atómica** (temporal + fsync + rename) |
+| **Metaverso: presencia y chat** (frames `Presence`/`Chat`, v0.9.0) | cualquier par de Internet que quiera inundar, suplantar o llenar memoria | firma Ed25519 de la **identidad del nodo** con prueba de trabajo (crear identidades cuesta CPU); secuencia creciente por identidad; ritmo mínimo por identidad (400 ms presencia, 1,5 s chat); nombre ≤ 24 bytes, texto ≤ 280 bytes, coordenadas acotadas; tope de 256 avatares y 64 mensajes en memoria, caducidad a los 20 s; retransmisión acotada por saltos (2 y 3) y solo a pares que anuncian la regla 3; nada se persiste ni entra en el consenso |
+| **API pública de mercado** (`rami-node market`, v0.9.0) | cualquier cliente HTTP | solo lectura (solo `GET`), sin monedero ni claves, sin órdenes; mismo servidor acotado del panel (líneas, cabeceras, cuerpo, timeouts); CORS abierto solo en este modo; publica hechos de la cadena en RAMI de prueba, nunca un precio externo |
 | **Cadena de suministro** | dependencia con vulnerabilidad, acción de CI alterada, «puerta trasera» en un cambio | `Cargo.lock` con `--locked`; `cargo audit` semanal; **inventario de red y procesos** (`tools/security/inventory.py`) comparado con `SECURITY-INVENTORY.txt` en cada push: cualquier host, comando o variable nueva rompe el CI hasta revisarse; guardián de `process::exit`; escaneo de secretos |
 
 ## Autoauditoría con nuestra propia tecnología
@@ -47,13 +49,19 @@ ejecutable frente a `BINARIES-SHA256.txt` del release.
   es `"RAMI-CHAIN/tx/v2" || network_id || cuerpo`, la regla no retrocede
   dentro de una rama y los nodos anteriores dejan de seguir la cadena (sin
   romperse). Detalle y pruebas: `docs/CONSENSO-V2.md`.
+- **Dubái (v0.9.0, activación 2026‑12‑01):** la parte de la ciudad (20 % de
+  la emisión), el reparto por bloque y los precios por distrito son un
+  primer ajuste de constantes de consenso; cambiarlas exige otro cambio con
+  fecha. Un binario v0.8.0 que abra un `chain.jsonl` escrito por la v0.9.0
+  con transacciones de mercado no lo lee (variantes nuevas de `Tx`); por red
+  nunca las recibe. Detalle: `docs/DUBAI.md` §6.
 - **Sin cota de timestamp en los bloques.** La cadena no exige que el
   timestamp de un bloque supere la mediana de los anteriores ni que no se
   adelante al reloj más de un margen: un minero puede poner el que quiera.
   Afecta al retarget LWMA (ya conocido) y a la activación por fecha de la
-  regla v2 (un minero puede adelantarla para su rama con un timestamp
-  futuro; no puede retrasarla, porque la regla no retrocede). La cota es
-  otro cambio de consenso y queda planificada, no hecha.
+  regla v2 y de Dubái (un minero puede adelantarlas para su rama con un
+  timestamp futuro; no puede retrasarlas, porque las reglas no retroceden).
+  La cota es otro cambio de consenso y queda planificada, no hecha.
 - **Bloques baratos a dificultad mínima.** Como toda cadena de trabajo joven,
   un atacante con CPU puede minar hermanos sobre bloques antiguos y hacer
   crecer el árbol (todo se conserva). Mitigación futura: trabajo mínimo

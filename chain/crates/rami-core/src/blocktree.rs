@@ -26,6 +26,9 @@ pub struct BlockNode {
     /// La regla de firma v2 rige en este bloque (por su timestamp o porque ya
     /// regía en su padre: una vez activada en una rama, no se vuelve atrás).
     pub firma_v2: bool,
+    /// Las reglas de Dubái (`crate::ciudad`) rigen en este bloque; misma
+    /// disciplina: por su timestamp o porque ya regían en su padre.
+    pub dubai: bool,
 }
 
 /// Prefijo inequívoco del error de `insert` cuando falta el padre (huérfano).
@@ -78,11 +81,12 @@ impl BlockTree {
         }
         let mut state = State::default();
         let firma_v2 = regla_para(params.firma_v2_desde, genesis.header.timestamp) == Regla::V2;
-        apply_block_con(&mut state, &genesis, 0, &Self::ctx_de(firma_v2, h))?;
+        let dubai = FirmaCtx::dubai_para(params.dubai_desde, genesis.header.timestamp);
+        apply_block_con(&mut state, &genesis, 0, &Self::ctx_de(firma_v2, dubai, h))?;
         let cum_work = difficulty_from_bits(genesis.header.bits);
 
         let mut nodes = HashMap::new();
-        nodes.insert(h, BlockNode { block: genesis, cum_work, firma_v2 });
+        nodes.insert(h, BlockNode { block: genesis, cum_work, firma_v2, dubai });
         let mut tip_state = HashMap::new();
         tip_state.insert(h, state);
         Ok(BlockTree { nodes, children: HashMap::new(), tip_state, genesis: h, params })
@@ -144,8 +148,8 @@ impl BlockTree {
         lwma_next_bits(&self.lwma_window(parent), self.params.min_difficulty)
     }
 
-    fn ctx_de(firma_v2: bool, net: Hash) -> FirmaCtx {
-        FirmaCtx { regla: if firma_v2 { Regla::V2 } else { Regla::V1 }, net }
+    fn ctx_de(firma_v2: bool, dubai: bool, net: Hash) -> FirmaCtx {
+        FirmaCtx { regla: if firma_v2 { Regla::V2 } else { Regla::V1 }, net, dubai }
     }
 
     /// ¿Rige la regla v2 para un bloque hijo de `parent` con ese timestamp?
@@ -158,9 +162,16 @@ impl BlockTree {
         padre_v2 || regla_para(self.params.firma_v2_desde, timestamp) == Regla::V2
     }
 
-    /// Contexto de firma para un bloque hijo de `parent` con ese timestamp.
+    /// ¿Rigen las reglas de Dubái para un hijo de `parent` con ese timestamp?
+    /// Igual que la firma v2: por la fecha, o porque ya regían en el padre.
+    pub fn dubai_sobre(&self, parent: &Hash, timestamp: u64) -> bool {
+        let padre = self.nodes.get(parent).map(|n| n.dubai).unwrap_or(false);
+        padre || FirmaCtx::dubai_para(self.params.dubai_desde, timestamp)
+    }
+
+    /// Contexto de reglas para un bloque hijo de `parent` con ese timestamp.
     pub fn firma_ctx_sobre(&self, parent: &Hash, timestamp: u64) -> FirmaCtx {
-        Self::ctx_de(self.firma_v2_sobre(parent, timestamp), self.genesis)
+        Self::ctx_de(self.firma_v2_sobre(parent, timestamp), self.dubai_sobre(parent, timestamp), self.genesis)
     }
 
     /// Contexto de firma que rige para lo que se construya AHORA sobre la
@@ -180,7 +191,7 @@ impl BlockTree {
         let mut state = State::default();
         for (i, bh) in self.chain_to(h).iter().enumerate() {
             let node = self.nodes.get(bh).ok_or("bloque ausente al reproducir")?;
-            apply_block_con(&mut state, &node.block, i as u64, &Self::ctx_de(node.firma_v2, self.genesis))?;
+            apply_block_con(&mut state, &node.block, i as u64, &Self::ctx_de(node.firma_v2, node.dubai, self.genesis))?;
         }
         Ok(state)
     }
@@ -220,12 +231,13 @@ impl BlockTree {
             None => self.replay_state(&parent)?,
         };
         let firma_v2 = parent_node.firma_v2 || regla_para(self.params.firma_v2_desde, block.header.timestamp) == Regla::V2;
-        apply_block_con(&mut parent_state, &block, block.header.height, &Self::ctx_de(firma_v2, self.genesis))?;
+        let dubai = parent_node.dubai || FirmaCtx::dubai_para(self.params.dubai_desde, block.header.timestamp);
+        apply_block_con(&mut parent_state, &block, block.header.height, &Self::ctx_de(firma_v2, dubai, self.genesis))?;
 
         let cum_work = parent_node.cum_work + difficulty_from_bits(block.header.bits);
 
         // Insertar.
-        self.nodes.insert(h, BlockNode { block, cum_work, firma_v2 });
+        self.nodes.insert(h, BlockNode { block, cum_work, firma_v2, dubai });
         self.children.entry(parent).or_default().push(h);
         // El padre deja de ser hoja; el hijo pasa a ser hoja.
         self.tip_state.remove(&parent);

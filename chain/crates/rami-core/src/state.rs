@@ -7,12 +7,13 @@
 //!
 //! La red neuronal y el desempate de Collatz NO intervienen aquí.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::block::Block;
+use crate::ciudad::{self, Trade};
 use crate::tx::{fee_of, merkle_root_txids, txid, verify_tx_con, AccountId, Amount, FirmaCtx, Tx, TxId};
 
 /// 1 RAMI = 100_000_000 ramiwei (8 decimales, como BTC).
@@ -53,10 +54,12 @@ pub struct Account {
     pub nonce: u64,
 }
 
-/// Precio de una parcela libre de la ciudad (se QUEMA: sumidero anti-spam,
-/// nadie lo cobra). 10 RAMI.
+/// Precio de una parcela libre de la ciudad HASTA Dubái (se QUEMA: sumidero
+/// anti-spam, nadie lo cobra). 10 RAMI. Desde Dubái el precio depende del
+/// distrito (`ciudad::precio_parcela`) y sigue quemándose.
 pub const PARCEL_PRICE: Amount = 10 * COIN;
-/// Precio de acuñar un activo (se quema). 1 RAMI.
+/// Precio de acuñar un activo hasta Dubái (se quema). 1 RAMI. Desde Dubái,
+/// por tipo (`ciudad::precio_acunado`).
 pub const MINT_PRICE: Amount = COIN;
 
 /// Parcela de la ciudad RAMI: la "empresa" montada sobre ella.
@@ -64,12 +67,25 @@ pub const MINT_PRICE: Amount = COIN;
 pub struct Parcel {
     pub owner: AccountId,
     pub name: String,
-    /// 0 empresa, 1 granja, 2 tienda, 3 oficina.
+    /// Sector: 0 empresa, 1 granja, 2 tienda, 3 oficina; desde Dubái, uno de
+    /// los 30 de `ciudad::SECTORES`.
     pub kind: u8,
     pub since: u64,
     /// Nº de cosechas repartidas y la última (altura, total).
     pub harvests: u64,
     pub last_harvest: Option<(u64, Amount)>,
+    /// Dubái: precio de venta publicado (RAMI), si está en venta.
+    pub sale: Option<Amount>,
+    /// Dubái: RAMI netos cobrados del fondo de la ciudad (acumulado).
+    pub ingresos: Amount,
+    /// Dubái: ingreso neto del último bloque con reparto y su altura.
+    pub ultimo_ingreso: Amount,
+    pub ultimo_bloque: u64,
+    /// Dubái: pagado a proveedores de la ciudad, importado (quemado) y
+    /// cobrado como proveedor de otras empresas (acumulados).
+    pub insumos_pagados: Amount,
+    pub importado: Amount,
+    pub ventas: Amount,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -93,12 +109,14 @@ pub struct Asset {
     pub owner: AccountId,
     pub x: u16,
     pub y: u16,
-    /// 0 planta (participa en cosechas), 1 objeto.
+    /// 0 planta (participa en cosechas), 1 objeto; desde Dubái 2 vehículo, 3 local.
     pub kind: u8,
     pub meta: String,
     pub minted: u64,
     pub offer: Option<Offer>,
     pub lease: Option<Lease>,
+    /// Dubái: precio de venta publicado (RAMI), si está en venta.
+    pub sale: Option<Amount>,
 }
 
 impl Asset {
@@ -121,6 +139,12 @@ pub struct State {
     /// commits ya revelados (no se puede revelar dos veces)
     pub revealed: std::collections::HashSet<TxId>,
     pub height: u64,
+    /// Dubái: fondo de la ciudad (parte de la emisión aún no repartida).
+    pub city_fund: Amount,
+    /// RAMI quemados (precios de parcela y acuñado, importaciones de Dubái).
+    pub quemado: Amount,
+    /// Dubái: últimas operaciones del mercado (cotización), acotadas.
+    pub trades: VecDeque<Trade>,
 }
 
 impl State {
@@ -188,12 +212,18 @@ pub fn apply_block_con(state: &mut State, block: &Block, expected_height: u64, f
     // 4) Suma de comisiones de las tx no-coinbase (para acotar la recompensa).
     let total_fees: u128 = block.txs.iter().map(|t| fee_of(t) as u128).sum();
 
-    // 5) Cota de la recompensa coinbase = emisión(altura) + comisiones.
+    // 5) Cota de la recompensa coinbase = emisión(altura) + comisiones. Desde
+    //    Dubái, una parte de la emisión (`ciudad::parte_ciudad`) no es del
+    //    minero: entra en el fondo de la ciudad. Las comisiones siguen enteras.
+    //    El bloque 0 queda fuera: el génesis de la testnet es fijo y anterior a
+    //    la activación, y en regtest su coinbase debe valer con o sin Dubái.
+    let emision = block_reward(expected_height);
+    let parte_ciudad = if firma.dubai && expected_height > 0 { ciudad::parte_ciudad(emision) } else { 0 };
     if let Some(Tx::Coinbase { height, reward, .. }) = block.txs.first() {
         if *height != expected_height {
             return Err("altura de la coinbase incorrecta".into());
         }
-        let cap = block_reward(expected_height) as u128 + total_fees;
+        let cap = (emision - parte_ciudad) as u128 + total_fees;
         if *reward as u128 > cap {
             return Err(format!("recompensa coinbase {reward} > cota {cap}"));
         }
@@ -203,7 +233,13 @@ pub fn apply_block_con(state: &mut State, block: &Block, expected_height: u64, f
     //    fallo a mitad no deje el estado corrupto.
     let mut next = state.clone();
     for (i, tx) in block.txs.iter().enumerate() {
-        apply_tx(&mut next, tx, expected_height, i, &ids[i])?;
+        apply_tx(&mut next, tx, expected_height, i, &ids[i], firma.dubai)?;
+    }
+    // 7) Dubái: la parte de la ciudad entra en el fondo y el fondo se reparte
+    //    entre las empresas (regla determinista: `ciudad::tick`).
+    if firma.dubai {
+        next.city_fund += parte_ciudad;
+        ciudad::tick(&mut next, expected_height);
     }
     next.height = expected_height;
     *state = next;
@@ -233,12 +269,15 @@ fn spend(state: &mut State, who: &AccountId, amount: Amount, fee: Amount) -> Res
 /// Transición de estado de UNA transacción. Pública para que el mempool y el
 /// constructor de bloques usen EXACTAMENTE las mismas reglas que la validación
 /// de bloques (una tx que pase aquí nunca invalidará el bloque minado).
+/// `dubai`: rigen las reglas de Dubái (precios por distrito, mercado, tipos
+/// nuevos); lo decide el contexto del bloque (`FirmaCtx.dubai`).
 pub fn apply_tx(
     state: &mut State,
     tx: &Tx,
     height: u64,
     index: usize,
     this_txid: &TxId,
+    dubai: bool,
 ) -> Result<(), String> {
     match tx {
         Tx::Coinbase { to, reward, .. } => {
@@ -329,12 +368,12 @@ pub fn apply_tx(
                     p.kind = *kind;
                 }
                 None => {
-                    // Parcela libre: el precio se QUEMA (nadie lo recibe).
-                    spend(state, who, PARCEL_PRICE, *fee)?;
-                    state.parcels.insert(
-                        (*x, *y),
-                        Parcel { owner: *who, name, kind: *kind, since: height, harvests: 0, last_harvest: None },
-                    );
+                    // Parcela libre: el precio se QUEMA (nadie lo recibe). Desde
+                    // Dubái depende del distrito; antes, fijo.
+                    let precio = if dubai { ciudad::precio_parcela(*x, *y) } else { PARCEL_PRICE };
+                    spend(state, who, precio, *fee)?;
+                    state.quemado += precio;
+                    state.parcels.insert((*x, *y), ciudad::nueva_parcela(*who, name, *kind, height));
                 }
             }
             Ok(())
@@ -342,15 +381,22 @@ pub fn apply_tx(
         Tx::MintAsset { who, x, y, kind, meta, fee, nonce, .. } => {
             require_nonce(state, who, *nonce)?;
             match state.parcels.get(&(*x, *y)) {
-                Some(p) if p.owner == *who => {}
+                Some(p) if p.owner == *who => {
+                    // Dubái: los vehículos solo los acuña un concesionario.
+                    if dubai && *kind == 2 && p.kind != ciudad::SECTOR_CONCESIONARIO {
+                        return Err("solo un concesionario puede acuñar vehículos".into());
+                    }
+                }
                 Some(_) => return Err("solo el dueño de la parcela puede acuñar en ella".into()),
                 None => return Err("la parcela no tiene dueño".into()),
             }
-            spend(state, who, MINT_PRICE, *fee)?; // precio quemado
+            let precio = if dubai { ciudad::precio_acunado(*kind) } else { MINT_PRICE };
+            spend(state, who, precio, *fee)?; // precio quemado
+            state.quemado += precio;
             let meta = String::from_utf8(meta.clone()).map_err(|_| "meta no UTF-8".to_string())?;
             state.assets.insert(
                 *this_txid,
-                Asset { owner: *who, x: *x, y: *y, kind: *kind, meta, minted: height, offer: None, lease: None },
+                Asset { owner: *who, x: *x, y: *y, kind: *kind, meta, minted: height, offer: None, lease: None, sale: None },
             );
             Ok(())
         }
@@ -366,6 +412,7 @@ pub fn apply_tx(
             }
             a.owner = *to;
             a.offer = None;
+            a.sale = None;
             Ok(())
         }
         Tx::ListLease { who, asset, price, term, fee, nonce, .. } => {
@@ -432,6 +479,97 @@ pub fn apply_tx(
             let p = state.parcels.get_mut(&(*x, *y)).expect("existe");
             p.harvests += 1;
             p.last_harvest = Some((height, distributed));
+            Ok(())
+        }
+
+        // ---------- Dubái RAMI: mercado ----------
+        Tx::SellAsset { who, asset, price, fee, nonce, .. } => {
+            if !dubai {
+                return Err("las reglas de Dubái no rigen todavía".into());
+            }
+            require_nonce(state, who, *nonce)?;
+            spend(state, who, 0, *fee)?;
+            let a = state.assets.get_mut(asset).ok_or("activo inexistente")?;
+            if a.owner != *who {
+                return Err("no eres el dueño del activo".into());
+            }
+            if *price > 0 && a.leased_at(height) {
+                return Err("el activo está alquilado; espera a que venza".into());
+            }
+            a.sale = if *price == 0 { None } else { Some(*price) };
+            Ok(())
+        }
+        Tx::BuyAsset { who, asset, max_price, fee, nonce, .. } => {
+            if !dubai {
+                return Err("las reglas de Dubái no rigen todavía".into());
+            }
+            require_nonce(state, who, *nonce)?;
+            let (owner, price, x, y, kind) = {
+                let a = state.assets.get(asset).ok_or("activo inexistente")?;
+                let price = a.sale.ok_or("el activo no está en venta")?;
+                if a.owner == *who {
+                    return Err("ya es tuyo".into());
+                }
+                if a.leased_at(height) {
+                    return Err("el activo está alquilado; espera a que venza".into());
+                }
+                if price > *max_price {
+                    return Err(format!("el precio ({price}) supera tu máximo ({max_price})"));
+                }
+                (a.owner, price, a.x, a.y, a.kind)
+            };
+            // Pago y cambio de manos en la misma transacción (atómico).
+            spend(state, who, price, *fee)?;
+            state.acct(&owner).balance += price;
+            let a = state.assets.get_mut(asset).expect("existe");
+            a.owner = *who;
+            a.sale = None;
+            a.offer = None;
+            ciudad::apuntar_trade(
+                &mut state.trades,
+                Trade { height, kind: 1, x, y, sector: kind, distrito: ciudad::distrito(x, y).id, price },
+            );
+            Ok(())
+        }
+        Tx::SellParcel { who, x, y, price, fee, nonce, .. } => {
+            if !dubai {
+                return Err("las reglas de Dubái no rigen todavía".into());
+            }
+            require_nonce(state, who, *nonce)?;
+            spend(state, who, 0, *fee)?;
+            let p = state.parcels.get_mut(&(*x, *y)).ok_or("la parcela no tiene dueño")?;
+            if p.owner != *who {
+                return Err("no eres el dueño de la parcela".into());
+            }
+            p.sale = if *price == 0 { None } else { Some(*price) };
+            Ok(())
+        }
+        Tx::BuyParcel { who, x, y, max_price, fee, nonce, .. } => {
+            if !dubai {
+                return Err("las reglas de Dubái no rigen todavía".into());
+            }
+            require_nonce(state, who, *nonce)?;
+            let (owner, price, sector) = {
+                let p = state.parcels.get(&(*x, *y)).ok_or("la parcela no tiene dueño")?;
+                let price = p.sale.ok_or("la parcela no está en venta")?;
+                if p.owner == *who {
+                    return Err("ya es tuya".into());
+                }
+                if price > *max_price {
+                    return Err(format!("el precio ({price}) supera tu máximo ({max_price})"));
+                }
+                (p.owner, price, p.kind)
+            };
+            spend(state, who, price, *fee)?;
+            state.acct(&owner).balance += price;
+            let p = state.parcels.get_mut(&(*x, *y)).expect("existe");
+            p.owner = *who;
+            p.sale = None;
+            p.since = height;
+            ciudad::apuntar_trade(
+                &mut state.trades,
+                Trade { height, kind: 0, x: *x, y: *y, sector, distrito: ciudad::distrito(*x, *y).id, price },
+            );
             Ok(())
         }
     }
@@ -518,10 +656,136 @@ mod tests {
             | Tx::TransferAsset { sig: s, .. }
             | Tx::ListLease { sig: s, .. }
             | Tx::Rent { sig: s, .. }
-            | Tx::Harvest { sig: s, .. } => *s = sig,
+            | Tx::Harvest { sig: s, .. }
+            | Tx::SellAsset { sig: s, .. }
+            | Tx::BuyAsset { sig: s, .. }
+            | Tx::SellParcel { sig: s, .. }
+            | Tx::BuyParcel { sig: s, .. } => *s = sig,
             Tx::Coinbase { .. } => {}
         }
         tx
+    }
+
+    /// Firma bajo un contexto dado (Dubái usa el mismo mensaje que la v2).
+    fn signed_con(kp: &KeyPair, ctx: &FirmaCtx, mut tx: Tx) -> Tx {
+        let sig = kp.sign(&ctx.mensaje(&tx));
+        match &mut tx {
+            Tx::Transfer { sig: s, .. }
+            | Tx::Stake { sig: s, .. }
+            | Tx::Unstake { sig: s, .. }
+            | Tx::Commit { sig: s, .. }
+            | Tx::Reveal { sig: s, .. }
+            | Tx::ClaimParcel { sig: s, .. }
+            | Tx::MintAsset { sig: s, .. }
+            | Tx::TransferAsset { sig: s, .. }
+            | Tx::ListLease { sig: s, .. }
+            | Tx::Rent { sig: s, .. }
+            | Tx::Harvest { sig: s, .. }
+            | Tx::SellAsset { sig: s, .. }
+            | Tx::BuyAsset { sig: s, .. }
+            | Tx::SellParcel { sig: s, .. }
+            | Tx::BuyParcel { sig: s, .. } => *s = sig,
+            Tx::Coinbase { .. } => {}
+        }
+        tx
+    }
+
+    /// Dubái de punta a punta: la coinbase deja el 20 % al fondo, la parcela
+    /// cuesta lo que dice su distrito (y se quema), el fondo se reparte a las
+    /// empresas cada bloque, una parcela y un activo se compran y venden en la
+    /// misma transacción, y nada de esto vale antes de la activación.
+    #[test]
+    fn dubai_fondo_reparto_y_mercado() {
+        let net = [7u8; 32];
+        let con = FirmaCtx::v2(net).con_dubai(true);
+        let sin = FirmaCtx::v2(net);
+        let a = KeyPair::from_secret(&[31u8; 32]);
+        let b = KeyPair::from_secret(&[32u8; 32]);
+        let (pa, pb) = (a.public_bytes(), b.public_bytes());
+        let mut st = State::default();
+        // Bloque 0 (génesis de prueba): regla sin Dubái, coinbase entera.
+        let b0 = block_with(0, ZERO_HASH, vec![coinbase(0, pa, 50 * COIN)]);
+        apply_block_con(&mut st, &b0, 0, &sin).unwrap();
+        // Bloque 1 con Dubái: la coinbase solo puede cobrar 40 + comisiones.
+        let mal = block_with(1, b0.hash(), vec![coinbase(1, pa, 50 * COIN)]);
+        let err = apply_block_con(&mut st.clone(), &mal, 1, &con).unwrap_err();
+        assert!(err.contains("cota"), "motivo: {err}");
+        let b1 = block_with(1, b0.hash(), vec![coinbase(1, pa, 40 * COIN)]);
+        apply_block_con(&mut st, &b1, 1, &con).unwrap();
+        assert_eq!(st.city_fund, 10 * COIN, "el 20 % de la emisión entra en el fondo (sin empresas no se reparte)");
+        assert_eq!(st.balance_of(&pa), 90 * COIN);
+        // Y el mismo bloque bajo la regla sin Dubái también vale (cobra menos de la cota).
+        let mut viejo = State::default();
+        apply_block_con(&mut viejo, &b0, 0, &sin).unwrap();
+        apply_block_con(&mut viejo, &b1, 1, &sin).unwrap();
+        assert_eq!(viejo.city_fund, 0);
+
+        // Bloque 2: A monta un hotel en Palm (300 RAMI) — no tiene tanto: falla.
+        let hotel_caro = signed_con(&a, &con, Tx::ClaimParcel { who: pa, x: 21, y: 8, name: b"Hotel Palm".to_vec(), kind: 5, fee: 1, nonce: 0, sig: [0u8; 64] });
+        let b2mal = block_with(2, b1.hash(), vec![coinbase(2, pa, 40 * COIN), hotel_caro]);
+        assert!(apply_block_con(&mut st.clone(), &b2mal, 2, &con).is_err());
+        // Un supermercado en International City (20 RAMI) sí; B recibe fondos.
+        let super_ = signed_con(&a, &con, Tx::ClaimParcel { who: pa, x: 57, y: 36, name: b"Super".to_vec(), kind: 22, fee: 1, nonce: 0, sig: [0u8; 64] });
+        let pago_b = signed_con(&a, &con, Tx::Transfer { from: pa, to: pb, amount: 60 * COIN, fee: 1, nonce: 1, sig: [0u8; 64] });
+        let b2 = block_with(2, b1.hash(), vec![coinbase(2, pa, 40 * COIN + 2), super_, pago_b]);
+        let fondo_antes = st.city_fund;
+        apply_block_con(&mut st, &b2, 2, &con).unwrap();
+        let p = &st.parcels[&(57, 36)];
+        assert_eq!(p.kind, 22);
+        // El fondo (10 + 10 RAMI) reparte el 1 % a la única empresa: importa
+        // sus 3 insumos (40 % quemado) y cobra el neto.
+        assert!(p.ultimo_ingreso > 0 && p.ultimo_bloque == 2);
+        assert!(p.importado > 0 && p.insumos_pagados == 0);
+        assert!(st.city_fund < fondo_antes + 10 * COIN);
+        assert_eq!(st.quemado, 20 * COIN + p.importado);
+        // Antes de la activación, ese mismo bloque es inválido (sector 22 > 3 y
+        // parcela fuera de 32×32): los nodos sin Dubái no lo admiten.
+        assert!(apply_block_con(&mut viejo.clone(), &b2, 2, &sin).is_err());
+
+        // Bloque 3: A pone la parcela en venta por 25 RAMI y B la compra; el pago
+        // y el cambio de dueño van en la misma transacción.
+        let venta = signed_con(&a, &con, Tx::SellParcel { who: pa, x: 57, y: 36, price: 25 * COIN, fee: 1, nonce: 2, sig: [0u8; 64] });
+        let compra = signed_con(&b, &con, Tx::BuyParcel { who: pb, x: 57, y: 36, max_price: 25 * COIN, fee: 1, nonce: 0, sig: [0u8; 64] });
+        let (sa, sb) = (st.balance_of(&pa), st.balance_of(&pb));
+        let b3 = block_with(3, b2.hash(), vec![coinbase(3, pa, 40 * COIN + 2), venta, compra]);
+        apply_block_con(&mut st, &b3, 3, &con).unwrap();
+        let p = &st.parcels[&(57, 36)];
+        assert_eq!(p.owner, pb);
+        assert_eq!(p.sale, None);
+        assert_eq!(p.since, 3);
+        assert_eq!(st.trades.len(), 1);
+        assert_eq!(st.trades[0].price, 25 * COIN);
+        assert_eq!(st.trades[0].kind, 0);
+        // A cobró 25 (menos su comisión de vender) más la coinbase; B pagó 25 + comisión
+        // y cobró el reparto del bloque como nueva dueña.
+        assert_eq!(st.balance_of(&pa), sa + 40 * COIN + 2 + 25 * COIN - 1);
+        assert!(st.balance_of(&pb) >= sb - 25 * COIN - 1);
+        // Comprar con un máximo por debajo del precio falla; comprar lo no puesto en venta, también.
+        let barato = signed_con(&a, &con, Tx::BuyParcel { who: pa, x: 57, y: 36, max_price: 1, fee: 1, nonce: 3, sig: [0u8; 64] });
+        let b4mal = block_with(4, b3.hash(), vec![coinbase(4, pa, 40 * COIN), barato]);
+        assert!(apply_block_con(&mut st.clone(), &b4mal, 4, &con).is_err());
+
+        // Bloque 4: B (dueña) acuña un local (20 RAMI, quemado) y lo vende a A por 3 RAMI.
+        let local = signed_con(&b, &con, Tx::MintAsset { who: pb, x: 57, y: 36, kind: 3, meta: b"Local 1".to_vec(), fee: 1, nonce: 1, sig: [0u8; 64] });
+        let local_id = txid(&local);
+        let venta_local = signed_con(&b, &con, Tx::SellAsset { who: pb, asset: local_id, price: 3 * COIN, fee: 1, nonce: 2, sig: [0u8; 64] });
+        let compra_local = signed_con(&a, &con, Tx::BuyAsset { who: pa, asset: local_id, max_price: 3 * COIN, fee: 1, nonce: 3, sig: [0u8; 64] });
+        // Un vehículo NO se puede acuñar aquí (no es un concesionario).
+        let coche = signed_con(&b, &con, Tx::MintAsset { who: pb, x: 57, y: 36, kind: 2, meta: b"Coche".to_vec(), fee: 1, nonce: 3, sig: [0u8; 64] });
+        let b4mal2 = block_with(4, b3.hash(), vec![coinbase(4, pa, 40 * COIN), local.clone(), venta_local.clone(), coche]);
+        let err = apply_block_con(&mut st.clone(), &b4mal2, 4, &con).unwrap_err();
+        assert!(err.contains("concesionario"), "motivo: {err}");
+        let quemado_antes = st.quemado;
+        let b4 = block_with(4, b3.hash(), vec![coinbase(4, pa, 40 * COIN + 3), local, venta_local, compra_local]);
+        apply_block_con(&mut st, &b4, 4, &con).unwrap();
+        let asset = &st.assets[&local_id];
+        assert_eq!(asset.owner, pa);
+        assert_eq!(asset.kind, 3);
+        assert_eq!(asset.sale, None);
+        assert!(st.quemado >= quemado_antes + 20 * COIN);
+        assert_eq!(st.trades.len(), 2);
+        assert_eq!(st.trades[1].kind, 1);
+        assert_eq!(st.trades[1].price, 3 * COIN);
     }
 
     /// Ciudad: reclamar parcela → acuñar planta → publicar alquiler → alquilar →
