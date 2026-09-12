@@ -1,0 +1,2037 @@
+{
+ "name": "Dubái",
+ "attribution": "Terrain: Mapzen/AWS Terrain Tiles (SRTM, GMTED2010, ETOPO1 and other public sources) · Roads: Natural Earth (public domain)",
+ "zoom": 12,
+ "downsample": 2,
+ "width": 1020,
+ "height": 998,
+ "origin_px": {
+  "x": 684195.0,
+  "y": 447755.0
+ },
+ "meters_per_pixel": 69.2246,
+ "offset": 1000,
+ "min_h": -44.0,
+ "max_h": 258.0,
+ "bbox": {
+  "west": 54.9,
+  "south": 24.78,
+  "east": 55.6,
+  "north": 25.4
+ },
+ "peak": {
+  "name": "Punto más alto del recorte",
+  "lat": 24.8023,
+  "lon": 55.5963,
+  "h": 258.2
+ },
+ "grid": {
+  "anchor": {
+   "lat": 25.064,
+   "lon": 54.994
+  },
+  "cellMeters": 650,
+  "rotationDeg": -48,
+  "size": 64
+ },
+ "towns": [
+  {
+   "name": "Dubái centro",
+   "lat": 25.197,
+   "lon": 55.274,
+   "kind": "city"
+  },
+  {
+   "name": "Deira",
+   "lat": 25.27,
+   "lon": 55.312,
+   "kind": "city"
+  },
+  {
+   "name": "Bur Dubái",
+   "lat": 25.256,
+   "lon": 55.298,
+   "kind": "district"
+  },
+  {
+   "name": "Dubai Marina",
+   "lat": 25.08,
+   "lon": 55.14,
+   "kind": "district"
+  },
+  {
+   "name": "JBR",
+   "lat": 25.078,
+   "lon": 55.133,
+   "kind": "beach"
+  },
+  {
+   "name": "JLT",
+   "lat": 25.071,
+   "lon": 55.145,
+   "kind": "district"
+  },
+  {
+   "name": "Palm Jumeirah",
+   "lat": 25.112,
+   "lon": 55.138,
+   "kind": "island"
+  },
+  {
+   "name": "Bluewaters",
+   "lat": 25.079,
+   "lon": 55.121,
+   "kind": "island"
+  },
+  {
+   "name": "The World",
+   "lat": 25.223,
+   "lon": 55.17,
+   "kind": "island"
+  },
+  {
+   "name": "Deira Islands",
+   "lat": 25.297,
+   "lon": 55.308,
+   "kind": "island"
+  },
+  {
+   "name": "Jumeirah",
+   "lat": 25.205,
+   "lon": 55.24,
+   "kind": "district"
+  },
+  {
+   "name": "Umm Suqeim",
+   "lat": 25.155,
+   "lon": 55.205,
+   "kind": "district"
+  },
+  {
+   "name": "Al Barsha",
+   "lat": 25.112,
+   "lon": 55.195,
+   "kind": "district"
+  },
+  {
+   "name": "Al Quoz",
+   "lat": 25.135,
+   "lon": 55.23,
+   "kind": "district"
+  },
+  {
+   "name": "Al Sufouh / Internet City",
+   "lat": 25.098,
+   "lon": 55.16,
+   "kind": "district"
+  },
+  {
+   "name": "Business Bay",
+   "lat": 25.185,
+   "lon": 55.265,
+   "kind": "district"
+  },
+  {
+   "name": "DIFC",
+   "lat": 25.211,
+   "lon": 55.28,
+   "kind": "district"
+  },
+  {
+   "name": "Zabeel",
+   "lat": 25.226,
+   "lon": 55.304,
+   "kind": "district"
+  },
+  {
+   "name": "Karama",
+   "lat": 25.245,
+   "lon": 55.305,
+   "kind": "district"
+  },
+  {
+   "name": "Satwa",
+   "lat": 25.228,
+   "lon": 55.275,
+   "kind": "district"
+  },
+  {
+   "name": "Dubai Hills",
+   "lat": 25.11,
+   "lon": 55.245,
+   "kind": "district"
+  },
+  {
+   "name": "Dubai Creek Harbour",
+   "lat": 25.205,
+   "lon": 55.345,
+   "kind": "district"
+  },
+  {
+   "name": "Festival City",
+   "lat": 25.221,
+   "lon": 55.352,
+   "kind": "district"
+  },
+  {
+   "name": "Al Jaddaf",
+   "lat": 25.22,
+   "lon": 55.33,
+   "kind": "district"
+  },
+  {
+   "name": "Meydan",
+   "lat": 25.158,
+   "lon": 55.302,
+   "kind": "district"
+  },
+  {
+   "name": "Nad Al Sheba",
+   "lat": 25.165,
+   "lon": 55.33,
+   "kind": "district"
+  },
+  {
+   "name": "Dubai Design District",
+   "lat": 25.187,
+   "lon": 55.295,
+   "kind": "district"
+  },
+  {
+   "name": "Silicon Oasis",
+   "lat": 25.12,
+   "lon": 55.38,
+   "kind": "district"
+  },
+  {
+   "name": "Academic City",
+   "lat": 25.12,
+   "lon": 55.41,
+   "kind": "district"
+  },
+  {
+   "name": "International City",
+   "lat": 25.165,
+   "lon": 55.405,
+   "kind": "district"
+  },
+  {
+   "name": "Mirdif",
+   "lat": 25.222,
+   "lon": 55.42,
+   "kind": "district"
+  },
+  {
+   "name": "Dubailand",
+   "lat": 25.08,
+   "lon": 55.28,
+   "kind": "district"
+  },
+  {
+   "name": "Global Village",
+   "lat": 25.069,
+   "lon": 55.307,
+   "kind": "landmark"
+  },
+  {
+   "name": "Motor City",
+   "lat": 25.047,
+   "lon": 55.238,
+   "kind": "district"
+  },
+  {
+   "name": "Sports City",
+   "lat": 25.04,
+   "lon": 55.22,
+   "kind": "district"
+  },
+  {
+   "name": "Arabian Ranches",
+   "lat": 25.055,
+   "lon": 55.27,
+   "kind": "district"
+  },
+  {
+   "name": "Al Furjan",
+   "lat": 25.03,
+   "lon": 55.15,
+   "kind": "district"
+  },
+  {
+   "name": "Discovery Gardens",
+   "lat": 25.04,
+   "lon": 55.145,
+   "kind": "district"
+  },
+  {
+   "name": "Dubai Investments Park",
+   "lat": 25.0,
+   "lon": 55.17,
+   "kind": "district"
+  },
+  {
+   "name": "Jebel Ali Free Zone",
+   "lat": 24.985,
+   "lon": 55.115,
+   "kind": "district"
+  },
+  {
+   "name": "Puerto de Jebel Ali",
+   "lat": 25.011,
+   "lon": 55.06,
+   "kind": "port"
+  },
+  {
+   "name": "Expo City",
+   "lat": 24.965,
+   "lon": 55.152,
+   "kind": "district"
+  },
+  {
+   "name": "Al Qudra",
+   "lat": 24.98,
+   "lon": 55.3,
+   "kind": "district"
+  },
+  {
+   "name": "Aeropuerto DXB",
+   "lat": 25.2528,
+   "lon": 55.3644,
+   "kind": "airport"
+  },
+  {
+   "name": "Aeropuerto Al Maktoum DWC",
+   "lat": 24.886,
+   "lon": 55.161,
+   "kind": "airport"
+  },
+  {
+   "name": "Port Rashid",
+   "lat": 25.265,
+   "lon": 55.275,
+   "kind": "port"
+  },
+  {
+   "name": "Dubai Harbour",
+   "lat": 25.091,
+   "lon": 55.135,
+   "kind": "port"
+  },
+  {
+   "name": "Kite Beach",
+   "lat": 25.174,
+   "lon": 55.217,
+   "kind": "beach"
+  },
+  {
+   "name": "La Mer",
+   "lat": 25.232,
+   "lon": 55.26,
+   "kind": "beach"
+  },
+  {
+   "name": "Zoco del Oro",
+   "lat": 25.2713,
+   "lon": 55.2977,
+   "kind": "landmark"
+  },
+  {
+   "name": "Al Fahidi",
+   "lat": 25.2637,
+   "lon": 55.2986,
+   "kind": "landmark"
+  },
+  {
+   "name": "Ras Al Khor",
+   "lat": 25.188,
+   "lon": 55.33,
+   "kind": "landmark"
+  }
+ ],
+ "landmarks": [
+  {
+   "id": "burj_khalifa",
+   "name": "Burj Khalifa",
+   "lat": 25.1972,
+   "lon": 55.2744,
+   "shape": "burj_khalifa",
+   "h": 828,
+   "w": 150,
+   "d": 150,
+   "rot": 0
+  },
+  {
+   "id": "dubai_mall",
+   "name": "Dubai Mall",
+   "lat": 25.1975,
+   "lon": 55.2796,
+   "shape": "mall",
+   "h": 40,
+   "w": 700,
+   "d": 450,
+   "rot": 0
+  },
+  {
+   "id": "address_downtown",
+   "name": "Address Downtown",
+   "lat": 25.1946,
+   "lon": 55.2764,
+   "shape": "tower",
+   "h": 302,
+   "w": 60,
+   "d": 60,
+   "rot": 0
+  },
+  {
+   "id": "dubai_opera",
+   "name": "Dubai Opera",
+   "lat": 25.1938,
+   "lon": 55.2717,
+   "shape": "dhow",
+   "h": 45,
+   "w": 200,
+   "d": 90,
+   "rot": 60
+  },
+  {
+   "id": "address_skyview",
+   "name": "Address Sky View",
+   "lat": 25.196,
+   "lon": 55.279,
+   "shape": "twin_bridge",
+   "h": 260,
+   "w": 120,
+   "d": 50,
+   "rot": 0
+  },
+  {
+   "id": "jw_marriott_marquis",
+   "name": "JW Marriott Marquis",
+   "lat": 25.186,
+   "lon": 55.2586,
+   "shape": "twin",
+   "h": 355,
+   "w": 120,
+   "d": 60,
+   "rot": 0
+  },
+  {
+   "id": "emirates_towers",
+   "name": "Emirates Towers",
+   "lat": 25.2176,
+   "lon": 55.2822,
+   "shape": "twin_prism",
+   "h": 355,
+   "w": 160,
+   "d": 80,
+   "rot": 42
+  },
+  {
+   "id": "museum_future",
+   "name": "Museo del Futuro",
+   "lat": 25.2191,
+   "lon": 55.2814,
+   "shape": "torus",
+   "h": 77,
+   "w": 70,
+   "d": 30,
+   "rot": 42
+  },
+  {
+   "id": "difc_gate",
+   "name": "The Gate (DIFC)",
+   "lat": 25.2114,
+   "lon": 55.28,
+   "shape": "gate",
+   "h": 100,
+   "w": 120,
+   "d": 60,
+   "rot": 42
+  },
+  {
+   "id": "one_zaabeel",
+   "name": "One Za'abeel",
+   "lat": 25.2255,
+   "lon": 55.2966,
+   "shape": "link",
+   "h": 305,
+   "w": 230,
+   "d": 60,
+   "rot": 42
+  },
+  {
+   "id": "wtc",
+   "name": "Dubai World Trade Centre",
+   "lat": 25.2251,
+   "lon": 55.2872,
+   "shape": "tower",
+   "h": 149,
+   "w": 45,
+   "d": 45,
+   "rot": 0
+  },
+  {
+   "id": "rose_rayhaan",
+   "name": "Rose Rayhaan",
+   "lat": 25.222,
+   "lon": 55.281,
+   "shape": "tower",
+   "h": 333,
+   "w": 40,
+   "d": 40,
+   "rot": 0
+  },
+  {
+   "id": "burj_al_salam",
+   "name": "Burj Al Salam",
+   "lat": 25.2224,
+   "lon": 55.2843,
+   "shape": "tower",
+   "h": 252,
+   "w": 50,
+   "d": 50,
+   "rot": 0
+  },
+  {
+   "id": "dubai_frame",
+   "name": "Dubai Frame",
+   "lat": 25.2355,
+   "lon": 55.3003,
+   "shape": "frame",
+   "h": 150,
+   "w": 93,
+   "d": 20,
+   "rot": 42
+  },
+  {
+   "id": "wafi",
+   "name": "Wafi",
+   "lat": 25.229,
+   "lon": 55.32,
+   "shape": "pyramid",
+   "h": 60,
+   "w": 90,
+   "d": 90,
+   "rot": 0
+  },
+  {
+   "id": "raffles",
+   "name": "Raffles Dubai",
+   "lat": 25.2287,
+   "lon": 55.318,
+   "shape": "pyramid",
+   "h": 120,
+   "w": 80,
+   "d": 80,
+   "rot": 0
+  },
+  {
+   "id": "etisalat_deira",
+   "name": "Torre Etisalat",
+   "lat": 25.2636,
+   "lon": 55.323,
+   "shape": "globe",
+   "h": 160,
+   "w": 40,
+   "d": 40,
+   "rot": 0
+  },
+  {
+   "id": "deira_clocktower",
+   "name": "Torre del Reloj de Deira",
+   "lat": 25.262,
+   "lon": 55.3197,
+   "shape": "clock",
+   "h": 30,
+   "w": 12,
+   "d": 12,
+   "rot": 0
+  },
+  {
+   "id": "gold_souk",
+   "name": "Zoco del Oro",
+   "lat": 25.2713,
+   "lon": 55.2977,
+   "shape": "souk",
+   "h": 10,
+   "w": 220,
+   "d": 90,
+   "rot": 30
+  },
+  {
+   "id": "al_fahidi_fort",
+   "name": "Fuerte Al Fahidi",
+   "lat": 25.2633,
+   "lon": 55.2972,
+   "shape": "fort",
+   "h": 15,
+   "w": 60,
+   "d": 60,
+   "rot": 0
+  },
+  {
+   "id": "al_fahidi_windtowers",
+   "name": "Al Fahidi (torres de viento)",
+   "lat": 25.2637,
+   "lon": 55.2986,
+   "shape": "windtowers",
+   "h": 14,
+   "w": 200,
+   "d": 150,
+   "rot": 0
+  },
+  {
+   "id": "jumeirah_mosque",
+   "name": "Mezquita de Jumeirah",
+   "lat": 25.234,
+   "lon": 55.2656,
+   "shape": "mosque",
+   "h": 40,
+   "w": 70,
+   "d": 60,
+   "rot": 0
+  },
+  {
+   "id": "etihad_museum",
+   "name": "Museo Etihad",
+   "lat": 25.2404,
+   "lon": 55.2745,
+   "shape": "pavilion",
+   "h": 20,
+   "w": 120,
+   "d": 80,
+   "rot": 0
+  },
+  {
+   "id": "zabeel_palace",
+   "name": "Palacio de Zabeel",
+   "lat": 25.226,
+   "lon": 55.304,
+   "shape": "palace",
+   "h": 25,
+   "w": 200,
+   "d": 160,
+   "rot": 0
+  },
+  {
+   "id": "burj_al_arab",
+   "name": "Burj Al Arab",
+   "lat": 25.1412,
+   "lon": 55.1853,
+   "shape": "sail",
+   "h": 321,
+   "w": 100,
+   "d": 80,
+   "rot": 15
+  },
+  {
+   "id": "jumeirah_beach_hotel",
+   "name": "Jumeirah Beach Hotel",
+   "lat": 25.1414,
+   "lon": 55.1915,
+   "shape": "wave",
+   "h": 93,
+   "w": 280,
+   "d": 60,
+   "rot": 45
+  },
+  {
+   "id": "madinat_jumeirah",
+   "name": "Madinat Jumeirah",
+   "lat": 25.133,
+   "lon": 55.185,
+   "shape": "windtowers",
+   "h": 20,
+   "w": 500,
+   "d": 400,
+   "rot": 0
+  },
+  {
+   "id": "mall_emirates",
+   "name": "Mall of the Emirates",
+   "lat": 25.1181,
+   "lon": 55.2004,
+   "shape": "mall",
+   "h": 30,
+   "w": 600,
+   "d": 400,
+   "rot": 42
+  },
+  {
+   "id": "ski_dubai",
+   "name": "Ski Dubai",
+   "lat": 25.1175,
+   "lon": 55.1975,
+   "shape": "ski",
+   "h": 85,
+   "w": 400,
+   "d": 80,
+   "rot": 42
+  },
+  {
+   "id": "atlantis",
+   "name": "Atlantis The Palm",
+   "lat": 25.1304,
+   "lon": 55.1171,
+   "shape": "arch",
+   "h": 93,
+   "w": 260,
+   "d": 60,
+   "rot": 45
+  },
+  {
+   "id": "atlantis_royal",
+   "name": "Atlantis The Royal",
+   "lat": 25.1366,
+   "lon": 55.1165,
+   "shape": "blocks",
+   "h": 178,
+   "w": 220,
+   "d": 60,
+   "rot": 45
+  },
+  {
+   "id": "palm_tower",
+   "name": "Palm Tower",
+   "lat": 25.113,
+   "lon": 55.1385,
+   "shape": "tower",
+   "h": 240,
+   "w": 50,
+   "d": 50,
+   "rot": 0
+  },
+  {
+   "id": "ain_dubai",
+   "name": "Ain Dubai",
+   "lat": 25.079,
+   "lon": 55.1211,
+   "shape": "wheel",
+   "h": 250,
+   "w": 250,
+   "d": 30,
+   "rot": 45
+  },
+  {
+   "id": "cayan",
+   "name": "Cayan Tower",
+   "lat": 25.0861,
+   "lon": 55.1436,
+   "shape": "twist",
+   "h": 306,
+   "w": 45,
+   "d": 45,
+   "rot": 0
+  },
+  {
+   "id": "princess_tower",
+   "name": "Princess Tower",
+   "lat": 25.0889,
+   "lon": 55.1469,
+   "shape": "tower",
+   "h": 413,
+   "w": 45,
+   "d": 45,
+   "rot": 0
+  },
+  {
+   "id": "marina_101",
+   "name": "Marina 101",
+   "lat": 25.0914,
+   "lon": 55.148,
+   "shape": "tower",
+   "h": 425,
+   "w": 40,
+   "d": 40,
+   "rot": 0
+  },
+  {
+   "id": "elite_residence",
+   "name": "Elite Residence",
+   "lat": 25.0899,
+   "lon": 55.1465,
+   "shape": "tower",
+   "h": 380,
+   "w": 45,
+   "d": 45,
+   "rot": 0
+  },
+  {
+   "id": "marina_23",
+   "name": "23 Marina",
+   "lat": 25.0873,
+   "lon": 55.146,
+   "shape": "tower",
+   "h": 392,
+   "w": 40,
+   "d": 40,
+   "rot": 0
+  },
+  {
+   "id": "ocean_heights",
+   "name": "Ocean Heights",
+   "lat": 25.0865,
+   "lon": 55.1445,
+   "shape": "twist",
+   "h": 310,
+   "w": 45,
+   "d": 45,
+   "rot": 0
+  },
+  {
+   "id": "almas",
+   "name": "Almas Tower",
+   "lat": 25.0693,
+   "lon": 55.1437,
+   "shape": "tower",
+   "h": 360,
+   "w": 60,
+   "d": 40,
+   "rot": 0
+  },
+  {
+   "id": "marina_mall",
+   "name": "Dubai Marina Mall",
+   "lat": 25.0768,
+   "lon": 55.1399,
+   "shape": "mall",
+   "h": 30,
+   "w": 250,
+   "d": 150,
+   "rot": 0
+  },
+  {
+   "id": "ibn_battuta",
+   "name": "Ibn Battuta Mall",
+   "lat": 25.044,
+   "lon": 55.119,
+   "shape": "mall",
+   "h": 25,
+   "w": 900,
+   "d": 250,
+   "rot": 42
+  },
+  {
+   "id": "meydan",
+   "name": "Hipódromo de Meydan",
+   "lat": 25.158,
+   "lon": 55.302,
+   "shape": "grandstand",
+   "h": 60,
+   "w": 1600,
+   "d": 80,
+   "rot": 100
+  },
+  {
+   "id": "dxb_t3",
+   "name": "Aeropuerto DXB (T3)",
+   "lat": 25.2528,
+   "lon": 55.3644,
+   "shape": "terminal",
+   "h": 30,
+   "w": 1200,
+   "d": 200,
+   "rot": 30
+  },
+  {
+   "id": "al_wasl",
+   "name": "Cúpula Al Wasl (Expo City)",
+   "lat": 24.965,
+   "lon": 55.152,
+   "shape": "dome",
+   "h": 67,
+   "w": 130,
+   "d": 130,
+   "rot": 0
+  },
+  {
+   "id": "autodrome",
+   "name": "Dubai Autodrome",
+   "lat": 25.047,
+   "lon": 55.238,
+   "shape": "track",
+   "h": 12,
+   "w": 1200,
+   "d": 700,
+   "rot": 0
+  },
+  {
+   "id": "global_village",
+   "name": "Global Village",
+   "lat": 25.069,
+   "lon": 55.307,
+   "shape": "village",
+   "h": 15,
+   "w": 800,
+   "d": 600,
+   "rot": 0
+  },
+  {
+   "id": "miracle_garden",
+   "name": "Miracle Garden",
+   "lat": 25.06,
+   "lon": 55.244,
+   "shape": "garden",
+   "h": 6,
+   "w": 400,
+   "d": 300,
+   "rot": 0
+  },
+  {
+   "id": "festival_city",
+   "name": "Festival City Mall",
+   "lat": 25.221,
+   "lon": 55.352,
+   "shape": "mall",
+   "h": 30,
+   "w": 500,
+   "d": 300,
+   "rot": 0
+  },
+  {
+   "id": "creek_harbour",
+   "name": "Dubai Creek Harbour",
+   "lat": 25.205,
+   "lon": 55.345,
+   "shape": "blocks",
+   "h": 200,
+   "w": 300,
+   "d": 200,
+   "rot": 0
+  },
+  {
+   "id": "jebel_ali_cranes",
+   "name": "Puerto de Jebel Ali (grúas)",
+   "lat": 25.011,
+   "lon": 55.06,
+   "shape": "cranes",
+   "h": 80,
+   "w": 2500,
+   "d": 120,
+   "rot": 42
+  },
+  {
+   "id": "port_rashid",
+   "name": "Port Rashid",
+   "lat": 25.265,
+   "lon": 55.275,
+   "shape": "ship",
+   "h": 60,
+   "w": 290,
+   "d": 40,
+   "rot": 60
+  },
+  {
+   "id": "expo_pavilions",
+   "name": "Expo City",
+   "lat": 24.967,
+   "lon": 55.156,
+   "shape": "blocks",
+   "h": 40,
+   "w": 600,
+   "d": 400,
+   "rot": 0
+  },
+  {
+   "id": "bluewaters_res",
+   "name": "Bluewaters",
+   "lat": 25.08,
+   "lon": 55.12,
+   "shape": "blocks",
+   "h": 70,
+   "w": 500,
+   "d": 300,
+   "rot": 45
+  },
+  {
+   "id": "jumeirah_bay",
+   "name": "Jumeirah Bay (Bulgari)",
+   "lat": 25.213,
+   "lon": 55.243,
+   "shape": "blocks",
+   "h": 30,
+   "w": 300,
+   "d": 200,
+   "rot": 30
+  },
+  {
+   "id": "d3",
+   "name": "Dubai Design District",
+   "lat": 25.187,
+   "lon": 55.295,
+   "shape": "blocks",
+   "h": 45,
+   "w": 500,
+   "d": 300,
+   "rot": 0
+  }
+ ],
+ "clusters": [
+  {
+   "name": "Dubai Marina",
+   "lat": 25.08,
+   "lon": 55.14,
+   "radius_m": 1200,
+   "count": 180,
+   "hmin": 90,
+   "hmax": 380,
+   "seed": 49127,
+   "kind": "towers"
+  },
+  {
+   "name": "JLT",
+   "lat": 25.07,
+   "lon": 55.145,
+   "radius_m": 700,
+   "count": 70,
+   "hmin": 100,
+   "hmax": 250,
+   "seed": 17632,
+   "kind": "towers"
+  },
+  {
+   "name": "JBR",
+   "lat": 25.078,
+   "lon": 55.133,
+   "radius_m": 500,
+   "count": 40,
+   "hmin": 120,
+   "hmax": 200,
+   "seed": 52315,
+   "kind": "towers"
+  },
+  {
+   "name": "Emaar Beachfront",
+   "lat": 25.088,
+   "lon": 55.137,
+   "radius_m": 300,
+   "count": 20,
+   "hmin": 100,
+   "hmax": 200,
+   "seed": 22425,
+   "kind": "towers"
+  },
+  {
+   "name": "Downtown",
+   "lat": 25.196,
+   "lon": 55.276,
+   "radius_m": 900,
+   "count": 90,
+   "hmin": 80,
+   "hmax": 300,
+   "seed": 50079,
+   "kind": "towers"
+  },
+  {
+   "name": "Business Bay",
+   "lat": 25.185,
+   "lon": 55.265,
+   "radius_m": 1200,
+   "count": 140,
+   "hmin": 80,
+   "hmax": 260,
+   "seed": 18816,
+   "kind": "towers"
+  },
+  {
+   "name": "DIFC",
+   "lat": 25.215,
+   "lon": 55.282,
+   "radius_m": 800,
+   "count": 60,
+   "hmin": 100,
+   "hmax": 330,
+   "seed": 24208,
+   "kind": "towers"
+  },
+  {
+   "name": "Sheikh Zayed Road",
+   "lat": 25.205,
+   "lon": 55.27,
+   "radius_m": 600,
+   "count": 40,
+   "hmin": 100,
+   "hmax": 300,
+   "seed": 33761,
+   "kind": "towers"
+  },
+  {
+   "name": "Barsha Heights",
+   "lat": 25.097,
+   "lon": 55.175,
+   "radius_m": 600,
+   "count": 50,
+   "hmin": 60,
+   "hmax": 200,
+   "seed": 43121,
+   "kind": "towers"
+  },
+  {
+   "name": "Dubai Creek Harbour",
+   "lat": 25.205,
+   "lon": 55.345,
+   "radius_m": 700,
+   "count": 30,
+   "hmin": 100,
+   "hmax": 300,
+   "seed": 15510,
+   "kind": "towers"
+  },
+  {
+   "name": "Al Jaddaf",
+   "lat": 25.222,
+   "lon": 55.33,
+   "radius_m": 500,
+   "count": 25,
+   "hmin": 60,
+   "hmax": 150,
+   "seed": 25942,
+   "kind": "blocks"
+  },
+  {
+   "name": "Deira",
+   "lat": 25.268,
+   "lon": 55.31,
+   "radius_m": 1200,
+   "count": 120,
+   "hmin": 30,
+   "hmax": 120,
+   "seed": 46256,
+   "kind": "blocks"
+  },
+  {
+   "name": "Bur Dubai",
+   "lat": 25.255,
+   "lon": 55.3,
+   "radius_m": 900,
+   "count": 90,
+   "hmin": 25,
+   "hmax": 100,
+   "seed": 22172,
+   "kind": "blocks"
+  },
+  {
+   "name": "Karama",
+   "lat": 25.245,
+   "lon": 55.305,
+   "radius_m": 700,
+   "count": 80,
+   "hmin": 20,
+   "hmax": 40,
+   "seed": 35029,
+   "kind": "blocks"
+  },
+  {
+   "name": "Satwa",
+   "lat": 25.228,
+   "lon": 55.275,
+   "radius_m": 600,
+   "count": 60,
+   "hmin": 10,
+   "hmax": 25,
+   "seed": 44051,
+   "kind": "blocks"
+  },
+  {
+   "name": "Al Barsha",
+   "lat": 25.113,
+   "lon": 55.198,
+   "radius_m": 1000,
+   "count": 60,
+   "hmin": 20,
+   "hmax": 80,
+   "seed": 29799,
+   "kind": "blocks"
+  },
+  {
+   "name": "Silicon Oasis",
+   "lat": 25.12,
+   "lon": 55.38,
+   "radius_m": 900,
+   "count": 40,
+   "hmin": 20,
+   "hmax": 80,
+   "seed": 9350,
+   "kind": "blocks"
+  },
+  {
+   "name": "International City",
+   "lat": 25.165,
+   "lon": 55.405,
+   "radius_m": 900,
+   "count": 80,
+   "hmin": 15,
+   "hmax": 25,
+   "seed": 43674,
+   "kind": "blocks"
+  },
+  {
+   "name": "Festival City",
+   "lat": 25.221,
+   "lon": 55.352,
+   "radius_m": 600,
+   "count": 30,
+   "hmin": 30,
+   "hmax": 120,
+   "seed": 30838,
+   "kind": "blocks"
+  },
+  {
+   "name": "Sports City",
+   "lat": 25.04,
+   "lon": 55.22,
+   "radius_m": 700,
+   "count": 30,
+   "hmin": 30,
+   "hmax": 120,
+   "seed": 33164,
+   "kind": "blocks"
+  },
+  {
+   "name": "Discovery Gardens",
+   "lat": 25.04,
+   "lon": 55.145,
+   "radius_m": 800,
+   "count": 100,
+   "hmin": 15,
+   "hmax": 25,
+   "seed": 21015,
+   "kind": "blocks"
+  },
+  {
+   "name": "Motor City",
+   "lat": 25.047,
+   "lon": 55.238,
+   "radius_m": 700,
+   "count": 30,
+   "hmin": 20,
+   "hmax": 60,
+   "seed": 63661,
+   "kind": "blocks"
+  },
+  {
+   "name": "Dubai Hills",
+   "lat": 25.11,
+   "lon": 55.245,
+   "radius_m": 1200,
+   "count": 40,
+   "hmin": 20,
+   "hmax": 100,
+   "seed": 3378,
+   "kind": "blocks"
+  },
+  {
+   "name": "Expo City",
+   "lat": 24.965,
+   "lon": 55.152,
+   "radius_m": 800,
+   "count": 30,
+   "hmin": 20,
+   "hmax": 60,
+   "seed": 59509,
+   "kind": "blocks"
+  },
+  {
+   "name": "Palm trunk",
+   "lat": 25.112,
+   "lon": 55.138,
+   "radius_m": 300,
+   "count": 40,
+   "hmin": 20,
+   "hmax": 60,
+   "seed": 40036,
+   "kind": "blocks"
+  },
+  {
+   "name": "Jumeirah villas",
+   "lat": 25.205,
+   "lon": 55.24,
+   "radius_m": 1500,
+   "count": 250,
+   "hmin": 8,
+   "hmax": 15,
+   "seed": 26766,
+   "kind": "villas"
+  },
+  {
+   "name": "Umm Suqeim villas",
+   "lat": 25.155,
+   "lon": 55.205,
+   "radius_m": 1300,
+   "count": 200,
+   "hmin": 8,
+   "hmax": 14,
+   "seed": 52859,
+   "kind": "villas"
+  },
+  {
+   "name": "Mirdif villas",
+   "lat": 25.222,
+   "lon": 55.42,
+   "radius_m": 1200,
+   "count": 150,
+   "hmin": 8,
+   "hmax": 14,
+   "seed": 62166,
+   "kind": "villas"
+  },
+  {
+   "name": "Arabian Ranches",
+   "lat": 25.055,
+   "lon": 55.27,
+   "radius_m": 1200,
+   "count": 150,
+   "hmin": 8,
+   "hmax": 14,
+   "seed": 18969,
+   "kind": "villas"
+  },
+  {
+   "name": "Meydan villas",
+   "lat": 25.165,
+   "lon": 55.33,
+   "radius_m": 900,
+   "count": 80,
+   "hmin": 8,
+   "hmax": 14,
+   "seed": 33214,
+   "kind": "villas"
+  },
+  {
+   "name": "Al Quoz",
+   "lat": 25.135,
+   "lon": 55.23,
+   "radius_m": 1500,
+   "count": 200,
+   "hmin": 8,
+   "hmax": 15,
+   "seed": 27808,
+   "kind": "warehouses"
+  },
+  {
+   "name": "JAFZA",
+   "lat": 24.985,
+   "lon": 55.115,
+   "radius_m": 2000,
+   "count": 300,
+   "hmin": 8,
+   "hmax": 16,
+   "seed": 48391,
+   "kind": "warehouses"
+  },
+  {
+   "name": "Dubai Investments Park",
+   "lat": 25.0,
+   "lon": 55.17,
+   "radius_m": 1500,
+   "count": 100,
+   "hmin": 8,
+   "hmax": 15,
+   "seed": 38124,
+   "kind": "warehouses"
+  },
+  {
+   "name": "Al Qusais/Airport industrial",
+   "lat": 25.27,
+   "lon": 55.38,
+   "radius_m": 1200,
+   "count": 120,
+   "hmin": 8,
+   "hmax": 15,
+   "seed": 38486,
+   "kind": "warehouses"
+  }
+ ],
+ "islands": [
+  {
+   "name": "Palm Jumeirah",
+   "kind": "palm"
+  },
+  {
+   "name": "Palm Jebel Ali",
+   "kind": "palm"
+  },
+  {
+   "name": "Bluewaters Island",
+   "kind": "island"
+  },
+  {
+   "name": "The World (240 islotes)",
+   "kind": "archipelago"
+  },
+  {
+   "name": "Deira Islands",
+   "kind": "island"
+  },
+  {
+   "name": "Jumeirah Bay Island",
+   "kind": "island"
+  },
+  {
+   "name": "Dubai Harbour",
+   "kind": "reclamation"
+  },
+  {
+   "name": "Burj Al Arab",
+   "kind": "island"
+  },
+  {
+   "name": "Dubai Maritime City",
+   "kind": "reclamation"
+  }
+ ],
+ "water": [
+  {
+   "name": "Dubai Creek",
+   "kind": "creek"
+  },
+  {
+   "name": "Ras Al Khor",
+   "kind": "lagoon"
+  },
+  {
+   "name": "Business Bay canal",
+   "kind": "canal"
+  },
+  {
+   "name": "Business Bay lake",
+   "kind": "lake"
+  },
+  {
+   "name": "Dubai Water Canal",
+   "kind": "canal"
+  },
+  {
+   "name": "Dubai Marina canal",
+   "kind": "canal"
+  },
+  {
+   "name": "Burj Khalifa lake",
+   "kind": "lake"
+  }
+ ],
+ "roads": [
+  [
+   [
+    55.40246,
+    25.34298
+   ],
+   [
+    55.42308,
+    25.36773
+   ],
+   [
+    55.4602,
+    25.37598
+   ],
+   [
+    55.4767,
+    25.38422
+   ],
+   [
+    55.48495,
+    25.40072
+   ],
+   [
+    55.50557,
+    25.44609
+   ],
+   [
+    55.52619,
+    25.48321
+   ]
+  ],
+  [
+   [
+    55.40246,
+    25.34298
+   ],
+   [
+    55.49732,
+    25.32236
+   ],
+   [
+    55.54681,
+    25.30586
+   ],
+   [
+    55.59631,
+    25.28111
+   ],
+   [
+    55.6623,
+    25.26462
+   ],
+   [
+    55.6788,
+    25.26462
+   ],
+   [
+    55.74066,
+    25.28111
+   ],
+   [
+    55.77366,
+    25.28524
+   ],
+   [
+    55.84377,
+    25.28524
+   ],
+   [
+    55.87677,
+    25.28524
+   ]
+  ],
+  [
+   [
+    55.40246,
+    25.34298
+   ],
+   [
+    55.37359,
+    25.30174
+   ],
+   [
+    55.3241,
+    25.25224
+   ],
+   [
+    55.29935,
+    25.23575
+   ],
+   [
+    55.27873,
+    25.20687
+   ]
+  ],
+  [
+   [
+    55.32822,
+    25.16151
+   ],
+   [
+    55.3076,
+    25.178
+   ],
+   [
+    55.2911,
+    25.19862
+   ],
+   [
+    55.27873,
+    25.20687
+   ]
+  ],
+  [
+   [
+    55.58806,
+    25.02127
+   ],
+   [
+    55.59218,
+    25.05427
+   ],
+   [
+    55.56744,
+    25.06664
+   ],
+   [
+    55.55919,
+    25.08314
+   ],
+   [
+    55.54681,
+    25.12439
+   ],
+   [
+    55.53444,
+    25.14501
+   ],
+   [
+    55.4932,
+    25.14501
+   ],
+   [
+    55.39834,
+    25.14913
+   ],
+   [
+    55.37359,
+    25.15326
+   ],
+   [
+    55.32822,
+    25.16151
+   ]
+  ],
+  [
+   [
+    55.6458,
+    25.00065
+   ],
+   [
+    55.62518,
+    25.01715
+   ],
+   [
+    55.60868,
+    25.02127
+   ],
+   [
+    55.58806,
+    25.02127
+   ]
+  ],
+  [
+   [
+    55.58806,
+    25.02127
+   ],
+   [
+    55.54681,
+    25.01715
+   ],
+   [
+    55.48082,
+    25.00065
+   ]
+  ],
+  [
+   [
+    55.48082,
+    25.00065
+   ],
+   [
+    55.4602,
+    25.01715
+   ],
+   [
+    55.39834,
+    25.0584
+   ],
+   [
+    55.38184,
+    25.07902
+   ],
+   [
+    55.34884,
+    25.13264
+   ],
+   [
+    55.32822,
+    25.16151
+   ]
+  ],
+  [
+   [
+    55.27873,
+    25.20687
+   ],
+   [
+    55.26635,
+    25.1945
+   ],
+   [
+    55.22098,
+    25.14913
+   ],
+   [
+    55.17562,
+    25.09551
+   ],
+   [
+    55.09313,
+    25.00065
+   ],
+   [
+    55.07663,
+    24.97178
+   ]
+  ],
+  [
+   [
+    55.07663,
+    24.97178
+   ],
+   [
+    55.10138,
+    24.97178
+   ],
+   [
+    55.15499,
+    24.95941
+   ],
+   [
+    55.21686,
+    24.95528
+   ],
+   [
+    55.25811,
+    24.95941
+   ],
+   [
+    55.28285,
+    24.95528
+   ],
+   [
+    55.36122,
+    24.94704
+   ],
+   [
+    55.38596,
+    24.95116
+   ],
+   [
+    55.41483,
+    24.98003
+   ],
+   [
+    55.46845,
+    24.9924
+   ],
+   [
+    55.48082,
+    25.00065
+   ]
+  ],
+  [
+   [
+    55.07663,
+    24.97178
+   ],
+   [
+    55.03539,
+    24.95528
+   ],
+   [
+    55.01889,
+    24.94291
+   ],
+   [
+    54.96527,
+    24.91404
+   ],
+   [
+    54.90753,
+    24.87692
+   ],
+   [
+    54.88278,
+    24.85217
+   ],
+   [
+    54.85391,
+    24.80681
+   ],
+   [
+    54.82504,
+    24.74906
+   ],
+   [
+    54.80854,
+    24.73257
+   ],
+   [
+    54.77967,
+    24.70782
+   ],
+   [
+    54.7673,
+    24.68307
+   ],
+   [
+    54.73843,
+    24.65833
+   ],
+   [
+    54.72193,
+    24.62946
+   ],
+   [
+    54.70131,
+    24.58409
+   ],
+   [
+    54.69718,
+    24.56759
+   ],
+   [
+    54.69718,
+    24.54697
+   ],
+   [
+    54.68069,
+    24.50985
+   ],
+   [
+    54.67244,
+    24.46448
+   ]
+  ],
+  [
+   [
+    55.48082,
+    25.00065
+   ],
+   [
+    55.49732,
+    24.98003
+   ],
+   [
+    55.53444,
+    24.91404
+   ],
+   [
+    55.58393,
+    24.81093
+   ],
+   [
+    55.59631,
+    24.76556
+   ],
+   [
+    55.61693,
+    24.71194
+   ],
+   [
+    55.63343,
+    24.68307
+   ],
+   [
+    55.64993,
+    24.6707
+   ],
+   [
+    55.69942,
+    24.65008
+   ],
+   [
+    55.71592,
+    24.62946
+   ],
+   [
+    55.71592,
+    24.61708
+   ],
+   [
+    55.72004,
+    24.58409
+   ],
+   [
+    55.74891,
+    24.53047
+   ],
+   [
+    55.76128,
+    24.48098
+   ],
+   [
+    55.77366,
+    24.43148
+   ],
+   [
+    55.77366,
+    24.41499
+   ],
+   [
+    55.79428,
+    24.39436
+   ],
+   [
+    55.80665,
+    24.37786
+   ],
+   [
+    55.81078,
+    24.36137
+   ],
+   [
+    55.77366,
+    24.27063
+   ],
+   [
+    55.75716,
+    24.22526
+   ]
+  ],
+  [
+   [
+    55.02,
+    24.96
+   ],
+   [
+    55.085,
+    25.01
+   ],
+   [
+    55.15,
+    25.06
+   ],
+   [
+    55.19,
+    25.1
+   ],
+   [
+    55.24,
+    25.15
+   ],
+   [
+    55.27,
+    25.2
+   ],
+   [
+    55.295,
+    25.23
+   ],
+   [
+    55.33,
+    25.26
+   ],
+   [
+    55.36,
+    25.29
+   ]
+  ],
+  [
+   [
+    55.08,
+    24.93
+   ],
+   [
+    55.2,
+    25.0
+   ],
+   [
+    55.26,
+    25.06
+   ],
+   [
+    55.32,
+    25.12
+   ],
+   [
+    55.38,
+    25.19
+   ],
+   [
+    55.43,
+    25.25
+   ]
+  ],
+  [
+   [
+    55.14,
+    25.01
+   ],
+   [
+    55.215,
+    25.08
+   ],
+   [
+    55.26,
+    25.14
+   ],
+   [
+    55.3,
+    25.19
+   ],
+   [
+    55.34,
+    25.23
+   ]
+  ],
+  [
+   [
+    55.13,
+    25.07
+   ],
+   [
+    55.185,
+    25.12
+   ],
+   [
+    55.215,
+    25.16
+   ],
+   [
+    55.25,
+    25.21
+   ],
+   [
+    55.27,
+    25.235
+   ],
+   [
+    55.285,
+    25.255
+   ]
+  ],
+  [
+   [
+    55.29,
+    25.262
+   ],
+   [
+    55.32,
+    25.285
+   ],
+   [
+    55.35,
+    25.295
+   ]
+  ],
+  [
+   [
+    55.33,
+    25.24
+   ],
+   [
+    55.364,
+    25.253
+   ]
+  ],
+  [
+   [
+    55.32,
+    25.23
+   ],
+   [
+    55.36,
+    25.17
+   ],
+   [
+    55.42,
+    25.1
+   ]
+  ],
+  [
+   [
+    55.23,
+    25.07
+   ],
+   [
+    55.29,
+    25.01
+   ],
+   [
+    55.33,
+    24.96
+   ]
+  ],
+  [
+   [
+    55.153,
+    25.1
+   ],
+   [
+    55.128,
+    25.121
+   ],
+   [
+    55.117,
+    25.13
+   ]
+  ]
+ ]
+}

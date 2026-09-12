@@ -414,7 +414,11 @@ pub fn sign_into(firma: &FirmaCtx, kp: &KeyPair, mut tx: Tx) -> Tx {
         | Tx::TransferAsset { sig: s, .. }
         | Tx::ListLease { sig: s, .. }
         | Tx::Rent { sig: s, .. }
-        | Tx::Harvest { sig: s, .. } => *s = sig,
+        | Tx::Harvest { sig: s, .. }
+        | Tx::SellAsset { sig: s, .. }
+        | Tx::BuyAsset { sig: s, .. }
+        | Tx::SellParcel { sig: s, .. }
+        | Tx::BuyParcel { sig: s, .. } => *s = sig,
         Tx::Coinbase { .. } => {}
     }
     tx
@@ -483,6 +487,24 @@ pub fn build_rent(firma: &FirmaCtx, kp: &KeyPair, asset: [u8; 32], fee: u64, non
 }
 pub fn build_harvest(firma: &FirmaCtx, kp: &KeyPair, x: u16, y: u16, total: u64, fee: u64, nonce: u64) -> Tx {
     sign_into(firma, kp, Tx::Harvest { who: kp.public_bytes(), x, y, total, fee, nonce, sig: [0u8; 64] })
+}
+
+// ---------- Dubái RAMI (metaverso, fase 1): mercado en RAMI ----------
+/// Pone un activo propio en venta (`price` 0 retira la venta).
+pub fn build_sell_asset(firma: &FirmaCtx, kp: &KeyPair, asset: [u8; 32], price: u64, fee: u64, nonce: u64) -> Tx {
+    sign_into(firma, kp, Tx::SellAsset { who: kp.public_bytes(), asset, price, fee, nonce, sig: [0u8; 64] })
+}
+/// Compra un activo en venta pagando como mucho `max_price`.
+pub fn build_buy_asset(firma: &FirmaCtx, kp: &KeyPair, asset: [u8; 32], max_price: u64, fee: u64, nonce: u64) -> Tx {
+    sign_into(firma, kp, Tx::BuyAsset { who: kp.public_bytes(), asset, max_price, fee, nonce, sig: [0u8; 64] })
+}
+/// Pone una parcela propia en venta (`price` 0 retira la venta).
+pub fn build_sell_parcel(firma: &FirmaCtx, kp: &KeyPair, x: u16, y: u16, price: u64, fee: u64, nonce: u64) -> Tx {
+    sign_into(firma, kp, Tx::SellParcel { who: kp.public_bytes(), x, y, price, fee, nonce, sig: [0u8; 64] })
+}
+/// Compra una parcela en venta pagando como mucho `max_price`.
+pub fn build_buy_parcel(firma: &FirmaCtx, kp: &KeyPair, x: u16, y: u16, max_price: u64, fee: u64, nonce: u64) -> Tx {
+    sign_into(firma, kp, Tx::BuyParcel { who: kp.public_bytes(), x, y, max_price, fee, nonce, sig: [0u8; 64] })
 }
 
 /// Almacén local de reveals (payload+secreto) por txid de commit. Nunca se

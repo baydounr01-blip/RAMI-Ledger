@@ -29,9 +29,9 @@ use rami_core::tx::{txid, FirmaCtx, Tx};
 use rami_node::{spawn, NodeConfig, NodeHandle};
 use rami_wallet::calibracion;
 use rami_wallet::{
-    build_claim_parcel, build_commit, build_harvest, build_list_lease, build_mint_asset, build_rent,
-    build_reveal, build_stake, build_transfer, build_transfer_asset, default_keystore_path, fmt_ram,
-    load_reveal, parse_pubkey, parse_ram, save_reveal, Keystore,
+    build_buy_asset, build_buy_parcel, build_claim_parcel, build_commit, build_harvest, build_list_lease,
+    build_mint_asset, build_rent, build_reveal, build_sell_asset, build_sell_parcel, build_stake, build_transfer,
+    build_transfer_asset, default_keystore_path, fmt_ram, load_reveal, parse_pubkey, parse_ram, save_reveal, Keystore,
 };
 
 use http::{Request, Response};
@@ -40,14 +40,15 @@ use serde_json::{json, Value};
 const DASHBOARD: &str = include_str!("dashboard.html");
 /// Diccionarios del panel (en, zh, ru, sw); el español es el texto original.
 const I18N_JS: &str = include_str!("i18n.js");
-/// Cliente 3D de la Ciudad RAMI (Three.js r150, licencia MIT, empaquetado en
-/// el binario: el panel no necesita internet para renderizar).
+/// Cliente 3D de Dubái RAMI (Three.js r150, licencia MIT, empaquetado en el
+/// binario: el panel no necesita internet para renderizar, ni para las gafas VR).
 const THREE_JS: &[u8] = include_bytes!("vendor/three.min.js");
 const CITY3D_JS: &str = include_str!("city3d.js");
-/// Terreno de Tenerife (datos abiertos: Mapzen/AWS Terrain Tiles; ver
-/// tools/geo/README.md). Mapa de alturas PNG de 16 bits + metadatos.
-const GEO_HGT: &[u8] = include_bytes!("geo/tenerife.hgt.png");
-const GEO_META: &str = include_str!("geo/tenerife.json");
+/// Terreno de Dubái (datos abiertos: Mapzen/AWS Terrain Tiles + islas
+/// artificiales dibujadas a mano; ver tools/geo/README.md). Mapa de alturas
+/// PNG de 16 bits + metadatos (hitos, barrios, carreteras, cuadrícula).
+const GEO_HGT: &[u8] = include_bytes!("geo/dubai.hgt.png");
+const GEO_META: &str = include_str!("geo/dubai.json");
 /// Icono del panel (pestaña del navegador): el logo del proyecto.
 const FAVICON_SVG: &str = include_str!("../../../../packaging/icon/rami.svg");
 
@@ -254,9 +255,19 @@ fn signed_submit(g: &Gui, build: impl FnOnce(&FirmaCtx, &KeyPair, u64) -> Tx) ->
     }
 }
 
+/// Coordenada de parcela. La cota exacta (32 hasta Dubái, 64 desde Dubái) la
+/// pone el nodo al admitir la tx; aquí solo se acota la forma.
 fn coord(b: &Value, key: &str) -> Result<u16, String> {
     let v = b.get(key).and_then(|v| v.as_u64()).ok_or_else(|| format!("falta {key}"))?;
-    if v >= rami_core::tx::CITY_SIZE as u64 {
+    if v >= rami_core::ciudad::CITY_SIZE_DUBAI as u64 {
+        return Err("coordenada fuera de la ciudad".into());
+    }
+    Ok(v as u16)
+}
+
+fn query_u16(req: &Request, key: &str) -> Result<u16, String> {
+    let v: u64 = req.query_get(key).and_then(|s| s.parse().ok()).ok_or_else(|| format!("falta ?{key}="))?;
+    if v >= rami_core::ciudad::CITY_SIZE_DUBAI as u64 {
         return Err("coordenada fuera de la ciudad".into());
     }
     Ok(v as u16)
@@ -315,13 +326,13 @@ fn route(g: &Gui, req: Request) -> Response {
             content_type: "application/javascript; charset=utf-8".into(),
             body: CITY3D_JS.as_bytes().to_vec(),
         },
-        ("GET", "/geo/tenerife.hgt.png") => Response { status: 200, content_type: "image/png".into(), body: GEO_HGT.to_vec() },
-        ("GET", "/geo/tenerife.json") => Response {
+        ("GET", "/geo/dubai.hgt.png") => Response { status: 200, content_type: "image/png".into(), body: GEO_HGT.to_vec() },
+        ("GET", "/geo/dubai.json") => Response {
             status: 200,
             content_type: "application/json; charset=utf-8".into(),
             body: GEO_META.as_bytes().to_vec(),
         },
-        // Localiza una dirección de Tenerife (OpenStreetMap Nominatim, solo a
+        // Localiza una dirección de Dubái (OpenStreetMap Nominatim, solo a
         // petición del usuario). No verifica ninguna empresa.
         ("POST", "/api/geocode") => {
             let q = str_field(&body_json(&req), "q").to_string();
@@ -637,6 +648,85 @@ fn route(g: &Gui, req: Request) -> Response {
             v["me"] = json!(me);
             Response::json(&v)
         }
+        // Dubái: el mentor (una regla pública, no una persona) sobre una parcela.
+        ("GET", "/api/city/mentor") => {
+            let node = match g.node_ready() { Ok(n) => n, Err(r) => return r };
+            let (x, y) = match (query_u16(&req, "x"), query_u16(&req, "y")) { (Ok(x), Ok(y)) => (x, y), (Err(e), _) | (_, Err(e)) => return err(e) };
+            let me = g.wallet.lock().unwrap_or_else(|e| e.into_inner()).pubkey;
+            let mut v = serde_json::to_value(node.mentor(x, y, me)).unwrap_or_else(|_| json!({}));
+            v["ok"] = json!(true);
+            Response::json(&v)
+        }
+        // Dubái: el mercado de la ciudad (pares, órdenes, operaciones, índice).
+        ("GET", "/api/market") => {
+            let node = match g.node_ready() { Ok(n) => n, Err(r) => return r };
+            let mut v = serde_json::to_value(node.market()).unwrap_or_else(|_| json!({}));
+            v["ok"] = json!(true);
+            Response::json(&v)
+        }
+        // Metaverso: avatares que se ven y chat reciente; y publicar el propio.
+        ("GET", "/api/city/presence") => {
+            let node = match g.node_ready() { Ok(n) => n, Err(r) => return r };
+            let mut v = serde_json::to_value(node.presence()).unwrap_or_else(|_| json!({}));
+            v["ok"] = json!(true);
+            Response::json(&v)
+        }
+        ("POST", "/api/city/presence") => {
+            let node = match g.node_ready() { Ok(n) => n, Err(r) => return r };
+            let b = body_json(&req);
+            let p = rami_node::PresenceLocal {
+                name: str_field(&b, "name").to_string(),
+                x: b.get("x").and_then(|v| v.as_i64()).unwrap_or(0).clamp(-1_000_000, 1_000_000) as i32,
+                y: b.get("y").and_then(|v| v.as_i64()).unwrap_or(0).clamp(-1_000_000, 1_000_000) as i32,
+                z: b.get("z").and_then(|v| v.as_i64()).unwrap_or(0).clamp(-1_000_000, 1_000_000) as i32,
+                yaw: b.get("yaw").and_then(|v| v.as_i64()).unwrap_or(0).clamp(0, 360) as i32,
+                avatar: b.get("avatar").and_then(|v| v.as_u64()).unwrap_or(0).min(255) as u8,
+            };
+            node.set_presence(p);
+            Response::json(&json!({"ok": true}))
+        }
+        ("POST", "/api/city/chat") => {
+            let node = match g.node_ready() { Ok(n) => n, Err(r) => return r };
+            let b = body_json(&req);
+            let name = str_field(&b, "name").to_string();
+            let text = str_field(&b, "text").to_string();
+            if text.chars().count() > rami_node::CHAT_TEXT_MAX {
+                return err("mensaje demasiado largo (máx. 280 bytes)");
+            }
+            match node.chat(name, text) {
+                Ok(()) => Response::json(&json!({"ok": true})),
+                Err(e) => err(e),
+            }
+        }
+        // Dubái: mercado en RAMI (venta/compra de parcelas y activos).
+        ("POST", "/api/city/sell") => {
+            let b = body_json(&req);
+            let (x, y) = match (coord(&b, "x"), coord(&b, "y")) { (Ok(x), Ok(y)) => (x, y), (Err(e), _) | (_, Err(e)) => return err(e) };
+            let price = match parse_ram(str_field(&b, "price")) { Ok(a) => a, Err(e) => return err(e) };
+            let fee = fee_of(&b);
+            signed_submit(g, move |firma, kp, nonce| build_sell_parcel(firma, kp, x, y, price, fee, nonce))
+        }
+        ("POST", "/api/city/buy") => {
+            let b = body_json(&req);
+            let (x, y) = match (coord(&b, "x"), coord(&b, "y")) { (Ok(x), Ok(y)) => (x, y), (Err(e), _) | (_, Err(e)) => return err(e) };
+            let max_price = match parse_ram(str_field(&b, "max_price")) { Ok(a) => a, Err(e) => return err(e) };
+            let fee = fee_of(&b);
+            signed_submit(g, move |firma, kp, nonce| build_buy_parcel(firma, kp, x, y, max_price, fee, nonce))
+        }
+        ("POST", "/api/city/sell_asset") => {
+            let b = body_json(&req);
+            let asset = match asset_id(&b) { Ok(a) => a, Err(e) => return err(e) };
+            let price = match parse_ram(str_field(&b, "price")) { Ok(a) => a, Err(e) => return err(e) };
+            let fee = fee_of(&b);
+            signed_submit(g, move |firma, kp, nonce| build_sell_asset(firma, kp, asset, price, fee, nonce))
+        }
+        ("POST", "/api/city/buy_asset") => {
+            let b = body_json(&req);
+            let asset = match asset_id(&b) { Ok(a) => a, Err(e) => return err(e) };
+            let max_price = match parse_ram(str_field(&b, "max_price")) { Ok(a) => a, Err(e) => return err(e) };
+            let fee = fee_of(&b);
+            signed_submit(g, move |firma, kp, nonce| build_buy_asset(firma, kp, asset, max_price, fee, nonce))
+        }
         ("POST", "/api/city/claim") => {
             let b = body_json(&req);
             let (x, y) = match (coord(&b, "x"), coord(&b, "y")) { (Ok(x), Ok(y)) => (x, y), (Err(e), _) | (_, Err(e)) => return err(e) };
@@ -645,8 +735,8 @@ fn route(g: &Gui, req: Request) -> Response {
                 return err("nombre vacío o demasiado largo (máx. 32 bytes)");
             }
             let kind = b.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
-            if kind > rami_core::tx::MAX_PARCEL_KIND as u64 {
-                return err("tipo de parcela desconocido");
+            if kind > rami_core::ciudad::MAX_SECTOR as u64 {
+                return err("sector desconocido");
             }
             let fee = fee_of(&b);
             signed_submit(g, move |firma, kp, nonce| build_claim_parcel(firma, kp, x, y, &name, kind as u8, fee, nonce))
@@ -659,7 +749,7 @@ fn route(g: &Gui, req: Request) -> Response {
                 return err("metadatos demasiado largos (máx. 64 bytes)");
             }
             let kind = b.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
-            if kind > rami_core::tx::MAX_ASSET_KIND as u64 {
+            if kind > rami_core::ciudad::MAX_ASSET_KIND_DUBAI as u64 {
                 return err("tipo de activo desconocido");
             }
             let fee = fee_of(&b);
@@ -1266,8 +1356,10 @@ fn real_main(args: Vec<String>) -> ExitCode {
     let params = if is_testnet {
         Params::testnet()
     } else {
-        // Regtest: activación de la regla de firma v2 solo si se fuerza (pruebas).
-        Params::regtest().con_firma_v2_desde(arg(&args, "--firma-v2-desde").and_then(|s| s.parse::<u64>().ok()))
+        // Regtest: activación de la regla de firma v2 y de Dubái solo si se fuerza (pruebas).
+        Params::regtest()
+            .con_firma_v2_desde(arg(&args, "--firma-v2-desde").and_then(|s| s.parse::<u64>().ok()))
+            .con_dubai_desde(arg(&args, "--dubai-desde").and_then(|s| s.parse::<u64>().ok()))
     };
     let net_name = if is_testnet { "testnet" } else { "regtest" };
 

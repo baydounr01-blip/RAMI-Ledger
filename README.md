@@ -39,8 +39,9 @@ Workspace de Rust en [`chain/`](chain), con dependencias mínimas
 | `canon` | — | JSON canónico (paridad byte a byte con la referencia Python) |
 | `hashing` / `crypto` | P2 | SHA-256d, Merkle, firmas Ed25519, direcciones |
 | `block` | P1/P2 | Cabecera hasheada sobre bytes fijos big-endian (nunca floats) |
-| `tx` | P7 | Transacciones (Coinbase/Transfer/Stake/Unstake/**Commit/Reveal**), encoding binario determinista |
-| `state` | P7/P9 | Cuentas, emisión con halving, anti-doble-gasto, regla anti-look-ahead |
+| `tx` | P7 | Transacciones (Coinbase/Transfer/Stake/Unstake/**Commit/Reveal**, las de la ciudad y, desde v0.9.0, las de **mercado**), encoding binario determinista |
+| `state` | P7/P9 | Cuentas, emisión con halving, anti-doble-gasto, regla anti-look-ahead, parcelas y activos, fondo de la ciudad |
+| `ciudad` | P7/P9 | **Dubái RAMI** (v0.9.0): distritos, 30 sectores con su grafo de insumos, precios por distrito, fondo de la ciudad y su reparto por bloque, mercado en RAMI, el mentor (misma regla, sin tocar el estado) |
 | `pow` | P5 | PoW SHA-256d, objetivo compacto, retarget LWMA por bloque |
 | `blocktree` | P3/P4 | Árbol ramificado (todo se conserva) + fork-choice (decoherencia) |
 | `tiebreak` | P4 | **Matemática NO probada** (Collatz) como desempate, contenida |
@@ -173,6 +174,9 @@ rami-node run --network testnet --listen 30301 --connect IP_DEL_PAR:30301 --mine
 #     y espera por dirección; nunca pide pago ni toca el consenso
 rami-node faucet --network testnet --chain ./midato --label yo --drip 10 --cooldown 3600
 
+# 2b') API pública de mercado (opcional, v0.9.0): solo lectura, formato de agregador
+rami-node market --network testnet --chain ./midato --port 8646 --bind 0.0.0.0
+
 # 2c) o una red local instantánea (regtest, dificultad 1)
 rami-node init --chain ./midato --network regtest --miner $ADDR
 rami-node mine --chain ./midato --network regtest --address $ADDR --blocks 5
@@ -216,6 +220,68 @@ cd chain && cargo test          # núcleo: decenas de tests (consenso, emisión,
 
 `rami-node verify` reconstruye la cadena desde `chain.jsonl` re-admitiendo cada
 bloque con todas las reglas (enlace + PoW + bits-LWMA + transición de estado).
+
+## Dubái RAMI (v0.9.0): el metaverso como reglas de consenso, con fecha
+
+Desde el **1 de diciembre de 2026 (00:00 UTC)** la Ciudad RAMI se traslada a
+una **réplica abierta de Dubái**: 64×64 parcelas de 650 m sobre relieve de
+datos abiertos (Mapzen/AWS Terrain Tiles) con las islas artificiales y los
+canales dibujados a mano, 56 hitos modelados uno a uno (Burj Khalifa, Burj Al
+Arab, Museo del Futuro, Dubai Frame, Ain Dubai, Atlantis, Cayan, Emirates
+Towers…), skylines por barrio, tráfico por Sheikh Zayed Road, ciclo de día y
+noche con las ventanas encendidas, modo **a pie** y **gafas de realidad
+virtual** (WebXR con mandos y factor de framebuffer para pantallas 4K). Todo
+empaquetado en el monedero: no necesita internet para renderizar.
+
+Lo que es consenso (`rami-core/src/ciudad.rs`, detalle y pruebas en
+[`docs/DUBAI.md`](docs/DUBAI.md)):
+
+- **35 distritos** con precio de parcela propio (5 RAMI en el desierto, 300 en
+  Palm Jumeirah; se quema) y **30 sectores** de empresa que se necesitan unos
+  a otros: un hotel compra energía, agua, restaurante, turismo, seguridad y
+  gimnasio; una desaladora compra energía y constructora… El grafo es cerrado:
+  todo sector es insumo de alguien.
+- **Fondo de la ciudad:** el 20 % de la emisión de cada bloque entra en el
+  fondo (la coinbase ya no puede cobrarlo; las comisiones siguen enteras) y
+  cada bloque el fondo reparte el 1 % de lo acumulado entre las empresas según
+  la demanda del sector, la actividad del distrito, la afinidad entre ambos y
+  cuántos de sus insumos existen en la ciudad. De cada ingreso, el 40 % paga a
+  los proveedores más cercanos; lo que nadie ofrece se importa y **se quema**.
+- **Mercado en RAMI:** parcelas y activos (planta, objeto, **vehículo** —solo
+  los acuña un concesionario— y **local**) se ponen en venta y se compran en
+  una sola transacción: el comprador fija un precio máximo y el pago y el
+  cambio de dueño ocurren juntos. Las últimas 256 operaciones quedan en el
+  estado.
+- **El mentor:** una regla pública (no una persona) que, con las mismas
+  funciones del reparto, dice qué cobraría hoy cada sector en cada parcela,
+  qué insumos faltan, cuántos competidores hay y en cuántos bloques se
+  recupera el capital. El panel añade una escuela de negocios de ocho
+  lecciones cortas para quien empieza. Son cifras del estado actual, no una
+  promesa; el panel lo dice en cada respuesta.
+- **Presencia y chat efímeros:** los visitantes se ven como avatares y hablan
+  entre sí por el túnel RAMI, firmados con la identidad del nodo, con ritmo y
+  memoria acotados; nada se guarda ni entra en el consenso.
+
+Activación por fecha sin periodo mixto y sin retroceso dentro de una rama,
+como la firma v2; `Status.rule` anuncia 3. Los nodos que no actualicen se
+quedan en su altura sin romperse. Regtest: `--dubai-desde <unix>`.
+
+## Cotización interna y API de mercado (v0.9.0)
+
+RAMI **no cotiza en euros ni en otras criptomonedas** y este software no lo
+vende ni lo compra (`NOTICE.md`). Lo que existe desde la v0.9.0 es la
+cotización **interna**: hechos que la cadena registra en RAMI de prueba
+(precio de parcela por distrito, órdenes de venta abiertas, operaciones
+cerradas entre usuarios, fondo de la ciudad, RAMI quemados) organizados en
+pares `PARCELA-<DISTRITO>_RAMI` y `ACTIVO-<TIPO>_RAMI` y un índice (empresas,
+activos, precio medio y último de parcela, m² que compra 1 RAMI). Se ven en
+el panel (pestaña **Mercado**) y se publican con `rami-node market` en el
+formato que leen los agregadores (`/api/v1/pairs`, `tickers`, `orderbook`,
+`historical_trades`, `summary`, `index`). La web tiene una pestaña
+**Cotización** que lee `web/market.json` (lista de nodos de mercado públicos)
+y muestra el índice del primero que responde; sin nodos, dice «sin datos».
+Qué haría falta —fuera de este repositorio— para una cotización con valor
+real, en [`docs/COTIZACION.md`](docs/COTIZACION.md).
 
 ## La firma ligada a la red (v0.8.0): primer cambio de consenso, con fecha
 
@@ -270,6 +336,14 @@ aplicada a lo que RAMI-Chain dice; detalle en `docs/PALABRA-EXACTA.md`.
 
 ## Estado y hoja de ruta
 
+- **v0.9.0 (esto):** segundo cambio de consenso — **Dubái RAMI** con
+  activación el 2026‑12‑01 00:00 UTC: cuadrícula 64×64 sobre una réplica
+  abierta de Dubái, 35 distritos, 30 sectores con grafo de insumos, fondo de
+  la ciudad (20 % de la emisión) repartido por bloque, mercado de parcelas y
+  activos en RAMI, mentor y escuela de negocios, avatares y chat efímeros por
+  el túnel, cliente 3D con hitos, día y noche, modo a pie y VR con mandos;
+  cotización interna y `rami-node market`. Pendiente: nodo público de
+  mercado, prueba con gafas reales, cota de timestamp.
 - **v0.8.0:** primer cambio de consenso — firma de transacción ligada a la
   red (`"RAMI-CHAIN/tx/v2" || network-id || cuerpo`) con activación el
   2026‑10‑20 00:00 UTC, sin periodo mixto y sin retroceso dentro de una rama;

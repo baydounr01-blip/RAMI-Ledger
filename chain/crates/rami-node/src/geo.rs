@@ -1,4 +1,4 @@
-//! Geolocalización de direcciones para la Ciudad RAMI (isla de Tenerife).
+//! Geolocalización de direcciones para Dubái RAMI (emirato de Dubái).
 //!
 //! Usa el servicio público Nominatim de OpenStreetMap SOLO cuando el usuario
 //! pulsa «Localizar»: una petición por acción, con User-Agent identificable y
@@ -15,9 +15,10 @@ use serde::Serialize;
 
 const NOMINATIM: &str = "https://nominatim.openstreetmap.org/search";
 
-/// Caja de Tenerife (algo más ancha que la isla): las búsquedas se acotan a
-/// ella para que «Calle Castillo» resuelva en Tenerife y no en otra provincia.
-const VIEWBOX: &str = "-17.0,28.70,-16.05,27.95";
+/// Caja de Dubái (la misma del dataset 3D, con margen): las búsquedas se acotan
+/// a ella para que «Sheikh Zayed Road» resuelva en Dubái y no en otro emirato.
+/// Formato Nominatim: lon_oeste,lat_norte,lon_este,lat_sur.
+const VIEWBOX: &str = "54.85,25.45,55.65,24.75";
 
 #[derive(Serialize, Clone, Debug)]
 pub struct Place {
@@ -28,7 +29,7 @@ pub struct Place {
 
 static LAST: Mutex<Option<Instant>> = Mutex::new(None);
 
-/// Busca una dirección (texto libre) dentro de Tenerife. Devuelve hasta 3
+/// Busca una dirección (texto libre) dentro de Dubái. Devuelve hasta 3
 /// resultados. Errores en texto llano para el panel.
 pub fn search(query: &str) -> Result<Vec<Place>, String> {
     let q = query.trim();
@@ -50,7 +51,7 @@ pub fn search(query: &str) -> Result<Vec<Place>, String> {
         *last = Some(Instant::now());
     }
     let url = format!(
-        "{NOMINATIM}?format=jsonv2&limit=3&countrycodes=es&bounded=1&viewbox={VIEWBOX}&q={}",
+        "{NOMINATIM}?format=jsonv2&limit=3&countrycodes=ae&bounded=1&viewbox={VIEWBOX}&q={}",
         urlencode(q)
     );
     let agent = ureq::AgentBuilder::new()
@@ -77,7 +78,7 @@ pub fn search(query: &str) -> Result<Vec<Place>, String> {
         }
     }
     if out.is_empty() {
-        return Err("no se encontró esa dirección en Tenerife".into());
+        return Err("no se encontró esa dirección en Dubái".into());
     }
     Ok(out)
 }
@@ -100,7 +101,7 @@ mod tests {
 
     #[test]
     fn encodes_query() {
-        assert_eq!(urlencode("Calle Castillo 1, Santa Cruz"), "Calle+Castillo+1%2C+Santa+Cruz");
+        assert_eq!(urlencode("Sheikh Zayed Road 1, Dubai"), "Sheikh+Zayed+Road+1%2C+Dubai");
         assert_eq!(urlencode("Güímar"), "G%C3%BC%C3%ADmar");
     }
 

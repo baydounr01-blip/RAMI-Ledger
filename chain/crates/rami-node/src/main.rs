@@ -6,6 +6,8 @@
 //!   rami-node mine   --chain DIR --address HEXPUB [--blocks N]
 //!   rami-node faucet --chain DIR [--network testnet] [--port 8700] [--bind IP]
 //!                    [--keystore F] [--label L] [--drip RAMI] [--cooldown SEG]
+//!   rami-node market --chain DIR [--network testnet] [--port 8646] [--bind 0.0.0.0]
+//!                    [--listen PORT] [--connect host:port]...
 //!   rami-node status --chain DIR
 //!   rami-node verify --chain DIR
 //!   rami-node show   --chain DIR [N]
@@ -58,9 +60,11 @@ fn params_of(args: &[String]) -> Params {
         Params::testnet()
     } else {
         // En regtest no hay activación salvo que se fuerce (pruebas y la
-        // comprobación de compatibilidad): `--firma-v2-desde <unix-utc>`.
+        // comprobación de compatibilidad): `--firma-v2-desde <unix-utc>` y
+        // `--dubai-desde <unix-utc>`.
         let desde = arg(args, "--firma-v2-desde").and_then(|s| s.parse::<u64>().ok());
-        Params::regtest().con_firma_v2_desde(desde)
+        let dubai = arg(args, "--dubai-desde").and_then(|s| s.parse::<u64>().ok());
+        Params::regtest().con_firma_v2_desde(desde).con_dubai_desde(dubai)
     }
 }
 
@@ -338,6 +342,128 @@ fn cmd_faucet(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `market`: API PÚBLICA de solo lectura con el mercado de Dubái RAMI (pares,
+/// órdenes abiertas, operaciones cerradas e índice) en el formato que leen los
+/// agregadores de mercados (pares / tickers / orderbook / historical_trades).
+/// Arranca un nodo completo que sincroniza por P2P y publica lo que hay en la
+/// cadena; no tiene monedero, no acepta órdenes y no promete ningún precio
+/// externo: lo que sale de aquí son RAMI de prueba y hechos de la cadena.
+fn cmd_market(args: &[String]) -> ExitCode {
+    use rami_node::http::{self, Request, Response};
+    use rami_wallet::fmt_ram;
+    use serde_json::{json, Value};
+    use std::net::TcpListener;
+
+    let Some(dir) = arg(args, "--chain") else { return die("falta --chain DIR") };
+    let params = params_of(args);
+    let port: u16 = arg(args, "--port").and_then(|s| s.parse().ok()).unwrap_or(8646);
+    let bind = arg(args, "--bind").unwrap_or_else(|| "127.0.0.1".into());
+    let listen: Option<u16> = arg(args, "--listen").and_then(|s| s.parse().ok()).or(Some(30301));
+    let node = match spawn(NodeConfig {
+        chain_dir: dir.into(),
+        params,
+        is_testnet: is_testnet(args),
+        listen,
+        seeds: args_all(args, "--connect"),
+        miner: None,
+        mining: false,
+        lan_discovery: !has(args, "--no-lan"),
+        portmap: !has(args, "--no-portmap"),
+    }) {
+        Ok(n) => n,
+        Err(e) => return die(&e),
+    };
+    let listener = match TcpListener::bind((bind.as_str(), port)) {
+        Ok(l) => l,
+        Err(e) => return die(&format!("no se pudo escuchar en {bind}:{port}: {e}")),
+    };
+    println!("● mercado de Dubái RAMI (solo lectura) en http://{bind}:{port}");
+    println!("  /api/v1/pairs · /api/v1/tickers · /api/v1/orderbook?ticker_id=… · /api/v1/historical_trades?ticker_id=… · /api/v1/summary · /api/v1/index");
+    println!("  ⚠ TESTNET experimental — RAMI sin valor monetario. Esta API publica hechos de la cadena, no una cotización externa.");
+
+    let ram = |v: u64| Value::String(fmt_ram(v));
+    // Marca de tiempo (ms) del bloque de una altura, para `trade_timestamp`.
+    let ts_of = move |node: &rami_node::NodeHandle, h: u64| node.block(h).map(|b| b.timestamp * 1000).unwrap_or(0);
+    http::serve_public(listener, move |req: Request| {
+        if req.method != "GET" {
+            return Response::json(&json!({"error": "solo lectura"}));
+        }
+        let m = node.market();
+        match req.path.as_str() {
+            "/" | "/api" | "/api/v1" => Response::json(&json!({
+                "name": "RAMI-Chain · mercado de Dubái RAMI",
+                "network": m.network, "network_id": m.network_id, "height": m.height, "dubai": m.dubai,
+                "notice": "Testnet experimental: RAMI sin valor monetario. Precios en RAMI de prueba registrados en la cadena.",
+                "endpoints": ["/api/v1/pairs", "/api/v1/tickers", "/api/v1/orderbook?ticker_id=", "/api/v1/historical_trades?ticker_id=", "/api/v1/summary", "/api/v1/index"],
+            })),
+            "/api/v1/pairs" => Response::json(&Value::Array(
+                m.tickers.iter().map(|t| json!({"ticker_id": t.ticker_id, "base": t.base, "target": t.target})).collect(),
+            )),
+            "/api/v1/tickers" => Response::json(&Value::Array(
+                m.tickers
+                    .iter()
+                    .map(|t| {
+                        let (hi, lo) = m
+                            .trades
+                            .iter()
+                            .filter(|x| x.ticker_id == t.ticker_id && m.height.saturating_sub(x.height) <= 1440)
+                            .fold((None, None), |(hi, lo): (Option<u64>, Option<u64>), x| {
+                                (Some(hi.map_or(x.price, |v| v.max(x.price))), Some(lo.map_or(x.price, |v| v.min(x.price))))
+                            });
+                        json!({
+                            "ticker_id": t.ticker_id, "base_currency": t.base, "target_currency": t.target,
+                            "last_price": t.last_price.map(|v| Value::String(fmt_ram(v))).unwrap_or(Value::Null),
+                            "base_volume": t.trades_1440.to_string(),
+                            "target_volume": fmt_ram(t.volume_1440),
+                            "bid": Value::Null,
+                            "ask": t.low_ask.map(|v| Value::String(fmt_ram(v))).unwrap_or(Value::Null),
+                            "high": hi.map(|v| Value::String(fmt_ram(v))).unwrap_or(Value::Null),
+                            "low": lo.map(|v| Value::String(fmt_ram(v))).unwrap_or(Value::Null),
+                            "protocol_price": fmt_ram(t.base_price),
+                            "last_height": t.last_height,
+                        })
+                    })
+                    .collect(),
+            )),
+            "/api/v1/orderbook" => {
+                let id = req.query_get("ticker_id").unwrap_or_default();
+                let asks: Vec<Value> = m.orders.iter().filter(|o| o.ticker_id == id).map(|o| json!([fmt_ram(o.price), "1"])).collect();
+                Response::json(&json!({"ticker_id": id, "timestamp": rami_node::now_secs() * 1000, "height": m.height, "bids": [], "asks": asks}))
+            }
+            "/api/v1/historical_trades" => {
+                let id = req.query_get("ticker_id").unwrap_or_default();
+                let mut out = Vec::new();
+                for (i, t) in m.trades.iter().enumerate().filter(|(_, t)| id.is_empty() || t.ticker_id == id) {
+                    out.push(json!({
+                        "trade_id": format!("{}-{}", t.height, i), "ticker_id": t.ticker_id,
+                        "price": fmt_ram(t.price), "base_volume": "1", "target_volume": fmt_ram(t.price),
+                        "trade_timestamp": ts_of(&node, t.height), "height": t.height, "type": "buy",
+                        "x": t.x, "y": t.y, "sector": t.sector, "distrito": t.distrito,
+                    }));
+                }
+                Response::json(&Value::Array(out))
+            }
+            "/api/v1/summary" => {
+                let mut v = serde_json::to_value(&m).unwrap_or_else(|_| json!({}));
+                v["notice"] = json!("Testnet experimental: RAMI sin valor monetario.");
+                Response::json(&v)
+            }
+            "/api/v1/index" => {
+                let mut v = serde_json::to_value(&m.index).unwrap_or_else(|_| json!({}));
+                v["height"] = json!(m.height);
+                v["dubai"] = json!(m.dubai);
+                v["network"] = json!(m.network);
+                v["fondo_ram"] = ram(m.index.fondo);
+                v["quemado_ram"] = ram(m.index.quemado);
+                v["pago_bloque_ram"] = ram(m.index.pago_bloque);
+                Response::json(&v)
+            }
+            _ => Response::not_found(),
+        }
+    });
+    ExitCode::SUCCESS
+}
+
 fn cmd_status(args: &[String]) -> ExitCode {
     let Some(dir) = arg(args, "--chain") else { return die("falta --chain DIR") };
     let params = params_of(args);
@@ -446,7 +572,7 @@ fn cmd_audit(args: &[String]) -> ExitCode {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let Some(cmd) = args.get(1) else {
-        eprintln!("uso: rami-node init|run|mine|faucet|status|audit|verify|show [opciones]");
+        eprintln!("uso: rami-node init|run|mine|faucet|market|status|audit|verify|show [opciones]");
         return ExitCode::FAILURE;
     };
     match cmd.as_str() {
@@ -454,6 +580,7 @@ fn main() -> ExitCode {
         "run" => cmd_run(&args[2..]),
         "mine" => cmd_mine(&args[2..]),
         "faucet" => cmd_faucet(&args[2..]),
+        "market" => cmd_market(&args[2..]),
         "status" => cmd_status(&args[2..]),
         "audit" => cmd_audit(&args[2..]),
         "verify" => cmd_verify(&args[2..]),

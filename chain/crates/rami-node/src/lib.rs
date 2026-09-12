@@ -18,7 +18,7 @@ pub use rami_net::selftest;
 pub mod seeds;
 pub mod grado;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};
@@ -30,6 +30,8 @@ use serde::Serialize;
 
 use rami_core::block::{Block, BlockHeader, Hash};
 use rami_core::blocktree::is_orphan_err;
+use rami_core::ciudad;
+use rami_core::crypto::verify as ed_verify;
 use rami_core::params::Params;
 use rami_core::pow::{difficulty_from_bits, meets_target, pow_hash};
 use rami_core::state::{block_reward, Account, State, COIN};
@@ -37,7 +39,7 @@ use rami_core::store::ChainDir;
 use rami_core::tx::{merkle_root_txids, signer_of, txid, verify_tx_con, AccountId, FirmaCtx, Tx, TxId};
 
 use rami_net::{Frame, NetConfig, NetEvent, Network, PeerId, TipInfo};
-use rami_net::identity::fingerprint as fingerprint_of;
+use rami_net::identity::{fingerprint as fingerprint_of, identity_pow_ok, NodeIdentity};
 
 use crate::grado::{EvidenciaSesion, HistorialPar};
 
@@ -86,6 +88,20 @@ const MEMPOOL_MAX_PER_SIGNER: usize = 64;
 const SEEN_TX_CAP: usize = 100_000;
 /// Hashes por vuelta del minero antes de refrescar métricas/epoch.
 const MINE_CHUNK: u64 = 120_000;
+/// Presencia y chat del metaverso (efímeros, nunca consenso): topes de
+/// memoria, ritmo por identidad, caducidad y saltos de retransmisión.
+const PRESENCE_CAP: usize = 256;
+const PRESENCE_MIN_INTERVAL: Duration = Duration::from_millis(400);
+const PRESENCE_TTL: Duration = Duration::from_secs(20);
+const PRESENCE_MAX_HOPS: u8 = 2;
+const CHAT_CAP: usize = 64;
+const CHAT_MIN_INTERVAL: Duration = Duration::from_millis(1500);
+const CHAT_MAX_HOPS: u8 = 3;
+/// Tope del nombre visible y del texto de chat (bytes UTF-8).
+pub const PRESENCE_NAME_MAX: usize = 24;
+pub const CHAT_TEXT_MAX: usize = 280;
+/// Coordenadas locales del avatar acotadas (metros; la ciudad mide ~42 km).
+const PRESENCE_COORD_MAX: i32 = 100_000;
 
 pub fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
@@ -123,11 +139,11 @@ pub fn tx_fee(tx: &Tx) -> u64 {
 /// candidato nunca admiten una tx que luego invalidaría el bloque minado (y
 /// dejaría al minero atascado). `height` = altura del bloque en que iría.
 /// Mutar `sim` permite encadenar varias en el mismo bloque candidato.
-fn try_apply(sim: &mut State, tx: &Tx, height: u64) -> Result<(), String> {
+fn try_apply(sim: &mut State, tx: &Tx, height: u64, dubai: bool) -> Result<(), String> {
     if matches!(tx, Tx::Coinbase { .. }) {
         return Err("coinbase no va en mempool".into());
     }
-    rami_core::state::apply_tx(sim, tx, height, 1, &txid(tx))
+    rami_core::state::apply_tx(sim, tx, height, 1, &txid(tx), dubai)
 }
 
 /// Construye la CABECERA candidata (sin minar, nonce 0) y las tx de un bloque a
@@ -154,12 +170,15 @@ pub fn build_candidate(
         if verify_tx_con(tx, firma).is_err() {
             continue;
         }
-        if try_apply(&mut sim, tx, height).is_ok() {
+        if try_apply(&mut sim, tx, height, firma.dubai).is_ok() {
             fees += tx_fee(tx) as u128;
             included.push(tx.clone());
         }
     }
-    let reward = (block_reward(height) as u128 + fees).min(u64::MAX as u128) as u64;
+    // Desde Dubái, la parte de la ciudad no es del minero (cota de la coinbase).
+    let emision = block_reward(height);
+    let propia = if firma.dubai { emision - ciudad::parte_ciudad(emision) } else { emision };
+    let reward = (propia as u128 + fees).min(u64::MAX as u128) as u64;
     let coinbase = Tx::Coinbase { height, to: miner, reward, memo: CHANCELLOR.as_bytes().to_vec() };
     let mut txs = vec![coinbase];
     txs.extend(included);
@@ -207,8 +226,11 @@ pub fn build_block(
     (Block { header: mine_header(header), txs }, ids)
 }
 
-/// Regla de firma más alta que entiende este binario (se anuncia en `Status.rule`).
-pub const REGLA_SOPORTADA: u32 = 2;
+/// Regla más alta que entiende este binario (se anuncia en `Status.rule`):
+/// 1 firma v1, 2 firma v2 (v0.8.0), 3 firma v2 + Dubái (v0.9.0).
+pub const REGLA_SOPORTADA: u32 = 3;
+/// Regla que anunciaba la v0.8.0 (firma v2 sin Dubái).
+pub const REGLA_V2: u32 = 2;
 
 /// El bloque génesis para inicializar una cadena. Testnet = génesis canónico
 /// fijo (network-id estable); regtest = uno minado localmente.
@@ -372,6 +394,12 @@ pub struct ConsensoInfo {
     /// Tx del mempool que NO valen bajo la regla vigente (quedan a la espera
     /// de que su autor las vuelva a firmar; se podan al activarse).
     pub mempool_fuera_de_regla: usize,
+    /// Dubái (v0.9.0): fecha de activación, si rige ya, segundos que faltan
+    /// y pares que anuncian entenderla (regla 3).
+    pub dubai_desde: Option<u64>,
+    pub dubai_vigente: bool,
+    pub dubai_faltan_segundos: u64,
+    pub pares_dubai: usize,
 }
 
 /// El hecho detrás del juicio «sincronizado»: alturas, no adjetivos.
@@ -588,6 +616,42 @@ fn tx_view(tx: &Tx) -> TxView {
             fee: *fee,
             memo: Some(format!("cosecha en ({x},{y})")),
         },
+        Tx::SellAsset { who, asset, price, fee, .. } => TxView {
+            kind: "sell_asset".into(),
+            txid: id,
+            from: Some(hex::encode(who)),
+            to: None,
+            amount: Some(*price),
+            fee: *fee,
+            memo: Some(hex::encode(asset)),
+        },
+        Tx::BuyAsset { who, asset, max_price, fee, .. } => TxView {
+            kind: "buy_asset".into(),
+            txid: id,
+            from: Some(hex::encode(who)),
+            to: None,
+            amount: Some(*max_price),
+            fee: *fee,
+            memo: Some(hex::encode(asset)),
+        },
+        Tx::SellParcel { who, x, y, price, fee, .. } => TxView {
+            kind: "sell_parcel".into(),
+            txid: id,
+            from: Some(hex::encode(who)),
+            to: None,
+            amount: Some(*price),
+            fee: *fee,
+            memo: Some(format!("parcela ({x},{y}) en venta")),
+        },
+        Tx::BuyParcel { who, x, y, max_price, fee, .. } => TxView {
+            kind: "buy_parcel".into(),
+            txid: id,
+            from: Some(hex::encode(who)),
+            to: None,
+            amount: Some(*max_price),
+            fee: *fee,
+            memo: Some(format!("compra de la parcela ({x},{y})")),
+        },
     }
 }
 
@@ -604,6 +668,54 @@ pub struct ParcelView {
     pub harvests: u64,
     pub last_harvest: Option<(u64, u64)>,
     pub assets: usize,
+    /// Dubái: distrito, venta publicada y cuentas de la empresa.
+    pub distrito: u8,
+    pub sale: Option<u64>,
+    pub ingresos: u64,
+    pub ultimo_ingreso: u64,
+    pub ultimo_bloque: u64,
+    pub insumos_pagados: u64,
+    pub importado: u64,
+    pub ventas: u64,
+}
+
+/// Distrito para el panel (rectángulo de la cuadrícula y precio en unidades base).
+#[derive(Clone, Debug, Serialize)]
+pub struct DistritoView {
+    pub id: u8,
+    pub clave: String,
+    pub nombre: String,
+    pub precio: u64,
+    pub actividad: u32,
+    pub x0: u16,
+    pub y0: u16,
+    pub x1: u16,
+    pub y1: u16,
+}
+
+fn distrito_view(d: &ciudad::Distrito) -> DistritoView {
+    DistritoView {
+        id: d.id,
+        clave: d.clave.to_string(),
+        nombre: d.nombre.to_string(),
+        precio: d.precio_rami as u64 * COIN,
+        actividad: d.actividad,
+        x0: d.x0,
+        y0: d.y0,
+        x1: d.x1,
+        y1: d.y1,
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SectorView {
+    pub id: u8,
+    pub clave: String,
+    pub nombre: String,
+    pub insumos: Vec<u8>,
+    pub demanda: u32,
+    /// Empresas de este sector en la ciudad.
+    pub empresas: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -626,6 +738,8 @@ pub struct AssetView {
     pub minted: u64,
     pub offer: Option<rami_core::state::Offer>,
     pub lease: Option<LeaseView>,
+    /// Dubái: precio de venta publicado.
+    pub sale: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -640,6 +754,25 @@ pub struct CityView {
     /// próximo bloque): el panel las muestra como «pendientes».
     #[serde(default)]
     pub pending: Vec<PendingView>,
+    // ---- Dubái ----
+    /// Rigen ya las reglas de Dubái sobre la cabeza.
+    pub dubai: bool,
+    /// Fecha de activación (Unix) si esta red la tiene, y segundos que faltan (0 si rige).
+    pub dubai_desde: Option<u64>,
+    pub dubai_faltan_segundos: u64,
+    /// Fondo de la ciudad, lo que reparte el próximo bloque, lo que entra por
+    /// bloque (parte de la emisión) y lo quemado en total.
+    pub fund: u64,
+    pub pago_bloque: u64,
+    pub parte_ciudad_bloque: u64,
+    pub emision_bloque: u64,
+    pub quemado: u64,
+    pub districts: Vec<DistritoView>,
+    pub sectors: Vec<SectorView>,
+    /// Sectores que la ciudad importa (nadie los ofrece) y cuántas empresas los necesitan.
+    pub huecos: Vec<(u8, usize)>,
+    /// Últimas operaciones del mercado (parcelas y activos).
+    pub trades: Vec<ciudad::Trade>,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -652,9 +785,12 @@ pub struct PendingView {
     pub kind: u8,
     pub asset: String,
     pub txid: String,
+    /// Precio (venta/compra) de la operación pendiente, si lo tiene.
+    #[serde(default)]
+    pub price: u64,
 }
 
-fn city_view(st: &State, height: u64) -> CityView {
+fn city_view(st: &State, height: u64, firma: &FirmaCtx, dubai_desde: Option<u64>, ahora: u64) -> CityView {
     let assets: Vec<AssetView> = st
         .assets
         .iter()
@@ -674,6 +810,7 @@ fn city_view(st: &State, height: u64) -> CityView {
                 price: l.price,
                 active: height <= l.until,
             }),
+            sale: a.sale,
         })
         .collect();
     let parcels = st
@@ -689,17 +826,406 @@ fn city_view(st: &State, height: u64) -> CityView {
             harvests: p.harvests,
             last_harvest: p.last_harvest,
             assets: st.assets.values().filter(|a| a.x == *x && a.y == *y).count(),
+            distrito: ciudad::distrito(*x, *y).id,
+            sale: p.sale,
+            ingresos: p.ingresos,
+            ultimo_ingreso: p.ultimo_ingreso,
+            ultimo_bloque: p.ultimo_bloque,
+            insumos_pagados: p.insumos_pagados,
+            importado: p.importado,
+            ventas: p.ventas,
+        })
+        .collect();
+    let emision = block_reward(height + 1);
+    let sectors = ciudad::SECTORES
+        .iter()
+        .map(|sc| SectorView {
+            id: sc.id,
+            clave: sc.clave.to_string(),
+            nombre: sc.nombre.to_string(),
+            insumos: sc.insumos.to_vec(),
+            demanda: sc.demanda,
+            empresas: st.parcels.values().filter(|p| p.kind == sc.id).count(),
         })
         .collect();
     CityView {
-        size: rami_core::tx::CITY_SIZE,
+        size: firma.city_size(),
         height,
         parcel_price: rami_core::state::PARCEL_PRICE,
         mint_price: rami_core::state::MINT_PRICE,
         parcels,
         assets,
         pending: Vec::new(),
+        dubai: firma.dubai,
+        dubai_desde,
+        dubai_faltan_segundos: if firma.dubai { 0 } else { dubai_desde.map(|d| d.saturating_sub(ahora)).unwrap_or(0) },
+        fund: st.city_fund,
+        pago_bloque: ciudad::pago_del_bloque(st.city_fund),
+        parte_ciudad_bloque: if firma.dubai { ciudad::parte_ciudad(emision) } else { 0 },
+        emision_bloque: emision,
+        quemado: st.quemado,
+        districts: ciudad::distritos().iter().map(distrito_view).collect(),
+        sectors,
+        huecos: ciudad::huecos(st),
+        trades: st.trades.iter().cloned().collect(),
     }
+}
+
+// ------------------------- Dubái: mentor y mercado -------------------------
+
+/// Lo que el mentor (una regla, no una persona) dice de una parcela: el
+/// distrito, lo que cuesta, lo que el reparto haría hoy con cada sector, y los
+/// huecos de la ciudad. Cifras del estado actual, no una promesa.
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct MentorView {
+    pub x: u16,
+    pub y: u16,
+    pub dubai: bool,
+    pub distrito: Option<DistritoView>,
+    pub precio_parcela: u64,
+    /// ¿La parcela es del monedero? ¿Es de otro?
+    pub mia: bool,
+    pub de_otro: bool,
+    pub pago_referencia: u64,
+    pub oportunidades: Vec<ciudad::Evaluacion>,
+    pub huecos: Vec<(u8, usize)>,
+    pub empresas: usize,
+}
+
+fn mentor_view(st: &State, height: u64, firma: &FirmaCtx, x: u16, y: u16, me: Option<AccountId>) -> MentorView {
+    let dist = ciudad::distrito(x, y);
+    let emision = block_reward(height + 1);
+    let (mia, de_otro) = match st.parcels.get(&(x, y)) {
+        Some(p) => (me == Some(p.owner), me != Some(p.owner)),
+        None => (false, false),
+    };
+    MentorView {
+        x,
+        y,
+        dubai: firma.dubai,
+        distrito: Some(distrito_view(&dist)),
+        precio_parcela: ciudad::precio_parcela(x, y),
+        mia,
+        de_otro,
+        pago_referencia: ciudad::pago_de_referencia(st, emision),
+        oportunidades: if firma.dubai { ciudad::oportunidades(st, x, y, me.as_ref(), emision) } else { Vec::new() },
+        huecos: ciudad::huecos(st),
+        empresas: st.parcels.len(),
+    }
+}
+
+/// Un «par» del mercado de la ciudad: parcelas de un distrito o activos de un
+/// tipo, cotizados en RAMI. Formato pensado para que un agregador lo lea
+/// (identificador, base, destino, último precio, mejor oferta, volumen).
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct TickerView {
+    pub ticker_id: String,
+    pub base: String,
+    pub target: String,
+    /// Último precio cerrado (unidades base) y altura del bloque.
+    pub last_price: Option<u64>,
+    pub last_height: Option<u64>,
+    /// Precio de referencia del protocolo: lo que cuesta una parcela libre del
+    /// distrito (se quema) o acuñar el activo.
+    pub base_price: u64,
+    pub asks: usize,
+    pub low_ask: Option<u64>,
+    /// Suma de precios cerrados y número de operaciones en los últimos 1440
+    /// bloques (≈ 24 h a 60 s/bloque).
+    pub volume_1440: u64,
+    pub trades_1440: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct OrderView {
+    pub ticker_id: String,
+    /// "parcel" o "asset".
+    pub kind: String,
+    pub x: u16,
+    pub y: u16,
+    pub asset: String,
+    pub sector: u8,
+    pub distrito: u8,
+    pub price: u64,
+    pub owner: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TradeView {
+    pub ticker_id: String,
+    pub height: u64,
+    pub kind: String,
+    pub x: u16,
+    pub y: u16,
+    pub sector: u8,
+    pub distrito: u8,
+    pub price: u64,
+}
+
+/// Hechos agregados del mercado (el «índice»): no es una cotización externa,
+/// es lo que la cadena registra en RAMI de prueba.
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct IndexView {
+    pub empresas: usize,
+    pub activos: usize,
+    pub parcelas_en_venta: usize,
+    pub activos_en_venta: usize,
+    pub operaciones: usize,
+    /// Media y último precio de las parcelas vendidas (unidades base).
+    pub precio_medio_parcela: Option<u64>,
+    pub ultimo_precio_parcela: Option<u64>,
+    /// Capital quemado por la ciudad (precios de parcela/acuñado e importaciones).
+    pub quemado: u64,
+    pub fondo: u64,
+    pub pago_bloque: u64,
+    pub parte_ciudad_bloque: u64,
+    /// Superficie de una celda (m²) y m² que compra 1 RAMI en el distrito más
+    /// caro y en el más barato (precio de parcela libre).
+    pub m2_por_celda: u64,
+    pub m2_por_rami_max: u64,
+    pub m2_por_rami_min: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct MarketView {
+    pub network: String,
+    pub network_id: String,
+    pub height: u64,
+    pub dubai: bool,
+    pub tickers: Vec<TickerView>,
+    pub orders: Vec<OrderView>,
+    pub trades: Vec<TradeView>,
+    pub index: IndexView,
+}
+
+fn ticker_parcela(distrito: u8) -> String {
+    let clave = ciudad::distritos().get(distrito as usize).map(|d| d.clave.to_uppercase()).unwrap_or_else(|| "X".into());
+    format!("PARCELA-{clave}_RAMI")
+}
+fn ticker_activo(kind: u8) -> String {
+    let n = match kind {
+        0 => "PLANTA",
+        1 => "OBJETO",
+        2 => "VEHICULO",
+        _ => "LOCAL",
+    };
+    format!("ACTIVO-{n}_RAMI")
+}
+
+fn market_view(st: &State, height: u64, firma: &FirmaCtx, network: &str, network_id: &str) -> MarketView {
+    let mut tickers: BTreeMap<String, TickerView> = BTreeMap::new();
+    for d in ciudad::distritos() {
+        let id = ticker_parcela(d.id);
+        tickers.insert(
+            id.clone(),
+            TickerView { ticker_id: id, base: format!("PARCELA-{}", d.clave.to_uppercase()), target: "RAMI".into(), base_price: d.precio_rami as u64 * COIN, ..Default::default() },
+        );
+    }
+    for k in 0..=3u8 {
+        let id = ticker_activo(k);
+        tickers.insert(id.clone(), TickerView { ticker_id: id, base: ticker_activo(k).trim_end_matches("_RAMI").to_string(), target: "RAMI".into(), base_price: ciudad::precio_acunado(k), ..Default::default() });
+    }
+    let mut orders = Vec::new();
+    for ((x, y), p) in st.parcels.iter() {
+        if let Some(price) = p.sale {
+            let d = ciudad::distrito(*x, *y);
+            let id = ticker_parcela(d.id);
+            if let Some(t) = tickers.get_mut(&id) {
+                t.asks += 1;
+                t.low_ask = Some(t.low_ask.map_or(price, |l| l.min(price)));
+            }
+            orders.push(OrderView { ticker_id: id, kind: "parcel".into(), x: *x, y: *y, asset: String::new(), sector: p.kind, distrito: d.id, price, owner: hex::encode(p.owner), name: p.name.clone() });
+        }
+    }
+    for (aid, a) in st.assets.iter() {
+        if let Some(price) = a.sale {
+            if a.leased_at(height) {
+                continue;
+            }
+            let id = ticker_activo(a.kind);
+            if let Some(t) = tickers.get_mut(&id) {
+                t.asks += 1;
+                t.low_ask = Some(t.low_ask.map_or(price, |l| l.min(price)));
+            }
+            orders.push(OrderView { ticker_id: id, kind: "asset".into(), x: a.x, y: a.y, asset: hex::encode(aid), sector: a.kind, distrito: ciudad::distrito(a.x, a.y).id, price, owner: hex::encode(a.owner), name: a.meta.clone() });
+        }
+    }
+    orders.sort_by(|a, b| a.price.cmp(&b.price).then(a.ticker_id.cmp(&b.ticker_id)));
+    let mut trades = Vec::new();
+    let mut suma_parcelas: u128 = 0;
+    let mut n_parcelas = 0usize;
+    let mut ultimo_parcela = None;
+    for t in st.trades.iter() {
+        let id = if t.kind == 0 { ticker_parcela(t.distrito) } else { ticker_activo(t.sector) };
+        if let Some(tk) = tickers.get_mut(&id) {
+            tk.last_price = Some(t.price);
+            tk.last_height = Some(t.height);
+            if height.saturating_sub(t.height) <= 1440 {
+                tk.volume_1440 += t.price;
+                tk.trades_1440 += 1;
+            }
+        }
+        if t.kind == 0 {
+            suma_parcelas += t.price as u128;
+            n_parcelas += 1;
+            ultimo_parcela = Some(t.price);
+        }
+        trades.push(TradeView { ticker_id: id, height: t.height, kind: if t.kind == 0 { "parcel".into() } else { "asset".into() }, x: t.x, y: t.y, sector: t.sector, distrito: t.distrito, price: t.price });
+    }
+    let m2 = 650u64 * 650;
+    let precios: Vec<u64> = ciudad::distritos().iter().map(|d| d.precio_rami as u64).collect();
+    let pmax = precios.iter().copied().max().unwrap_or(1).max(1);
+    let pmin = precios.iter().copied().min().unwrap_or(1).max(1);
+    let emision = block_reward(height + 1);
+    MarketView {
+        network: network.to_string(),
+        network_id: network_id.to_string(),
+        height,
+        dubai: firma.dubai,
+        tickers: tickers.into_values().collect(),
+        trades,
+        index: IndexView {
+            empresas: st.parcels.len(),
+            activos: st.assets.len(),
+            parcelas_en_venta: orders.iter().filter(|o| o.kind == "parcel").count(),
+            activos_en_venta: orders.iter().filter(|o| o.kind == "asset").count(),
+            operaciones: st.trades.len(),
+            precio_medio_parcela: if n_parcelas == 0 { None } else { Some((suma_parcelas / n_parcelas as u128) as u64) },
+            ultimo_precio_parcela: ultimo_parcela,
+            quemado: st.quemado,
+            fondo: st.city_fund,
+            pago_bloque: ciudad::pago_del_bloque(st.city_fund),
+            parte_ciudad_bloque: if firma.dubai { ciudad::parte_ciudad(emision) } else { 0 },
+            m2_por_celda: m2,
+            m2_por_rami_max: m2 / pmin,
+            m2_por_rami_min: m2 / pmax,
+        },
+        orders,
+    }
+}
+
+// ------------------------- Dubái: presencia y chat (efímeros) -------------------------
+
+/// Lo que el panel manda del avatar local (metros locales de la cuadrícula).
+#[derive(Clone, Debug, Default, serde::Deserialize, Serialize)]
+pub struct PresenceLocal {
+    pub name: String,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    pub yaw: i32,
+    pub avatar: u8,
+}
+
+/// Un avatar visto en la red (o el propio), tal como lo lee el panel.
+#[derive(Clone, Debug, Serialize)]
+pub struct AvatarView {
+    pub pk: String,
+    pub fingerprint: String,
+    pub name: String,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    pub yaw: i32,
+    pub avatar: u8,
+    /// Segundos desde la última señal y marca de tiempo que declaró el emisor.
+    pub age: u64,
+    pub ts: u64,
+    pub me: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ChatView {
+    pub pk: String,
+    pub fingerprint: String,
+    pub name: String,
+    pub text: String,
+    pub ts: u64,
+    pub me: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct PresenceView {
+    pub me: Option<AvatarView>,
+    pub avatars: Vec<AvatarView>,
+    pub chat: Vec<ChatView>,
+    pub fingerprint: String,
+}
+
+struct PresenceEntry {
+    seq: u64,
+    ts: u64,
+    name: String,
+    x: i32,
+    y: i32,
+    z: i32,
+    yaw: i32,
+    avatar: u8,
+    seen: Instant,
+}
+
+struct ChatEntry {
+    pk: [u8; 32],
+    name: String,
+    text: String,
+    ts: u64,
+}
+
+fn presence_msg(pk: &[u8; 32], seq: u64, ts: u64, name: &str, x: i32, y: i32, z: i32, yaw: i32, avatar: u8) -> Vec<u8> {
+    let mut m = b"RAMI-CITY/presence/v1".to_vec();
+    m.extend_from_slice(pk);
+    m.extend_from_slice(&seq.to_le_bytes());
+    m.extend_from_slice(&ts.to_le_bytes());
+    m.push(name.len() as u8);
+    m.extend_from_slice(name.as_bytes());
+    for v in [x, y, z, yaw] {
+        m.extend_from_slice(&v.to_le_bytes());
+    }
+    m.push(avatar);
+    m
+}
+
+fn chat_msg(pk: &[u8; 32], seq: u64, ts: u64, name: &str, text: &str) -> Vec<u8> {
+    let mut m = b"RAMI-CITY/chat/v1".to_vec();
+    m.extend_from_slice(pk);
+    m.extend_from_slice(&seq.to_le_bytes());
+    m.extend_from_slice(&ts.to_le_bytes());
+    m.push(name.len() as u8);
+    m.extend_from_slice(name.as_bytes());
+    m.extend_from_slice(&(text.len() as u16).to_le_bytes());
+    m.extend_from_slice(text.as_bytes());
+    m
+}
+
+/// Nombre visible saneado: sin saltos ni control, acotado en bytes UTF-8.
+pub fn sane_name(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.chars().filter(|c| !c.is_control()) {
+        if out.len() + c.len_utf8() > PRESENCE_NAME_MAX {
+            break;
+        }
+        out.push(c);
+    }
+    let t = out.trim().to_string();
+    if t.is_empty() { "visitante".into() } else { t }
+}
+
+fn sane_text(text: &str) -> String {
+    let mut out = String::new();
+    for c in text.chars().filter(|c| !c.is_control() || *c == ' ') {
+        if out.len() + c.len_utf8() > CHAT_TEXT_MAX {
+            break;
+        }
+        out.push(c);
+    }
+    out.trim().to_string()
+}
+
+fn parse_pk_sig(pk: &str, sig: &str) -> Option<([u8; 32], [u8; 64])> {
+    let pk: [u8; 32] = hex::decode(pk).ok()?.try_into().ok()?;
+    let sig: [u8; 64] = hex::decode(sig).ok()?.try_into().ok()?;
+    Some((pk, sig))
 }
 
 #[derive(Clone)]
@@ -735,6 +1261,14 @@ enum NodeCmd {
     GetCity(Sender<CityView>),
     /// Contexto de firma que rige ahora sobre la cabeza (para las carteras).
     Firma(Sender<FirmaCtx>),
+    /// Dubái: consejo del mentor para (x, y) visto por `me`.
+    GetMentor(u16, u16, Option<AccountId>, Sender<MentorView>),
+    /// Dubái: mercado (pares, órdenes, operaciones, índice).
+    GetMarket(Sender<MarketView>),
+    /// Metaverso: mi avatar (se firma y se difunde), lo que veo, y chat.
+    SetPresence(Box<PresenceLocal>),
+    GetPresence(Sender<PresenceView>),
+    SendChat(String, String, Sender<Result<(), String>>),
 }
 
 /// Manejador del nodo para la CLI y el monedero de escritorio.
@@ -814,6 +1348,40 @@ impl NodeHandle {
             return None;
         }
         rx.recv_timeout(Duration::from_secs(3)).ok().flatten()
+    }
+    /// Dubái: el mentor sobre la parcela (x, y) para el monedero `me`.
+    pub fn mentor(&self, x: u16, y: u16, me: Option<AccountId>) -> MentorView {
+        let (r, rx) = channel();
+        if self.tx.send(NodeMsg::Cmd(NodeCmd::GetMentor(x, y, me, r))).is_err() {
+            return MentorView::default();
+        }
+        rx.recv_timeout(Duration::from_secs(5)).unwrap_or_default()
+    }
+    /// Dubái: el mercado de la ciudad en la punta del observador.
+    pub fn market(&self) -> MarketView {
+        let (r, rx) = channel();
+        if self.tx.send(NodeMsg::Cmd(NodeCmd::GetMarket(r))).is_err() {
+            return MarketView::default();
+        }
+        rx.recv_timeout(Duration::from_secs(3)).unwrap_or_default()
+    }
+    /// Metaverso: publica la posición del avatar local (firmada y difundida).
+    pub fn set_presence(&self, p: PresenceLocal) {
+        let _ = self.tx.send(NodeMsg::Cmd(NodeCmd::SetPresence(Box::new(p))));
+    }
+    /// Metaverso: avatares vistos y chat reciente.
+    pub fn presence(&self) -> PresenceView {
+        let (r, rx) = channel();
+        if self.tx.send(NodeMsg::Cmd(NodeCmd::GetPresence(r))).is_err() {
+            return PresenceView::default();
+        }
+        rx.recv_timeout(Duration::from_secs(3)).unwrap_or_default()
+    }
+    /// Metaverso: envía un mensaje de chat (firmado con la identidad del nodo).
+    pub fn chat(&self, name: String, text: String) -> Result<(), String> {
+        let (r, rx) = channel();
+        self.tx.send(NodeMsg::Cmd(NodeCmd::SendChat(name, text, r))).map_err(|_| "nodo caído".to_string())?;
+        rx.recv_timeout(Duration::from_secs(3)).map_err(|_| "el nodo está ocupado".to_string())?
     }
 }
 
@@ -923,6 +1491,17 @@ struct Node {
     mining_on: bool,
     last_candidate_ts: u64,
     status: Arc<Mutex<NodeStatus>>,
+    /// Identidad del nodo (la del Túnel RAMI): firma presencia y chat.
+    identity: NodeIdentity,
+    /// Metaverso: avatares vistos (por clave pública), ritmo por identidad,
+    /// chat reciente y el avatar propio. Efímero: nada se persiste.
+    presence: HashMap<[u8; 32], PresenceEntry>,
+    presence_last: HashMap<[u8; 32], Instant>,
+    chat: VecDeque<ChatEntry>,
+    chat_last: HashMap<[u8; 32], Instant>,
+    my_presence: Option<PresenceLocal>,
+    my_presence_at: Option<Instant>,
+    my_seq: u64,
 }
 
 /// Arranca un nodo completo. Auto-inicializa la cadena si no existe.
@@ -938,6 +1517,7 @@ pub fn spawn(cfg: NodeConfig) -> Result<NodeHandle, String> {
     // Identidad del nodo (Túnel RAMI): clave Ed25519 con prueba de trabajo en
     // <chain_dir>/node.key. La primera vez se crea (≈ un segundo de PoW).
     let identity = rami_net::identity::load_or_create(&chain.root.join("node.key"))?;
+    let identity_local = identity.clone();
     let (net, net_rx) = Network::start(NetConfig {
         network_id: genesis_hash,
         identity,
@@ -1053,6 +1633,14 @@ pub fn spawn(cfg: NodeConfig) -> Result<NodeHandle, String> {
         mining_on: cfg.mining && cfg.miner.is_some(),
         last_candidate_ts: 0,
         status: status.clone(),
+        identity: identity_local,
+        presence: HashMap::new(),
+        presence_last: HashMap::new(),
+        chat: VecDeque::new(),
+        chat_last: HashMap::new(),
+        my_presence: None,
+        my_presence_at: None,
+        my_seq: 0,
     };
     // Carga el mempool persistido.
     node.mempool = node.chain.load_mempool();
@@ -1651,8 +2239,162 @@ impl Node {
             }
             Frame::Ping { nonce } => self.net.send(peer, Frame::Pong { nonce }),
             Frame::Pong { .. } => {}
+            Frame::Presence { pk, pow, seq, ts, name, x, y, z, yaw, avatar, hops, sig } => {
+                self.on_presence(peer, pk, pow, seq, ts, name, x, y, z, yaw, avatar, hops, sig);
+                return; // efímero: no cambia el estado que publica el panel
+            }
+            Frame::Chat { pk, pow, seq, ts, name, text, hops, sig } => {
+                self.on_chat(peer, pk, pow, seq, ts, name, text, hops, sig);
+                return;
+            }
         }
         self.publish_status();
+    }
+
+    /// Pares que entienden Dubái (anuncian regla ≥ 3): solo a ellos se les
+    /// retransmite lo efímero del metaverso (los demás lo ignorarían igual).
+    fn peers_dubai(&self, except: Option<PeerId>) -> Vec<PeerId> {
+        self.peer_rule.iter().filter(|(p, r)| **r >= REGLA_SOPORTADA && Some(**p) != except).map(|(p, _)| *p).collect()
+    }
+
+    /// Presencia recibida: identidad con prueba de trabajo, firma válida,
+    /// secuencia creciente, ritmo acotado, campos acotados. Si pasa, se guarda
+    /// (tope de memoria) y se retransmite con un salto menos.
+    #[allow(clippy::too_many_arguments)]
+    fn on_presence(&mut self, from: PeerId, pk: String, pow: u64, seq: u64, ts: u64, name: String, x: i32, y: i32, z: i32, yaw: i32, avatar: u8, hops: u8, sig: String) {
+        let Some((pkb, sigb)) = parse_pk_sig(&pk, &sig) else { return };
+        if pkb == self.identity.pubkey {
+            return; // eco de lo nuestro
+        }
+        if name.len() > PRESENCE_NAME_MAX || name.chars().any(|c| c.is_control()) {
+            return;
+        }
+        if [x, y, z].iter().any(|v| v.abs() > PRESENCE_COORD_MAX) || !(0..=360).contains(&yaw) {
+            return;
+        }
+        if !identity_pow_ok(&pkb, pow) {
+            return;
+        }
+        if !ed_verify(&pkb, &presence_msg(&pkb, seq, ts, &name, x, y, z, yaw, avatar), &sigb) {
+            return;
+        }
+        if let Some(e) = self.presence.get(&pkb) {
+            if seq <= e.seq {
+                return; // repetida o antigua
+            }
+        }
+        if let Some(t) = self.presence_last.get(&pkb) {
+            if t.elapsed() < PRESENCE_MIN_INTERVAL {
+                return;
+            }
+        }
+        if !self.presence.contains_key(&pkb) && self.presence.len() >= PRESENCE_CAP {
+            // Tope: fuera el más antiguo.
+            if let Some((&old, _)) = self.presence.iter().min_by_key(|(_, e)| e.seen) {
+                self.presence.remove(&old);
+                self.presence_last.remove(&old);
+            }
+        }
+        self.presence_last.insert(pkb, Instant::now());
+        self.presence.insert(pkb, PresenceEntry { seq, ts, name: name.clone(), x, y, z, yaw, avatar, seen: Instant::now() });
+        if hops < PRESENCE_MAX_HOPS {
+            let f = Frame::Presence { pk, pow, seq, ts, name, x, y, z, yaw, avatar, hops: hops + 1, sig };
+            for p in self.peers_dubai(Some(from)) {
+                self.net.send(p, f.clone());
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn on_chat(&mut self, from: PeerId, pk: String, pow: u64, seq: u64, ts: u64, name: String, text: String, hops: u8, sig: String) {
+        let Some((pkb, sigb)) = parse_pk_sig(&pk, &sig) else { return };
+        if pkb == self.identity.pubkey {
+            return;
+        }
+        if name.len() > PRESENCE_NAME_MAX || text.is_empty() || text.len() > CHAT_TEXT_MAX {
+            return;
+        }
+        if name.chars().any(|c| c.is_control()) || text.chars().any(|c| c.is_control() && c != ' ') {
+            return;
+        }
+        if !identity_pow_ok(&pkb, pow) || !ed_verify(&pkb, &chat_msg(&pkb, seq, ts, &name, &text), &sigb) {
+            return;
+        }
+        if let Some(t) = self.chat_last.get(&pkb) {
+            if t.elapsed() < CHAT_MIN_INTERVAL {
+                return;
+            }
+        }
+        // Un mismo mensaje (misma identidad y secuencia) no entra dos veces.
+        if self.chat.iter().any(|c| c.pk == pkb && c.ts == ts && c.text == text) {
+            return;
+        }
+        self.chat_last.insert(pkb, Instant::now());
+        if self.chat_last.len() > PRESENCE_CAP * 2 {
+            self.chat_last.retain(|_, t| t.elapsed() < Duration::from_secs(60));
+        }
+        if self.chat.len() >= CHAT_CAP {
+            self.chat.pop_front();
+        }
+        self.chat.push_back(ChatEntry { pk: pkb, name: name.clone(), text: text.clone(), ts });
+        if hops < CHAT_MAX_HOPS {
+            let f = Frame::Chat { pk, pow, seq, ts, name, text, hops: hops + 1, sig };
+            for p in self.peers_dubai(Some(from)) {
+                self.net.send(p, f.clone());
+            }
+        }
+    }
+
+    /// Caduca la presencia sin señal reciente.
+    fn prune_presence(&mut self) {
+        self.presence.retain(|_, e| e.seen.elapsed() < PRESENCE_TTL);
+        self.presence_last.retain(|_, t| t.elapsed() < PRESENCE_TTL);
+        if let Some(t) = self.my_presence_at {
+            if t.elapsed() > PRESENCE_TTL {
+                self.my_presence = None;
+            }
+        }
+    }
+
+    fn avatar_view(&self, pk: &[u8; 32], e: &PresenceEntry) -> AvatarView {
+        AvatarView {
+            pk: hex::encode(pk),
+            fingerprint: fingerprint_of(pk),
+            name: e.name.clone(),
+            x: e.x,
+            y: e.y,
+            z: e.z,
+            yaw: e.yaw,
+            avatar: e.avatar,
+            age: e.seen.elapsed().as_secs(),
+            ts: e.ts,
+            me: false,
+        }
+    }
+
+    fn presence_view(&self) -> PresenceView {
+        let me_pk = self.identity.pubkey;
+        let mut avatars: Vec<AvatarView> = self.presence.iter().map(|(pk, e)| self.avatar_view(pk, e)).collect();
+        avatars.sort_by(|a, b| a.fingerprint.cmp(&b.fingerprint));
+        let me = self.my_presence.as_ref().map(|p| AvatarView {
+            pk: hex::encode(me_pk),
+            fingerprint: self.identity.fingerprint(),
+            name: p.name.clone(),
+            x: p.x,
+            y: p.y,
+            z: p.z,
+            yaw: p.yaw,
+            avatar: p.avatar,
+            age: self.my_presence_at.map(|t| t.elapsed().as_secs()).unwrap_or(0),
+            ts: now_secs(),
+            me: true,
+        });
+        let chat = self
+            .chat
+            .iter()
+            .map(|c| ChatView { pk: hex::encode(c.pk), fingerprint: fingerprint_of(&c.pk), name: c.name.clone(), text: c.text.clone(), ts: c.ts, me: c.pk == me_pk })
+            .collect();
+        PresenceView { me, avatars, chat, fingerprint: self.identity.fingerprint() }
     }
 
     /// Admite un bloque en el árbol (revalida con las reglas de consenso) y lo
@@ -1705,9 +2447,9 @@ impl Node {
         let mut sim = self.tree.head_state().unwrap_or_default();
         let next_height = self.head_height() + 1;
         for t in &self.mempool {
-            let _ = try_apply(&mut sim, t, next_height);
+            let _ = try_apply(&mut sim, t, next_height, firma.dubai);
         }
-        try_apply(&mut sim, &tx, next_height).map_err(|e| format!("no aplica: {e}"))?;
+        try_apply(&mut sim, &tx, next_height, firma.dubai).map_err(|e| format!("no aplica: {e}"))?;
         self.mempool.push(tx.clone());
         self.seen_tx.insert(id);
         let _ = self.chain.append_mempool(&tx);
@@ -1747,6 +2489,7 @@ impl Node {
         }
         self.maybe_broadcast_tips(false);
         self.podar_mempool_por_regla();
+        self.prune_presence();
         // Refresca el candidato cada ~30 s para renovar el timestamp del bloque.
         if self.mining_on && now_secs().saturating_sub(self.last_candidate_ts) >= 30 {
             self.refresh_candidate();
@@ -1808,25 +2551,96 @@ impl Node {
             }
             NodeCmd::GetCity(reply) => {
                 let st = self.tree.head_state().unwrap_or_default();
-                let mut v = city_view(&st, self.head_height());
+                let ahora = now_secs();
+                let firma = self.firma_ctx(ahora);
+                let mut v = city_view(&st, self.head_height(), &firma, self.tree.params().dubai_desde, ahora);
                 for t in &self.mempool {
                     let id = hex::encode(txid(t));
                     let who = signer_of(t).map(hex::encode).unwrap_or_default();
                     let pv = match t {
                         Tx::ClaimParcel { x, y, name, kind, .. } => PendingView {
                             op: "claim".into(), who, x: *x, y: *y,
-                            name: String::from_utf8_lossy(name).to_string(), kind: *kind, asset: String::new(), txid: id,
+                            name: String::from_utf8_lossy(name).to_string(), kind: *kind, asset: String::new(), txid: id, price: 0,
                         },
                         Tx::MintAsset { x, y, kind, .. } => PendingView { op: "mint".into(), who, x: *x, y: *y, kind: *kind, txid: id, ..Default::default() },
                         Tx::TransferAsset { asset, .. } => PendingView { op: "transfer".into(), who, asset: hex::encode(asset), txid: id, ..Default::default() },
                         Tx::ListLease { asset, .. } => PendingView { op: "list".into(), who, asset: hex::encode(asset), txid: id, ..Default::default() },
                         Tx::Rent { asset, .. } => PendingView { op: "rent".into(), who, asset: hex::encode(asset), txid: id, ..Default::default() },
                         Tx::Harvest { x, y, .. } => PendingView { op: "harvest".into(), who, x: *x, y: *y, txid: id, ..Default::default() },
+                        Tx::SellAsset { asset, price, .. } => PendingView { op: "sell_asset".into(), who, asset: hex::encode(asset), price: *price, txid: id, ..Default::default() },
+                        Tx::BuyAsset { asset, max_price, .. } => PendingView { op: "buy_asset".into(), who, asset: hex::encode(asset), price: *max_price, txid: id, ..Default::default() },
+                        Tx::SellParcel { x, y, price, .. } => PendingView { op: "sell_parcel".into(), who, x: *x, y: *y, price: *price, txid: id, ..Default::default() },
+                        Tx::BuyParcel { x, y, max_price, .. } => PendingView { op: "buy_parcel".into(), who, x: *x, y: *y, price: *max_price, txid: id, ..Default::default() },
                         _ => continue,
                     };
                     v.pending.push(pv);
                 }
                 let _ = reply.send(v);
+            }
+            NodeCmd::GetMentor(x, y, me, reply) => {
+                let st = self.tree.head_state().unwrap_or_default();
+                let firma = self.firma_ctx(now_secs());
+                let _ = reply.send(mentor_view(&st, self.head_height(), &firma, x, y, me));
+            }
+            NodeCmd::GetMarket(reply) => {
+                let st = self.tree.head_state().unwrap_or_default();
+                let firma = self.firma_ctx(now_secs());
+                let network = if self.is_testnet { "testnet" } else { "regtest" };
+                let _ = reply.send(market_view(&st, self.head_height(), &firma, network, &hex::encode(self.network_id)));
+            }
+            NodeCmd::SetPresence(p) => {
+                // Ritmo propio acotado (el panel manda ~1/s; la red no ve más de
+                // uno cada PRESENCE_MIN_INTERVAL).
+                let mut p = *p;
+                p.name = sane_name(&p.name);
+                p.x = p.x.clamp(-PRESENCE_COORD_MAX, PRESENCE_COORD_MAX);
+                p.y = p.y.clamp(-PRESENCE_COORD_MAX, PRESENCE_COORD_MAX);
+                p.z = p.z.clamp(-PRESENCE_COORD_MAX, PRESENCE_COORD_MAX);
+                p.yaw = p.yaw.rem_euclid(361).min(360);
+                let ok_ritmo = self.my_presence_at.is_none_or(|t| t.elapsed() >= PRESENCE_MIN_INTERVAL);
+                self.my_presence = Some(p.clone());
+                if ok_ritmo {
+                    self.my_presence_at = Some(Instant::now());
+                    self.my_seq += 1;
+                    let ts = now_secs();
+                    let pk = self.identity.pubkey;
+                    let sig = self.identity.sign(&presence_msg(&pk, self.my_seq, ts, &p.name, p.x, p.y, p.z, p.yaw, p.avatar));
+                    let f = Frame::Presence {
+                        pk: hex::encode(pk), pow: self.identity.pow_nonce, seq: self.my_seq, ts, name: p.name.clone(),
+                        x: p.x, y: p.y, z: p.z, yaw: p.yaw, avatar: p.avatar, hops: 0, sig: hex::encode(sig),
+                    };
+                    for peer in self.peers_dubai(None) {
+                        self.net.send(peer, f.clone());
+                    }
+                }
+            }
+            NodeCmd::GetPresence(reply) => {
+                let _ = reply.send(self.presence_view());
+            }
+            NodeCmd::SendChat(name, text, reply) => {
+                let name = sane_name(&name);
+                let text = sane_text(&text);
+                let r = if text.is_empty() {
+                    Err("mensaje vacío".to_string())
+                } else if self.chat_last.get(&self.identity.pubkey).is_some_and(|t| t.elapsed() < CHAT_MIN_INTERVAL) {
+                    Err("espera un momento antes de otro mensaje".to_string())
+                } else {
+                    let pk = self.identity.pubkey;
+                    self.chat_last.insert(pk, Instant::now());
+                    self.my_seq += 1;
+                    let ts = now_secs();
+                    let sig = self.identity.sign(&chat_msg(&pk, self.my_seq, ts, &name, &text));
+                    if self.chat.len() >= CHAT_CAP {
+                        self.chat.pop_front();
+                    }
+                    self.chat.push_back(ChatEntry { pk, name: name.clone(), text: text.clone(), ts });
+                    let f = Frame::Chat { pk: hex::encode(pk), pow: self.identity.pow_nonce, seq: self.my_seq, ts, name, text, hops: 0, sig: hex::encode(sig) };
+                    for peer in self.peers_dubai(None) {
+                        self.net.send(peer, f.clone());
+                    }
+                    Ok(())
+                };
+                let _ = reply.send(r);
             }
             NodeCmd::GetBlock(height, reply) => {
                 let chain = self.tree.observer_chain();
@@ -1925,19 +2739,27 @@ impl Node {
                 let ident = self.peer_ident.get(id);
                 let mut g = self.graduacion_de(*id);
                 let regla_tx = self.peer_rule.get(id).copied().unwrap_or(0);
-                if self.tree.params().firma_v2_desde.is_some() && regla_tx < REGLA_SOPORTADA {
+                let ctx_ahora = self.firma_ctx(now_secs());
+                if self.tree.params().firma_v2_desde.is_some() && regla_tx < REGLA_V2 {
                     // Hecho, no juicio: lo que anuncia el par y lo que eso
                     // significa según rija ya la regla v2 o todavía no.
                     let que = match regla_tx {
                         0 => "no anuncia regla de firma (binario anterior a v0.8.0)".to_string(),
                         r => format!("anuncia regla de firma v{r}"),
                     };
-                    let efecto = if self.firma_ctx(now_secs()).regla == rami_core::tx::Regla::V2 {
+                    let efecto = if ctx_ahora.regla == rami_core::tx::Regla::V2 {
                         "no sigue la cadena desde la activación de la regla v2"
                     } else {
                         "quedará fuera al activarse la regla v2"
                     };
                     g.motivos.push(format!("{que}: {efecto}"));
+                } else if self.tree.params().dubai_desde.is_some() && regla_tx < REGLA_SOPORTADA {
+                    let efecto = if ctx_ahora.dubai {
+                        "no sigue la cadena desde la activación de Dubái"
+                    } else {
+                        "quedará fuera al activarse Dubái"
+                    };
+                    g.motivos.push(format!("anuncia la regla {regla_tx} sin Dubái (binario anterior a v0.9.0): {efecto}"));
                 }
                 PeerView {
                     addr: dial.clone().unwrap_or_else(|| addr.clone()),
@@ -1987,14 +2809,20 @@ impl Node {
             consenso: {
                 let ahora = now_secs();
                 let v2_desde = self.tree.params().firma_v2_desde;
+                let dubai_desde = self.tree.params().dubai_desde;
+                let ctx = self.firma_ctx(ahora);
                 ConsensoInfo {
-                    regla_vigente: self.firma_ctx(ahora).numero(),
+                    regla_vigente: ctx.numero(),
                     regla_soportada: REGLA_SOPORTADA,
                     v2_desde,
                     faltan_segundos: v2_desde.map(|d| d.saturating_sub(ahora)).unwrap_or(0),
-                    pares_v2: self.peer_rule.values().filter(|r| **r >= REGLA_SOPORTADA).count(),
+                    pares_v2: self.peer_rule.values().filter(|r| **r >= REGLA_V2).count(),
                     pares_total: self.peer_meta.len(),
                     mempool_fuera_de_regla: self.mempool_fuera_de_regla(),
+                    dubai_desde,
+                    dubai_vigente: ctx.dubai,
+                    dubai_faltan_segundos: if ctx.dubai { 0 } else { dubai_desde.map(|d| d.saturating_sub(ahora)).unwrap_or(0) },
+                    pares_dubai: self.peer_rule.values().filter(|r| **r >= REGLA_SOPORTADA).count(),
                 }
             },
             sync: SyncInfo {

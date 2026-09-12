@@ -219,6 +219,21 @@
   .assetrow{border-top:1px solid var(--line);padding:10px 0;font-size:13px}
   .assetrow .id{font-family:var(--mono);font-size:11px;color:var(--muted)}
   .demo{background:rgba(126,240,192,.08);border:1px solid rgba(126,240,192,.3);border-radius:12px;padding:12px 14px;font-size:13px;margin-bottom:14px}
+  .citybar select{background:#0d1220;border:1px solid var(--border);color:var(--text);border-radius:8px;padding:5px 8px;font-size:12.5px;font-family:inherit}
+  .chatlog{max-height:180px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:13px;background:#0d1220;margin-top:6px}
+  .chatlog .msg{padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+  .chatlog .msg.me .who{color:var(--accent)}
+  .chatlog .who{font-weight:600;color:var(--blue)}
+  .chatlog .fp{font-family:var(--mono);font-size:10.5px;color:var(--muted);font-weight:400}
+  .mentor .mentor-op{border-top:1px solid var(--line);padding:8px 0;font-size:13px}
+  .mentor .mentor-op .muted{font-size:12px}
+  .mentor .dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--c);margin-right:6px;vertical-align:middle}
+  .mentor .pill{display:inline-block;border:1px solid var(--c);color:var(--text);border-radius:999px;padding:1px 8px;font-size:12px;margin:2px 0}
+  .mentor .lesson{padding:8px 0;border-top:1px solid var(--line);font-size:12.5px;color:var(--muted)}
+  .mentor .lesson b{color:var(--text)}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+  .tile{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
+  .tile .val{font-size:18px;font-weight:700}
   /* ---------- Banners de estado ---------- */
   .upd{background:rgba(126,240,192,.10);border-bottom:1px solid rgba(126,240,192,.35);
     padding:10px 20px;font-size:13px;color:var(--text);display:none;align-items:center;gap:12px}
@@ -351,7 +366,8 @@
     <button data-view="recibir"><span class="ico">↙️</span> Recibir</button>
     <button data-view="minar"><span class="ico">⛏</span> Minar</button>
     <button data-view="staking"><span class="ico">🔒</span> Apostar</button>
-    <button data-view="ciudad"><span class="ico">🏙️</span> Ciudad</button>
+    <button data-view="ciudad"><span class="ico">🏙️</span> Dubái</button>
+    <button data-view="mercado"><span class="ico">📈</span> Mercado</button>
     <button data-view="predicciones"><span class="ico">🔮</span> Predicciones</button>
     <button data-view="explorador"><span class="ico">🔍</span> Explorador</button>
     <button data-view="red"><span class="ico">🌐</span> Red</button>
@@ -559,54 +575,108 @@
       </div>
     </section>
 
-    <!-- ============ CIUDAD (metaverso, fase 0) ============ -->
+    <!-- ============ DUBÁI (metaverso, fase 1) ============ -->
     <section id="v-ciudad" class="hidden">
-      <h1 class="section-title">Ciudad RAMI 🏙️</h1>
-      <p class="section-sub">La isla de Tenerife en 3D (datos abiertos) dividida en una cuadrícula de 32×32 parcelas: elige la tuya,
-      monta tu empresa con un clic y sitúala donde está de verdad. Las parcelas, las empresas y sus activos
-      viven en la cadena: son reglas de consenso, no una base de datos.</p>
-      <div class="demo">🌿 <b>Granja demo de cannabis medicinal</b> — simulación para entender el modelo: la granja acuña
-        <b>plantas</b> (activos), las publica en <b>alquiler</b> por un plazo (p. ej. 3 meses) y, al llegar la
-        <b>cosecha</b>, reparte RAMI de su propio saldo entre quienes tienen una planta alquilada. Todo con RAMI de
-        <b>testnet, sin valor monetario</b>: no es una inversión ni una oferta de valores. Los precios de parcela
-        (<span id="cityParcelPrice">10</span> RAMI) y de acuñado (<span id="cityMintPrice">1</span> RAMI) se <b>queman</b>.</div>
+      <h1 class="section-title">Dubái RAMI 🏙️</h1>
+      <p class="section-sub">Una réplica de Dubái en 3D (relieve de datos abiertos, hitos modelados uno a uno, skylines por barrio)
+      dividida en 64×64 parcelas de 650 m. Elige tu parcela, monta tu empresa, compra y vende parcelas y activos en RAMI, y
+      recorre la ciudad a pie o con gafas de realidad virtual. Las parcelas, las empresas, sus cuentas y el mercado viven en la
+      cadena: son reglas de consenso, no una base de datos.</p>
+      <div class="demo">🏗️ <b>Cómo funciona la economía</b> — cada bloque, el <b>20 %</b> de la emisión entra en el <b>fondo de la
+        ciudad</b> y el fondo reparte el <b>1 %</b> de lo acumulado entre las empresas según la demanda de su sector, la actividad de su
+        distrito y cuántos de sus <b>insumos</b> existen en la ciudad. De cada ingreso, el <b>40 %</b> paga a los proveedores más cercanos
+        (lo que nadie ofrece se importa y se quema). El precio de una parcela libre depende del distrito y se <b>quema</b>; el de
+        acuñar un activo, también. Todo con RAMI de <b>testnet, sin valor monetario</b>: no es una inversión ni una oferta de valores.</div>
+      <div class="note" id="cityCountdown" style="display:none;margin-top:0;margin-bottom:12px"></div>
       <div class="citywrap">
         <div>
           <div class="citybar">
-            <button class="btn small ghost" id="cyViewIsland">🏝️ Isla</button>
-            <button class="btn small ghost" id="cyViewCity">🏙️ Ciudad</button>
+            <button class="btn small ghost" id="cyViewIsland">🌆 Dubái</button>
+            <button class="btn small ghost" id="cyViewCity">🏙️ Parcelas</button>
+            <select id="cyLandmark" title="Ir a un hito"><option value="">🗼 Ir a un hito…</option></select>
             <span style="width:8px"></span>
             <button class="btn small ghost on" id="cyMode3d">3D</button>
             <button class="btn small ghost" id="cyMode2d">2D</button>
+            <button class="btn small ghost" id="cyWalk" title="Recorrer la ciudad en primera persona (WASD, arrastrar para mirar, Q/E para volar, rueda = velocidad)">🚶 A pie</button>
+            <select id="cyQuality" title="Calidad gráfica">
+              <option value="baja">Calidad: baja</option>
+              <option value="media" selected>Calidad: media</option>
+              <option value="alta">Calidad: alta</option>
+              <option value="ultra">Calidad: ultra (4K)</option>
+            </select>
+            <select id="cyHour" title="Hora del día en la escena">
+              <option value="">Hora real de Dubái</option>
+              <option value="6.5">Amanecer</option>
+              <option value="12">Mediodía</option>
+              <option value="18">Atardecer</option>
+              <option value="22">Noche</option>
+            </select>
             <button class="btn small" id="cyVR" style="display:none">🥽 Gafas VR</button>
             <span class="muted" id="cyLoad" style="font-size:12px"></span>
           </div>
           <div id="city3d"></div>
           <canvas id="cityCanvas" width="960" height="560" class="hidden"></canvas>
+          <div class="legend" id="cityLegend"></div>
           <div class="legend">
             <span style="--c:#1d2a3a">Libre</span>
-            <span style="--c:#4f8cff">Empresa</span>
-            <span style="--c:#4ccf6e">Granja</span>
-            <span style="--c:#f2b84b">Tienda</span>
-            <span style="--c:#c77dff">Oficina</span>
             <span style="--c:#7ef0c0">Tuya (borde claro)</span>
+            <span style="--c:#ffd166">💰 En venta</span>
             <span id="cityHover"></span>
             <span id="cityStats" style="margin-left:auto"></span>
+          </div>
+          <div class="card" style="margin-top:12px;padding:14px">
+            <div class="lbl" style="margin-bottom:6px">💬 Plaza: visitantes conectados y chat</div>
+            <div class="note" id="cityWho" style="margin-top:0">Nadie más ahora mismo.</div>
+            <div class="chatlog" id="cityChat"></div>
+            <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+              <input id="cyNick" placeholder="Tu nombre visible" style="width:150px" maxlength="24" autocomplete="off">
+              <input id="cyChatText" placeholder="Escribe un mensaje…" style="flex:1;min-width:180px" maxlength="280" autocomplete="off">
+              <button class="btn small" id="cyChatSend">Enviar</button>
+            </div>
+            <p class="note">La presencia (tu avatar) y el chat viajan por el túnel RAMI entre los nodos conectados, firmados con la
+            identidad de tu nodo (huella <span id="cityFp" class="mono">—</span>). No se guardan en la cadena ni en disco y caducan en segundos.
+            En VR y a pie tu avatar se mueve contigo; en órbita se sitúa donde mira la cámara.</p>
           </div>
         </div>
         <div class="card" id="cityPanel">
           <div id="cityLocate" style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--line)">
-            <div class="lbl" style="margin-bottom:6px">📍 Localizar mi empresa en Tenerife</div>
-            <input id="cyAddr" placeholder="Dirección (calle, municipio)" style="width:100%" autocomplete="off">
+            <div class="lbl" style="margin-bottom:6px">📍 Localizar una dirección de Dubái</div>
+            <input id="cyAddr" placeholder="Dirección o lugar (p. ej. Sheikh Zayed Road)" style="width:100%" autocomplete="off">
             <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button class="btn small" id="cyLocateBtn">Buscar dirección</button></div>
             <div class="status" id="cyLocateStatus"></div>
-            <p class="note" style="margin-top:6px">Mapa de datos abiertos (no Google Maps: sus condiciones prohíben copiar sus datos). La dirección se busca en OpenStreetMap solo al pulsar el botón. RAMI-Chain no verifica que una empresa exista ni sea legal: compruébalo en el <a href="https://www.registradores.org" target="_blank" rel="noopener">Registro Mercantil</a> o el <a href="https://www.boe.es/diario_borme/" target="_blank" rel="noopener">BORME</a>.</p>
+            <p class="note" style="margin-top:6px">Mapa de datos abiertos (no Google Maps: sus condiciones prohíben copiar sus datos). La dirección se busca en OpenStreetMap solo al pulsar el botón. RAMI-Chain no verifica que una empresa exista ni sea legal.</p>
           </div>
           <div id="cityInfo" class="note" style="margin-top:0">Haz clic en una parcela de la ciudad.</div>
           <div id="cityActions"></div>
+          <div id="cityMentor"></div>
           <div class="status" id="cityStatus"></div>
         </div>
       </div>
+    </section>
+
+    <!-- ============ MERCADO / COTIZACIÓN ============ -->
+    <section id="v-mercado" class="hidden">
+      <h1 class="section-title">Mercado y cotización 📈</h1>
+      <p class="section-sub">Lo que la cadena registra en RAMI de prueba: el precio de una parcela libre por distrito (se quema), las
+      órdenes de venta abiertas, las operaciones cerradas entre usuarios y el fondo de la ciudad. Es la cotización <b>interna</b> del RAMI
+      frente a los activos de la ciudad. RAMI no cotiza en euros ni en otras criptomonedas y este panel no lo vende ni lo compra.</p>
+      <div class="tiles" id="mkTiles"></div>
+      <div class="card" style="margin-top:14px">
+        <div class="lbl" style="margin-bottom:8px">Pares (activo / RAMI)</div>
+        <div class="tbl-wrap"><table><thead><tr><th>Par</th><th>Precio del protocolo</th><th>Mejor oferta</th><th>Último cierre</th><th>Cierres (1440 bloques)</th><th>Volumen (1440 bloques)</th></tr></thead><tbody id="mkTickers"></tbody></table></div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <div class="lbl" style="margin-bottom:8px">Órdenes de venta abiertas</div>
+        <div class="tbl-wrap"><table><thead><tr><th>Qué</th><th>Dónde</th><th>Vendedor</th><th>Precio</th><th></th></tr></thead><tbody id="mkOrders"></tbody></table></div>
+        <div class="status" id="mkStatus"></div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <div class="lbl" style="margin-bottom:8px">Operaciones cerradas (las últimas 256)</div>
+        <div class="tbl-wrap"><table><thead><tr><th>Bloque</th><th>Par</th><th>Parcela</th><th>Precio</th></tr></thead><tbody id="mkTrades"></tbody></table></div>
+      </div>
+      <p class="note">Estos mismos datos se publican en formato de agregador (pares, tickers, libro de órdenes, operaciones) con
+      <code>rami-node market</code> (solo lectura). Si un día el proyecto contempla una cotización con valor real, eso exige asesoría
+      legal y la normativa aplicable: este software no lo hace ni te ayuda a hacerlo (<code>NOTICE.md</code>).</p>
     </section>
 
     <!-- ============ PREDICCIONES ============ -->
@@ -1096,7 +1166,7 @@
   }
 
   // ---------- navegación ----------
-  var views = ["resumen","enviar","recibir","minar","staking","predicciones","explorador","red","actualizar","ciudad"];
+  var views = ["resumen","enviar","recibir","minar","staking","predicciones","explorador","red","actualizar","ciudad","mercado"];
   document.getElementById("nav").addEventListener("click", function(e){
     var b = e.target.closest("button[data-view]");
     if(!b) return;
@@ -1114,8 +1184,9 @@
     if(v==="explorador") pollExplorer();
     if(v==="predicciones") loadPredicciones();
     if(v==="actualizar") checkUpdate(true);
-    if(v==="ciudad"){ loadCity(); if(c3d.mode==="3d") setCityMode("3d"); }
+    if(v==="ciudad"){ loadCity(); pullPresence(); if(c3d.mode==="3d") setCityMode("3d"); }
     else if(c3d.handle) c3d.handle.setVisible(false);
+    if(v==="mercado"){ loadMarket(); if(!city.data) loadCity(); }
   }
 
   // ---------- render top bar / conexión ----------
@@ -1768,43 +1839,67 @@
       .catch(function(){ alert(t("Sin conexión con el nodo.")); });
   });
 
-  // ---------- Ciudad RAMI (metaverso, fase 0) ----------
-  var city = { data:null, sel:null, timer:null, lastTxt:"", pIdx:{}, aIdx:{} };
-  // Cuadrícula de 32×32 sobre TODA la isla (celda de 2,6 km): la parcela (x,y)
-  // corresponde a un lugar real de Tenerife, así una empresa puede situarse
-  // donde está de verdad. (0,0) = esquina noroeste.
-  var CITY_ANCHOR = { lat: 28.675, lon: -16.95, cellMeters: 2600, rotationDeg: 0 };
+  // ---------- Dubái RAMI (metaverso, fase 1) ----------
+  // Ids de sector = rami-core::ciudad::SECTORES (mismo orden que city3d.js).
+  var SECTOR_NAMES = ["Empresa","Granja","Tienda","Oficina","Concesionario de coches","Hotel","Restaurante","Inmobiliaria","Constructora",
+    "Energía solar","Desaladora","Logística y puerto","Telecomunicaciones","Banco","Agencia de marketing","Empresa de software","Taller mecánico",
+    "Aseguradora","Bufete de abogados","Clínica","Escuela de negocios","Joyería (Zoco del Oro)","Supermercado","Gimnasio","Agencia de turismo",
+    "Taxi y movilidad","Cafetería","Moda","Seguridad","Materiales (cemento y acero)"];
+  var SECTOR_COLORS = ["#4f8cff","#4ccf6e","#f2b84b","#c77dff","#ff5d5d","#ffd166","#ff8f4b","#7ec8ff","#b08968",
+    "#2f6fed","#3ad1e0","#8a7a66","#9cc5ff","#3fbf8f","#ff7ab6","#a78bfa","#c9a227",
+    "#5eead4","#94a3b8","#f87171","#818cf8","#fbbf24","#86efac","#a3e635","#22d3ee",
+    "#facc15","#fdba74","#f472b6","#64748b","#a8a29e"];
+  var ASSET_NAMES = ["🌿 Planta","📦 Objeto","🚗 Vehículo","🏢 Local"];
+  var SECTOR_CONCESIONARIO = 4, SECTOR_GRANJA = 1;
+  var city = { data:null, sel:null, lastTxt:"", pIdx:{}, aIdx:{}, pendIdx:{}, mentor:null, mentorKey:"", mentorBusy:false, presence:null, nick:"", tick:0 };
+  // Cuadrícula (espejo de geo/dubai.json → grid): la esquina NO de la celda
+  // (0,0) y un giro de -48° para que el eje x siga la costa (Jebel Ali → Deira).
+  var CITY_ANCHOR = { lat: 25.064, lon: 54.994, cellMeters: 650, rotationDeg: -48 };
+  function gridN(){ return (city.data && city.data.size) || 64; }
   function latLonToParcel(lat, lon){
-    if(c3d.handle && c3d.handle.latLonToCell) return c3d.handle.latLonToCell(lat, lon); // misma fórmula que el 3D
-    var mx = 111320*Math.cos(CITY_ANCHOR.lat*Math.PI/180), n = (city.data && city.data.size) || 32;
-    var dx = (lon - CITY_ANCHOR.lon)*mx, dy = (CITY_ANCHOR.lat - lat)*110574;
-    var x = Math.floor(dx/CITY_ANCHOR.cellMeters), y = Math.floor(dy/CITY_ANCHOR.cellMeters);
+    if(c3d.handle && c3d.handle.latLonToCell) return c3d.handle.latLonToCell(lat, lon);
+    var mx = 111320*Math.cos(CITY_ANCHOR.lat*Math.PI/180), n = gridN(), r = -CITY_ANCHOR.rotationDeg*Math.PI/180, s = Math.sin(r), c = Math.cos(r);
+    var dx = (lon - CITY_ANCHOR.lon)*mx, dz = (CITY_ANCHOR.lat - lat)*110574;
+    var lx = dx*c - dz*s, lz = dx*s + dz*c;
+    var x = Math.floor(lx/CITY_ANCHOR.cellMeters), y = Math.floor(lz/CITY_ANCHOR.cellMeters);
     return { x:x, y:y, inside:(x>=0 && y>=0 && x<n && y<n) };
   }
   function parcelToLatLon(x, y){
     if(c3d.handle && c3d.handle.cellLatLon) return c3d.handle.cellLatLon(x, y);
-    var mx = 111320*Math.cos(CITY_ANCHOR.lat*Math.PI/180);
-    return { lat: CITY_ANCHOR.lat - (y+0.5)*CITY_ANCHOR.cellMeters/110574, lon: CITY_ANCHOR.lon + (x+0.5)*CITY_ANCHOR.cellMeters/mx };
+    var mx = 111320*Math.cos(CITY_ANCHOR.lat*Math.PI/180), r = -CITY_ANCHOR.rotationDeg*Math.PI/180, s = Math.sin(r), c = Math.cos(r);
+    var lx = (x+0.5)*CITY_ANCHOR.cellMeters, lz = (y+0.5)*CITY_ANCHOR.cellMeters;
+    var dx = lx*c + lz*s, dz = -lx*s + lz*c;
+    return { lat: CITY_ANCHOR.lat - dz/110574, lon: CITY_ANCHOR.lon + dx/mx };
   }
+  // Distrito de una celda (espejo de rami-core::ciudad::distrito).
+  function districtOf(x, y){
+    var ds = city.data && city.data.districts; if(!ds) return null;
+    var i;
+    for(i=0;i<ds.length;i++){ var d = ds[i]; if(d.clave==="golfo"||d.clave==="desierto") continue; if(x>=d.x0&&x<=d.x1&&y>=d.y0&&y<=d.y1) return d; }
+    var mar = (63*y + 3*x) < 819;
+    for(i=0;i<ds.length;i++) if(ds[i].clave === (mar ? "golfo" : "desierto")) return ds[i];
+    return null;
+  }
+  function sectorName(k){ var s = city.data && city.data.sectors && city.data.sectors[k]; return t(s ? s.nombre : (SECTOR_NAMES[k] || ("sector "+k))); }
+  function sectorColor(k){ return SECTOR_COLORS[k] || "#4f8cff"; }
   function buildCityIndex(d){
     city.pIdx = {}; city.aIdx = {}; city.pendIdx = {};
     var merged = (d.parcels || []).slice();
     (d.parcels || []).forEach(function(p){ city.pIdx[p.x+","+p.y] = p; });
     (d.assets || []).forEach(function(a){ var k = a.x+","+a.y; (city.aIdx[k] = city.aIdx[k] || []).push(a); });
-    // Operaciones aún en el mempool: se ven al instante como «pendientes».
     (d.pending || []).forEach(function(op){
       var k = op.x+","+op.y; (city.pendIdx[k] = city.pendIdx[k] || []).push(op);
       if(op.op === "claim"){
         var cur = city.pIdx[k];
         if(!cur){
-          var np = { x:op.x, y:op.y, owner:op.who, name:op.name, kind:op.kind, since:(d.height||0)+1, harvests:0, last_harvest:null, assets:0, pending:true };
+          var np = { x:op.x, y:op.y, owner:op.who, name:op.name, kind:op.kind, since:(d.height||0)+1, harvests:0, last_harvest:null, assets:0, pending:true, distrito:0, sale:null, ingresos:0, ultimo_ingreso:0, ventas:0, importado:0, insumos_pagados:0 };
           city.pIdx[k] = np; merged.push(np);
         } else cur.pendingRename = true;
       }
     });
     city.view = Object.assign({}, d, { parcels: merged });
   }
-  // ---- cliente 3D (Three.js, cargado solo al entrar en la Ciudad) ----
+  // ---- cliente 3D (Three.js, cargado solo al entrar en Dubái) ----
   var c3d = { handle:null, loading:null, mode:"3d", failed:false };
   function loadScript(src){
     return new Promise(function(res, rej){
@@ -1813,21 +1908,29 @@
       document.head.appendChild(sc);
     });
   }
+  function savedQuality(){ try{ return localStorage.getItem("rami.calidad") || "media"; }catch(e){ return "media"; } }
   function ensureCity3D(){
     if(c3d.handle) return Promise.resolve(c3d.handle);
     if(c3d.loading) return c3d.loading;
-    txt("cyLoad", t("Cargando el mapa 3D…"));
+    txt("cyLoad", t("Cargando Dubái en 3D…"));
     c3d.loading = loadScript("/vendor/three.min.js").then(function(){ return loadScript("/city3d.js"); }).then(function(){
       var el = document.getElementById("city3d"); el.style.display = "block";
       var h = window.RamiCity3D.mount(el, {
-        heightUrl:"/geo/tenerife.hgt.png", metaUrl:"/geo/tenerife.json", gridSize:32, anchor:CITY_ANCHOR, t:t,
+        heightUrl:"/geo/dubai.hgt.png", metaUrl:"/geo/dubai.json", gridSize:gridN(), anchor:CITY_ANCHOR, t:t, quality:savedQuality(),
         onSelect:function(x,y){ city.sel = (x==null) ? null : {x:x,y:y}; renderCityPanel(); if(c3d.mode==="2d") drawCity(); },
-        onHover:function(x,y){ var el2 = document.getElementById("cityHover"); if(el2) el2.textContent = (x==null) ? "" : t("parcela")+" ("+x+","+y+")"; }
+        onHover:function(x,y){ var el2 = document.getElementById("cityHover"); if(el2) el2.textContent = (x==null) ? "" : t("parcela")+" ("+x+","+y+")"; },
+        onMode:function(m){ document.getElementById("cyWalk").classList.toggle("on", m==="walk"); }
       });
       c3d.handle = h; window.__ramiCity3D = h;   // (pruebas automáticas)
+      document.getElementById("cyQuality").value = savedQuality();
       if(city.view) h.setCity(city.view);
       if(city.sel) h.select(city.sel.x, city.sel.y);
-      txt("cyLoad", "");
+      h.ready.then(function(){
+        txt("cyLoad", "");
+        var sel = document.getElementById("cyLandmark");
+        h.landmarks().forEach(function(l){ var o = document.createElement("option"); o.value = l.id; o.textContent = l.name + (l.h ? " · "+l.h+" m" : ""); sel.appendChild(o); });
+        if(city.presence) h.setPresence(city.presence.avatars || []);
+      }).catch(function(){ txt("cyLoad", ""); });
       h.xrSupported().then(function(ok){ document.getElementById("cyVR").style.display = ok ? "" : "none"; }).catch(function(){});
       window.addEventListener("resize", function(){ if(c3d.handle) c3d.handle.resize(); });
       return h;
@@ -1857,12 +1960,22 @@
   document.getElementById("cyMode2d").addEventListener("click", function(){ setCityMode("2d"); });
   document.getElementById("cyViewIsland").addEventListener("click", function(){ if(c3d.mode!=="3d") setCityMode("3d"); ensureCity3D().then(function(h){ h.flyToIsland(); }).catch(function(){}); });
   document.getElementById("cyViewCity").addEventListener("click", function(){ if(c3d.mode!=="3d") setCityMode("3d"); ensureCity3D().then(function(h){ if(city.sel) h.flyTo(city.sel.x, city.sel.y); else h.flyToCity(); }).catch(function(){}); });
+  document.getElementById("cyLandmark").addEventListener("change", function(){ var id = this.value; if(!id) return; if(c3d.mode!=="3d") setCityMode("3d"); ensureCity3D().then(function(h){ h.flyToLandmark(id); }).catch(function(){}); });
+  document.getElementById("cyWalk").addEventListener("click", function(){
+    if(c3d.mode!=="3d") setCityMode("3d");
+    ensureCity3D().then(function(h){ h.setMode(h.mode()==="walk" ? "orbit" : "walk"); document.getElementById("city3d").querySelector("canvas").focus(); }).catch(function(){});
+  });
+  document.getElementById("cyQuality").addEventListener("change", function(){
+    var q = this.value; try{ localStorage.setItem("rami.calidad", q); }catch(e){}
+    if(c3d.handle) c3d.handle.setQuality(q);
+  });
+  document.getElementById("cyHour").addEventListener("change", function(){ var v = this.value; if(c3d.handle) c3d.handle.setTimeOfDay(v === "" ? null : Number(v)); });
   document.getElementById("cyVR").addEventListener("click", function(){
     var st = document.getElementById("cityStatus");
     ensureCity3D().then(function(h){ return h.enterVR(); }).then(function(){ st.textContent = ""; })
       .catch(function(e){ st.textContent = "✗ " + t("No se pudo entrar en VR: ") + ((e && e.message) || e); });
   });
-  // Localizar una dirección real de Tenerife y llevarla a su parcela.
+  // Localizar una dirección real de Dubái y llevarla a su parcela.
   document.getElementById("cyLocateBtn").addEventListener("click", function(){
     var q = document.getElementById("cyAddr").value.trim(), st = document.getElementById("cyLocateStatus");
     if(!q){ showStatus(st, false, t("Escribe una dirección.")); return; }
@@ -1872,117 +1985,147 @@
       btn.disabled = false;
       if(!r || !r.ok){ showStatus(st, false, (r && r.error) || t("no encontrada")); return; }
       var pl = r.places[0], pc = latLonToParcel(pl.lat, pl.lon);
-      if(!pc.inside){ showStatus(st, false, t("La dirección está fuera del mapa de Tenerife.")); return; }
+      if(!pc.inside){ showStatus(st, false, t("La dirección está fuera del mapa de Dubái.")); return; }
       city.sel = {x:pc.x, y:pc.y}; renderCityPanel(); drawCity();
       showStatus(st, true, esc(pl.name)+"<br>"+t("Parcela")+" ("+pc.x+","+pc.y+") · "+pl.lat.toFixed(4)+", "+pl.lon.toFixed(4));
       if(c3d.handle){ c3d.handle.select(pc.x, pc.y); c3d.handle.flyTo(pc.x, pc.y); }
     }).catch(function(){ btn.disabled = false; showStatus(st, false, t("Sin conexión con el nodo.")); });
   });
   document.getElementById("cyAddr").addEventListener("keydown", function(e){ if(e.key==="Enter") document.getElementById("cyLocateBtn").click(); });
-  var KIND_NAMES = ["Empresa","Granja","Tienda","Oficina"];
-  var KIND_COLORS = ["#4f8cff","#4ccf6e","#f2b84b","#c77dff"];
-  var ASSET_NAMES = ["🌿 Planta","📦 Objeto"];
   var TERMS = [["3 meses (129 600"+t(" bloques")+")",129600],["1 mes (43 200)",43200],["1 semana (10 080)",10080],["1 día (1 440)",1440],["100"+t(" bloques")+" (prueba)",100]];
   function ramFmt(n){ n = Number(n)||0; return (n/1e8).toLocaleString("es-ES",{maximumFractionDigits:8}); }
+  function ramShort(n){ n = Number(n)||0; return (n/1e8).toLocaleString("es-ES",{maximumFractionDigits:(n >= 1e8 ? 2 : 4)}); }
   function shortAddr(h){ return h ? h.slice(0,8)+"…"+h.slice(-6) : "—"; }
+  function dhms(sec){ sec = Math.max(0, sec|0); var d = Math.floor(sec/86400), h = Math.floor(sec%86400/3600), m = Math.floor(sec%3600/60); return (d ? d+" d " : "") + h+" h "+m+" min"; }
+  function renderLegend(){
+    var el = document.getElementById("cityLegend"), h = "", k;
+    var present = {}; (city.data && city.data.parcels || []).forEach(function(p){ present[p.kind] = (present[p.kind]||0)+1; });
+    for(k=0;k<SECTOR_NAMES.length;k++){ if(!present[k] && k>3) continue; h += '<span style="--c:'+sectorColor(k)+'">'+esc(sectorName(k))+(present[k] ? ' ('+present[k]+')' : '')+'</span>'; }
+    el.innerHTML = h;
+  }
   function loadCity(){
     fetch("/api/city", {headers:hdrs()}).then(function(r){ return r.text(); }).then(function(txtBody){
-      if(txtBody === city.lastTxt) return;           // nada cambió: no se repinta nada
+      if(txtBody === city.lastTxt) return;
       city.lastTxt = txtBody;
       var d = null; try{ d = JSON.parse(txtBody); }catch(e){}
       if(!d || !d.ok){ document.getElementById("cityStatus").textContent = (d && d.error) || t("sin datos"); return; }
       city.data = d; buildCityIndex(d);
       if(c3d.handle) c3d.handle.setCity(city.view);
-      document.getElementById("cityParcelPrice").textContent = ramFmt(d.parcel_price);
-      document.getElementById("cityMintPrice").textContent = ramFmt(d.mint_price);
-      document.getElementById("cityStats").textContent = d.parcels.length+" parcelas ocupadas · "+d.assets.length+" activos · altura "+fmtNum(d.height);
+      var cd = document.getElementById("cityCountdown");
+      if(!d.dubai){
+        cd.style.display = "";
+        cd.innerHTML = "⏳ <b>"+t("Dubái aún no rige en esta cadena.")+"</b> "+(d.dubai_desde ? t("Se activa el ")+new Date(d.dubai_desde*1000).toLocaleString()+" · "+t("faltan")+" "+dhms(d.dubai_faltan_segundos)+". " : t("Esta red no tiene fecha de activación (regtest sin --dubai-desde). "))+
+          t("Hasta entonces sigue la ciudad de fase 0: 32×32 parcelas, 4 tipos, sin mercado.");
+      } else cd.style.display = "none";
+      document.getElementById("cityStats").textContent = d.parcels.length+" "+t("empresas")+" · "+d.assets.length+" "+t("activos")+(d.dubai ? " · "+t("fondo")+" "+ramShort(d.fund)+" RAMI · "+t("reparte")+" "+ramShort(d.pago_bloque)+"/"+t("bloque") : "")+" · "+t("altura")+" "+fmtNum(d.height);
+      renderLegend();
       drawCity(); renderCityPanel();
     }).catch(function(){ document.getElementById("cityStatus").textContent = t("sin conexión con el nodo"); });
   }
   function parcelAt(x,y){ return city.pIdx[x+","+y] || null; }
   function assetsAt(x,y){ return city.aIdx[x+","+y] || []; }
-  // Proyección isométrica: (x,y) de la cuadrícula -> píxeles.
-  var ISO = { w:28, h:14 };
-  function isoOrigin(cv){ var n = city.data ? city.data.size : 32; return { ox: cv.width/2, oy: (cv.height - n*ISO.h)/2 + 8 }; }
+  // Proyección isométrica 2D: (x,y) de la cuadrícula -> píxeles.
+  function isoDims(){ var n = gridN(), w = Math.max(6, Math.floor(920/n)); w -= w % 2; return { w:w, h:w/2 }; }
+  function isoOrigin(cv){ var n = gridN(), I = isoDims(); return { ox: cv.width/2, oy: (cv.height - n*I.h)/2 + 8 }; }
   function drawCity(){
     var cv = document.getElementById("cityCanvas"), d = city.data; if(!d) return;
-    if(cv.classList.contains("hidden")) return;       // vista 3D activa: el canvas 2D no se dibuja
+    if(cv.classList.contains("hidden")) return;
     var ctx = cv.getContext("2d");
     ctx.clearRect(0,0,cv.width,cv.height);
-    var n = d.size, o = isoOrigin(cv), me = d.me;
+    var n = gridN(), o = isoOrigin(cv), me = d.me, I = isoDims();
     for(var y=0;y<n;y++) for(var x=0;x<n;x++){
-      var px = o.ox + (x - y)*ISO.w/2, py = o.oy + (x + y)*ISO.h/2;
-      var p = parcelAt(x,y);
-      var fill = p ? KIND_COLORS[p.kind] || "#4f8cff" : "#1d2a3a";
+      var px = o.ox + (x - y)*I.w/2, py = o.oy + (x + y)*I.h/2;
+      var p = parcelAt(x,y), mar = (63*y + 3*x) < 819;
+      var fill = p ? sectorColor(p.kind) : (mar ? "#132433" : "#2a2418");
       if(p && p.pending) ctx.globalAlpha = .45;
-      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px+ISO.w/2, py+ISO.h/2); ctx.lineTo(px, py+ISO.h); ctx.lineTo(px-ISO.w/2, py+ISO.h/2); ctx.closePath();
+      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px+I.w/2, py+I.h/2); ctx.lineTo(px, py+I.h); ctx.lineTo(px-I.w/2, py+I.h/2); ctx.closePath();
       ctx.fillStyle = fill; ctx.fill();
       var isSel = city.sel && city.sel.x===x && city.sel.y===y;
       ctx.lineWidth = isSel ? 2 : 1;
-      ctx.strokeStyle = isSel ? "#ffffff" : (p && me && p.owner===me) ? "#7ef0c0" : "rgba(255,255,255,.08)";
+      ctx.strokeStyle = isSel ? "#ffffff" : (p && me && p.owner===me) ? "#7ef0c0" : (p && p.sale ? "#ffd166" : "rgba(255,255,255,.06)");
       ctx.stroke();
       ctx.globalAlpha = 1;
-      if(p){ // "edificio": una caja sencilla sobre la parcela
-        var hgt = 6 + Math.min(14, p.assets*2);
+      if(p){
+        var hgt = 4 + Math.min(10, p.assets*2);
         ctx.fillStyle = fill; ctx.globalAlpha = .85;
-        ctx.fillRect(px-6, py+ISO.h/2-hgt-2, 12, hgt); ctx.globalAlpha = 1;
-        ctx.fillStyle = "rgba(0,0,0,.25)"; ctx.fillRect(px-6, py+ISO.h/2-2, 12, 2);
-        if(p.kind===1 && p.assets>0){ ctx.fillStyle="#9dff9d"; for(var k=0;k<Math.min(p.assets,4);k++){ ctx.fillRect(px-8+k*4, py+ISO.h/2-hgt-5, 2, 3); } }
+        ctx.fillRect(px-3, py+I.h/2-hgt-1, 6, hgt); ctx.globalAlpha = 1;
       }
     }
   }
   document.getElementById("cityCanvas").addEventListener("click", function(ev){
     var cv = this, d = city.data; if(!d) return;
     var r = cv.getBoundingClientRect(), sx = cv.width / r.width, sy = cv.height / r.height;
-    var mx = (ev.clientX - r.left)*sx, my = (ev.clientY - r.top)*sy, o = isoOrigin(cv);
-    // inversa de la proyección: x-y = 2(mx-ox)/w ; x+y = 2(my-oy)/h
-    var a = 2*(mx - o.ox)/ISO.w, b = 2*(my - o.oy)/ISO.h;
+    var mx = (ev.clientX - r.left)*sx, my = (ev.clientY - r.top)*sy, o = isoOrigin(cv), I = isoDims(), n = gridN();
+    var a = 2*(mx - o.ox)/I.w, b = 2*(my - o.oy)/I.h;
     var x = Math.floor((a + b)/2), y = Math.floor((b - a)/2);
-    if(x<0||y<0||x>=d.size||y>=d.size){ city.sel=null; } else { city.sel={x:x,y:y}; }
+    if(x<0||y<0||x>=n||y>=n){ city.sel=null; } else { city.sel={x:x,y:y}; }
     drawCity(); renderCityPanel();
     if(c3d.handle) c3d.handle.select(city.sel ? city.sel.x : null, city.sel ? city.sel.y : null);
   });
   function cityForm(html){ return '<div class="card" style="margin-top:10px;padding:12px">'+html+'</div>'; }
+  function sectorSelect(cur, dubai){
+    var max = dubai ? SECTOR_NAMES.length : 4, h = '<select id="cyKind">', i;
+    for(i=0;i<max;i++) h += '<option value="'+i+'"'+(i===cur?" selected":"")+'>'+esc(sectorName(i))+'</option>';
+    return h+'</select>';
+  }
   function renderCityPanel(){
     var info = document.getElementById("cityInfo"), acts = document.getElementById("cityActions"), d = city.data;
-    if(!d || !city.sel){ info.textContent = t("Haz clic en una parcela de la ciudad."); acts.innerHTML=""; return; }
-    var x=city.sel.x, y=city.sel.y, p=parcelAt(x,y), me=d.me, mine = !!(p && me && p.owner===me), h="";
-    var assets = assetsAt(x,y), ll = parcelToLatLon(x,y), pend = city.pendIdx[x+","+y] || [];
+    if(!d || !city.sel){ info.textContent = t("Haz clic en una parcela de la ciudad."); acts.innerHTML=""; document.getElementById("cityMentor").innerHTML=""; return; }
+    var x=city.sel.x, y=city.sel.y, p=parcelAt(x,y), me=d.me, mine = !!(p && me && p.owner===me), h="", dubai = !!d.dubai;
+    var assets = assetsAt(x,y), ll = parcelToLatLon(x,y), pend = city.pendIdx[x+","+y] || [], dist = districtOf(x,y);
     var pendMints = pend.filter(function(o){ return o.op === "mint"; }).length;
-    var geoLine = '<div class="note" style="margin:6px 0 0">📍 '+ll.lat.toFixed(4)+', '+ll.lon.toFixed(4)+
-      ' · <a href="https://www.openstreetmap.org/?mlat='+ll.lat.toFixed(5)+'&mlon='+ll.lon.toFixed(5)+'#map=13/'+ll.lat.toFixed(4)+'/'+ll.lon.toFixed(4)+'" target="_blank" rel="noopener">'+t("Ver en OpenStreetMap")+'</a></div>';
+    var price = dist ? dist.precio : d.parcel_price;
+    if(!dubai) price = d.parcel_price;
+    var geoLine = '<div class="note" style="margin:6px 0 0">📍 '+(dist ? '<b>'+esc(dist.nombre)+'</b> · ' : '')+ll.lat.toFixed(4)+', '+ll.lon.toFixed(4)+
+      ' · <a href="https://www.openstreetmap.org/?mlat='+ll.lat.toFixed(5)+'&mlon='+ll.lon.toFixed(5)+'#map=14/'+ll.lat.toFixed(4)+'/'+ll.lon.toFixed(4)+'" target="_blank" rel="noopener">'+t("Ver en OpenStreetMap")+'</a></div>';
     h += geoLine;
     if(p && p.pending){
-      info.innerHTML = "<b>"+esc(p.name)+"</b> · "+t(KIND_NAMES[p.kind])+" · "+t("parcela")+" ("+x+","+y+")<br>"+
+      info.innerHTML = "<b>"+esc(p.name)+"</b> · "+sectorName(p.kind)+" · "+t("parcela")+" ("+x+","+y+")<br>"+
         "<span style='color:var(--muted)'>⏳ "+t("Pendiente de confirmar: se aplica al minarse el próximo bloque.")+"</span>";
-      acts.innerHTML = h; return;
+      acts.innerHTML = h; loadMentor(x, y); return;
     }
     if(!p){
-      info.innerHTML = "<b>"+t("Parcela")+" ("+x+","+y+")</b> · <span style='color:var(--muted)'>"+t("libre")+"</span>";
+      info.innerHTML = "<b>"+t("Parcela")+" ("+x+","+y+")</b> · <span style='color:var(--muted)'>"+t("libre")+"</span>"+(dist ? " · "+t("precio del distrito")+" <b>"+ramShort(price)+" RAMI</b>" : "");
       h += cityForm('<strong>'+t("Montar mi empresa aquí")+'</strong>'+
         '<label class="field" style="margin-top:10px"><span class="cap">'+t("Nombre (máx. 32 bytes)")+'</span><input id="cyName" placeholder="'+t("Mi empresa S.L.")+'"></label>'+
-        '<label class="field"><span class="cap">Tipo</span><select id="cyKind">'+KIND_NAMES.map(function(k,i){return '<option value="'+i+'">'+t(k)+'</option>';}).join("")+'</select></label>'+
-        '<button class="btn" id="cyClaim">'+t("Reclamar por ")+ramFmt(d.parcel_price)+' RAMI</button>'+
+        '<label class="field"><span class="cap">'+t("Sector")+'</span>'+sectorSelect(0, dubai)+'</label>'+
+        '<button class="btn" id="cyClaim">'+t("Reclamar por ")+ramShort(price)+' RAMI</button>'+
         '<p class="note">'+t("El precio se quema (no lo cobra nadie). Necesitas el monedero desbloqueado.")+'</p>');
     } else {
-      info.innerHTML = "<b>"+esc(p.name)+"</b> · "+t(KIND_NAMES[p.kind])+" · "+t("parcela")+" ("+x+","+y+")<br>"+
+      var cuentas = dubai ? "<br><span style='color:var(--muted)'>"+t("cobrado del fondo")+" <b>"+ramShort(p.ingresos)+"</b> RAMI · "+t("último bloque")+" "+ramShort(p.ultimo_ingreso)+" ("+fmtNum(p.ultimo_bloque)+") · "+t("cobrado como proveedor")+" "+ramShort(p.ventas)+" · "+t("pagado a proveedores")+" "+ramShort(p.insumos_pagados)+" · "+t("importado (quemado)")+" "+ramShort(p.importado)+"</span>" : "";
+      info.innerHTML = "<b>"+esc(p.name)+"</b> · "+sectorName(p.kind)+" · "+t("parcela")+" ("+x+","+y+")<br>"+
         "<span style='color:var(--muted)'>"+t("dueño ")+(mine?"<b style='color:var(--accent)'>"+t("tú")+"</b>":esc(shortAddr(p.owner)))+
         t(" · desde bloque ")+fmtNum(p.since)+" · "+p.assets+t(" activo(s) · ")+p.harvests+t(" cosecha(s)")+
-        (p.last_harvest? t(" · última: ")+ramFmt(p.last_harvest[1])+t(" RAMI en bloque ")+fmtNum(p.last_harvest[0]) : "")+"</span>";
+        (p.last_harvest? t(" · última: ")+ramFmt(p.last_harvest[1])+t(" RAMI en bloque ")+fmtNum(p.last_harvest[0]) : "")+"</span>"+cuentas+
+        (p.sale ? "<br>💰 <b>"+t("En venta por")+" "+ramShort(p.sale)+" RAMI</b>" : "");
       if(pendMints) h += '<div class="note" style="margin-top:6px">⏳ '+pendMints+t(" activo(s) pendiente(s)")+'</div>';
       if(p.pendingRename) h += '<div class="note" style="margin-top:6px">⏳ '+t("Pendiente de confirmar: se aplica al minarse el próximo bloque.")+'</div>';
+      if(!mine && p.sale && dubai){
+        h += cityForm('<strong>'+t("Comprar esta empresa")+'</strong><p class="note" style="margin-top:6px">'+t("Pagas el precio al dueño y la parcela pasa a ser tuya en la misma transacción. Los activos de otras personas en la parcela siguen siendo suyos.")+'</p>'+
+          '<button class="btn" id="cyBuy">'+t("Comprar por ")+ramShort(p.sale)+' RAMI</button>');
+      }
       if(mine){
+        if(dubai){
+          h += cityForm('<strong>'+t("Vender la empresa")+'</strong>'+
+            '<label class="field" style="margin-top:10px"><span class="cap">'+t("Precio (RAMI)")+'</span><input id="cySalePrice" placeholder="'+ramShort(price*2)+'" inputmode="decimal" value="'+(p.sale ? ramFmt(p.sale) : "")+'"></label>'+
+            '<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn" id="cySell">'+t("Publicar venta")+'</button>'+(p.sale ? '<button class="btn ghost" id="cyUnsell">'+t("Retirar de la venta")+'</button>' : '')+'</div>'+
+            '<p class="note">'+t("Quien compre paga el precio a tu dirección; la operación queda en la cadena y alimenta la cotización.")+'</p>');
+        }
+        var kinds = ASSET_NAMES.slice(0, dubai ? 4 : 2), akSel = '<select id="cyAKind">'+kinds.map(function(k,i){ if(i===2 && p.kind!==SECTOR_CONCESIONARIO) return ""; return '<option value="'+i+'">'+t(k)+'</option>'; }).join("")+'</select>';
+        var mintNote = dubai ? t("Precio quemado: planta u objeto 1 RAMI, vehículo 5 RAMI (solo concesionarios), local 20 RAMI.") : t("Precio quemado: 1 RAMI.");
         h += cityForm('<strong>'+t("Acuñar activo")+'</strong>'+
-          '<label class="field" style="margin-top:10px"><span class="cap">Tipo</span><select id="cyAKind">'+ASSET_NAMES.map(function(k,i){return '<option value="'+i+'">'+t(k)+'</option>';}).join("")+'</select></label>'+
+          '<label class="field" style="margin-top:10px"><span class="cap">Tipo</span>'+akSel+'</label>'+
           '<label class="field"><span class="cap">'+t("Descripción (máx. 64 bytes)")+'</span><input id="cyMeta" placeholder="'+t("Planta #1 · lote primavera")+'"></label>'+
-          '<button class="btn" id="cyMint">'+t("Acuñar por ")+ramFmt(d.mint_price)+' RAMI</button>');
-        h += cityForm('<strong>'+t("Repartir cosecha")+'</strong>'+
-          '<label class="field" style="margin-top:10px"><span class="cap">'+t("Total a repartir (RAMI, de tu saldo)")+'</span><input id="cyTotal" placeholder="9" inputmode="decimal"></label>'+
-          '<button class="btn ghost" id="cyHarvest">'+t("Repartir entre los arrendatarios activos")+'</button>'+
-          '<p class="note">'+t("A partes iguales entre quienes tengan una planta de esta parcela alquilada ahora mismo.")+'</p>');
-        h += cityForm('<strong>'+t("Renombrar / cambiar tipo")+'</strong>'+
+          '<button class="btn" id="cyMint">'+t("Acuñar")+'</button><p class="note">'+mintNote+'</p>');
+        if(p.kind===SECTOR_GRANJA){
+          h += cityForm('<strong>'+t("Repartir cosecha")+'</strong>'+
+            '<label class="field" style="margin-top:10px"><span class="cap">'+t("Total a repartir (RAMI, de tu saldo)")+'</span><input id="cyTotal" placeholder="9" inputmode="decimal"></label>'+
+            '<button class="btn ghost" id="cyHarvest">'+t("Repartir entre los arrendatarios activos")+'</button>'+
+            '<p class="note">'+t("A partes iguales entre quienes tengan una planta de esta parcela alquilada ahora mismo.")+'</p>');
+        }
+        h += cityForm('<strong>'+t("Renombrar / cambiar de sector")+'</strong>'+
           '<label class="field" style="margin-top:10px"><span class="cap">'+t("Nombre")+'</span><input id="cyName" value="'+esc(p.name)+'"></label>'+
-          '<label class="field"><span class="cap">Tipo</span><select id="cyKind">'+KIND_NAMES.map(function(k,i){return '<option value="'+i+'"'+(i===p.kind?" selected":"")+'>'+t(k)+'</option>';}).join("")+'</select></label>'+
+          '<label class="field"><span class="cap">'+t("Sector")+'</span>'+sectorSelect(p.kind, dubai)+'</label>'+
           '<button class="btn ghost" id="cyClaim">'+t("Guardar (solo comisión)")+'</button>');
       }
     }
@@ -1992,51 +2135,240 @@
         var amine = me && a.owner===me, active = a.lease && a.lease.active, tenantMe = active && a.lease.tenant===me;
         var st = active ? (t("alquilada por ")+(tenantMe?"<b>"+t("ti")+"</b>":esc(shortAddr(a.lease.tenant)))+t(" hasta el bloque ")+fmtNum(a.lease.until))
                : (a.offer ? (t("en alquiler: ")+ramFmt(a.offer.price)+t(" RAMI por ")+fmtNum(a.offer.term)+t(" bloques")) : t("sin alquilar"));
-        var row = '<div class="assetrow"><div>'+t(ASSET_NAMES[a.kind])+' '+esc(a.meta||"")+' <span style="color:var(--muted)">'+t("· dueño ")+(amine?t("tú"):esc(shortAddr(a.owner)))+'</span></div>'+
+        if(a.sale) st += " · 💰 "+t("en venta por")+" "+ramShort(a.sale)+" RAMI";
+        var row = '<div class="assetrow"><div>'+t(ASSET_NAMES[a.kind] || ASSET_NAMES[1])+' '+esc(a.meta||"")+' <span style="color:var(--muted)">'+t("· dueño ")+(amine?t("tú"):esc(shortAddr(a.owner)))+'</span></div>'+
                   '<div class="id">'+a.id+'</div><div style="color:var(--muted)">'+st+'</div>';
         if(amine && !active){
           row += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">'+
             '<input class="cyPrice" data-id="'+a.id+'" placeholder="'+t("precio RAMI")+'" inputmode="decimal" style="width:110px">'+
             '<select class="cyTerm" data-id="'+a.id+'">'+TERMS.map(function(tm){return '<option value="'+tm[1]+'">'+t(tm[0])+'</option>';}).join("")+'</select>'+
             '<button class="btn small cyList" data-id="'+a.id+'">'+t("Publicar alquiler")+'</button>'+
+            (dubai ? '<button class="btn small cySellA" data-id="'+a.id+'">'+t("Vender por ese precio")+'</button>'+(a.sale ? '<button class="btn small ghost cyUnsellA" data-id="'+a.id+'">'+t("Retirar venta")+'</button>' : '') : '')+
             '<input class="cyTo" data-id="'+a.id+'" placeholder="'+t("transferir a (dirección hex)")+'" style="min-width:200px">'+
             '<button class="btn small ghost cyXfer" data-id="'+a.id+'">'+t("Transferir")+'</button></div>';
-        } else if(!amine && a.offer && !active){
-          row += '<div style="margin-top:6px"><button class="btn small cyRent" data-id="'+a.id+'">'+t("Alquilar por ")+ramFmt(a.offer.price)+' RAMI</button></div>';
+        } else if(!amine && !active){
+          row += '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">'+(a.offer ? '<button class="btn small cyRent" data-id="'+a.id+'">'+t("Alquilar por ")+ramFmt(a.offer.price)+' RAMI</button>' : '')+
+            (a.sale && dubai ? '<button class="btn small cyBuyA" data-id="'+a.id+'" data-price="'+a.sale+'">'+t("Comprar por ")+ramShort(a.sale)+' RAMI</button>' : '')+'</div>';
         }
         h += row+'</div>';
       });
     }
     acts.innerHTML = h;
+    loadMentor(x, y);
+  }
+  // ---- El mentor: una regla pública que explica y estima con el estado actual ----
+  function loadMentor(x, y){
+    var key = x+","+y+"@"+(city.data ? city.data.height : 0)+":"+(city.data ? city.data.parcels.length : 0);
+    if(city.mentorKey === key && city.mentor){ renderMentor(); return; }
+    if(city.mentorBusy) return;
+    city.mentorBusy = true;
+    fetch("/api/city/mentor?x="+x+"&y="+y, {headers:hdrs()}).then(function(r){ return r.json(); }).then(function(m){
+      city.mentorBusy = false;
+      if(!m || !m.ok) return;
+      city.mentor = m; city.mentorKey = key; renderMentor();
+    }).catch(function(){ city.mentorBusy = false; });
+  }
+  var LESSONS = [
+    ["1 · El capital de entrada", "Una parcela libre cuesta lo que marca su distrito y ese RAMI se quema: nadie lo cobra. Elige el distrito según lo que tienes; el desierto y el mar son baratos, Palm y Downtown caros."],
+    ["2 · La demanda: dónde y qué", "Tu ingreso depende de tres factores que se multiplican: la demanda del sector, la actividad del distrito y la afinidad entre ambos (el oro en Deira, los bancos en DIFC, el puerto en Jebel Ali)."],
+    ["3 · Los insumos", "Cada empresa necesita a otras. El 40 % de lo que cobras va a tus proveedores más cercanos; lo que nadie ofrece en la ciudad se importa y se quema. Cuantos más insumos existan, más pesas en el reparto."],
+    ["4 · Sé el proveedor", "Mira los huecos: lo que la ciudad importa lo cobra quien lo monte. Un proveedor gana con la demanda propia y con las ventas a las empresas que hoy importan."],
+    ["5 · Flujo de caja", "El fondo reparte cada bloque (~60 s): multiplica el ingreso por bloque por 1440 para ver un día. La recuperación es el capital dividido por el ingreso total por bloque, con la ciudad tal como está hoy."],
+    ["6 · Competencia", "Dos empresas del mismo sector en la misma zona se reparten el mismo peso. Antes de copiar a un vecino, mira cuántas hay ya y qué falta."],
+    ["7 · Comprar y vender", "Parcelas y activos se venden en RAMI en una sola transacción: el comprador fija un precio máximo y el pago y el cambio de dueño ocurren juntos. Cada operación queda en la cadena y alimenta la cotización."],
+    ["8 · Lo que no es", "Testnet sin valor monetario. El reparto cambia con cada bloque y con cada empresa nueva: las cifras del mentor describen el ahora, no prometen nada."]
+  ];
+  function evalLine(e){
+    var total = (e.ingreso_por_bloque||0) + (e.ventas_por_bloque||0);
+    return '<div class="mentor-op"><div><span class="dot" style="--c:'+sectorColor(e.sector)+'"></span><b>'+esc(sectorName(e.sector))+'</b> · '+ramShort(total)+' RAMI/'+t("bloque")+' <span class="muted">('+ramShort(total*1440)+'/'+t("día")+')</span></div>'+
+      '<div class="muted">'+t("del fondo")+' '+ramShort(e.ingreso_por_bloque)+' · '+t("ventas a quien importa")+' '+ramShort(e.ventas_por_bloque)+' · '+t("insumos")+' '+e.insumos_cubiertos.length+'/'+(e.insumos_cubiertos.length+e.insumos_faltantes.length)+
+      (e.insumos_faltantes.length ? ' ('+t("faltan")+': '+e.insumos_faltantes.map(sectorName).join(", ")+')' : '')+' · '+t("competidores")+' '+e.competidores+' · '+t("afinidad")+' ×'+(e.afinidad_permil/1000).toFixed(1)+
+      (e.capex ? ' · '+t("entrada")+' '+ramShort(e.capex)+' RAMI'+(e.bloques_recuperacion ? ' → '+t("recuperación")+' '+fmtNum(e.bloques_recuperacion)+' '+t("bloques")+' (~'+(e.bloques_recuperacion/1440).toFixed(1)+' '+t("días")+')' : '') : '')+'</div></div>';
+  }
+  function renderMentor(){
+    var m = city.mentor, el = document.getElementById("cityMentor"); if(!m){ el.innerHTML = ""; return; }
+    var h = '<div class="card mentor" style="margin-top:10px;padding:12px"><strong>🤖 '+t("Mentor de negocios")+'</strong> <span class="muted">— '+t("una regla pública, no una persona")+'</span>';
+    if(!m.dubai){ h += '<p class="note">'+t("El mentor se activa con Dubái. Hasta entonces, la ciudad de fase 0 no reparte ingresos.")+'</p></div>'; el.innerHTML = h; return; }
+    if(m.de_otro) h += '<p class="note">'+t("Esta parcela es de otra persona. Las estimaciones son para una parcela libre o tuya.")+'</p>';
+    else {
+      var ops = (m.oportunidades||[]).slice(0,5);
+      h += '<p class="note" style="margin-top:6px">'+t("Con la ciudad tal como está en el bloque")+' '+fmtNum(city.data.height)+' ('+m.empresas+' '+t("empresas")+', '+t("el fondo reparte")+' '+ramShort(m.pago_referencia)+' RAMI/'+t("bloque")+'), '+t("los sectores con más ingreso estimado aquí son:")+'</p>';
+      ops.forEach(function(e){ h += evalLine(e); });
+      if(m.oportunidades && m.oportunidades.length > 5) h += '<details style="margin-top:6px"><summary class="muted">'+t("Ver los")+' '+m.oportunidades.length+' '+t("sectores")+'</summary>'+m.oportunidades.slice(5).map(evalLine).join("")+'</details>';
+    }
+    if(m.huecos && m.huecos.length){
+      h += '<div style="margin-top:10px"><b>'+t("Lo que la ciudad importa (nadie lo ofrece):")+'</b> '+m.huecos.slice(0,8).map(function(hu){ return '<span class="pill" style="--c:'+sectorColor(hu[0])+'">'+esc(sectorName(hu[0]))+' · '+hu[1]+'</span>'; }).join(" ")+'</div>';
+    } else h += '<div class="note" style="margin-top:8px">'+t("Hoy ninguna empresa importa nada: todos los insumos que se necesitan existen en la ciudad.")+'</div>';
+    h += '<div style="margin-top:10px;display:flex;gap:6px"><input id="cyAsk" placeholder="'+t("Pregunta al mentor: ¿qué monto?, ¿cuánto gano con un hotel?, ¿qué falta?")+'" style="flex:1" autocomplete="off"><button class="btn small" id="cyAskBtn">'+t("Preguntar")+'</button></div>';
+    h += '<div id="cyAnswer" class="note" style="margin-top:6px"></div>';
+    h += '<details style="margin-top:8px"><summary>📚 '+t("Escuela de negocios: 8 lecciones cortas")+'</summary>'+LESSONS.map(function(l){ return '<div class="lesson"><b>'+t(l[0])+'</b><br>'+t(l[1])+'</div>'; }).join("")+'</details>';
+    h += '</div>';
+    el.innerHTML = h;
+    var ask = document.getElementById("cyAsk");
+    document.getElementById("cyAskBtn").addEventListener("click", function(){ mentorAnswer(ask.value); });
+    ask.addEventListener("keydown", function(e){ if(e.key==="Enter") mentorAnswer(ask.value); });
+  }
+  function findSectorIn(q){
+    var best = -1, i;
+    for(i=0;i<SECTOR_NAMES.length;i++){
+      var name = SECTOR_NAMES[i].toLowerCase(), tr = sectorName(i).toLowerCase();
+      var words = name.replace(/\(.*\)/,"").split(/[\s·]+/).concat(tr.replace(/\(.*\)/,"").split(/[\s·]+/)).filter(function(w){ return w.length > 3; });
+      if(words.some(function(w){ return q.indexOf(w) >= 0; })) { best = i; break; }
+    }
+    return best;
+  }
+  function mentorAnswer(q){
+    var m = city.mentor, out = document.getElementById("cyAnswer"); if(!m) return;
+    q = String(q||"").toLowerCase().trim(); if(!q){ out.textContent = ""; return; }
+    var sec = findSectorIn(q), ev = null, i;
+    if(sec >= 0 && m.oportunidades) for(i=0;i<m.oportunidades.length;i++) if(m.oportunidades[i].sector===sec) ev = m.oportunidades[i];
+    var ans = "";
+    if(/falta|hueco|importa|necesita la ciudad|what.*missing|import/.test(q)){
+      ans = m.huecos && m.huecos.length ? t("La ciudad importa hoy:")+" "+m.huecos.slice(0,6).map(function(h){ return sectorName(h[0])+" ("+h[1]+" "+t("empresas lo necesitan")+")"; }).join("; ")+". "+t("Montar uno de esos sectores cobra ventas desde el primer bloque.") : t("Hoy ninguna empresa importa nada.");
+    } else if(ev && /insumo|necesita|proveedor|input|supplier/.test(q)){
+      ans = sectorName(sec)+" "+t("necesita")+": "+ev.insumos_cubiertos.concat(ev.insumos_faltantes).map(sectorName).join(", ")+". "+(ev.insumos_faltantes.length ? t("Hoy faltan en la ciudad")+": "+ev.insumos_faltantes.map(sectorName).join(", ")+" ("+t("esa parte del 40 % se importa y se quema")+")." : t("Todos existen ya en la ciudad."));
+    } else if(ev){
+      var total = ev.ingreso_por_bloque + ev.ventas_por_bloque;
+      ans = t("Con la ciudad tal como está hoy, un")+" "+sectorName(sec)+" "+t("en esta parcela cobra")+" "+ramShort(total)+" RAMI/"+t("bloque")+" ("+ramShort(total*1440)+" "+t("al día")+"): "+ramShort(ev.ingreso_por_bloque)+" "+t("del fondo")+" + "+ramShort(ev.ventas_por_bloque)+" "+t("como proveedor de")+" "+ev.clientes_sin_proveedor+" "+t("empresas que hoy importan")+". "+t("Entrada")+" "+ramShort(ev.capex)+" RAMI"+(ev.bloques_recuperacion ? " → "+t("recuperación en")+" "+fmtNum(ev.bloques_recuperacion)+" "+t("bloques")+" (~"+(ev.bloques_recuperacion/1440).toFixed(1)+" "+t("días")+")." : ".")+" "+t("Competidores")+": "+ev.competidores+". "+t("Las cifras cambian con cada bloque y con cada empresa nueva.");
+    } else if(/precio|cuesta|cost|price|vale/.test(q)){
+      ans = (m.distrito ? m.distrito.nombre+": " : "")+t("una parcela libre cuesta")+" "+ramShort(m.precio_parcela)+" RAMI ("+t("se quema")+"). "+t("Acuñar: planta u objeto 1, vehículo 5, local 20 RAMI.");
+    } else if(/vend|compr|sell|buy|mercado|market|cotiz/.test(q)){
+      ans = t("Puedes publicar tu parcela o tus activos en venta por un precio en RAMI; quien compra fija un máximo y el pago y el cambio de dueño van en la misma transacción. Cada operación queda apuntada en la cadena y aparece en la pestaña Mercado.");
+    } else if(/lecci|aprend|escuela|lesson|learn/.test(q)){
+      ans = t("Abre «Escuela de negocios» aquí debajo: ocho lecciones cortas, cada una con lo que puedes hacer hoy en la ciudad.");
+    } else if(/monto|monte|recomiend|empez|mejor|qué negocio|que negocio|start|recommend|best/.test(q) || m.oportunidades){
+      var ops = (m.oportunidades||[]).slice(0,3);
+      ans = ops.length ? t("Los tres sectores con más ingreso estimado en esta parcela hoy:")+" "+ops.map(function(e){ return sectorName(e.sector)+" ("+ramShort(e.ingreso_por_bloque+e.ventas_por_bloque)+" RAMI/"+t("bloque")+")"; }).join(", ")+". "+t("Pregunta por uno de ellos para ver el detalle.") : t("Selecciona una parcela libre o tuya.");
+    }
+    if(!ans) ans = t("Puedo responder a: qué monto aquí, cuánto gano con un sector, qué insumos necesita, qué falta en la ciudad, cuánto cuesta la parcela, cómo vender o comprar, y las lecciones.");
+    out.textContent = ans;
   }
   function cityAct(path, body, okMsg){
     var st = document.getElementById("cityStatus"); st.textContent = t("Enviando…");
     jpost(path, body).then(function(r){
       st.textContent = r.ok ? ("✓ "+okMsg+" (txid "+String(r.txid).slice(0,12)+"…"+t("). Se aplica al minarse el próximo bloque.")) : ("✗ "+(r.error||"error"));
       if(r.ok){
-        city.fastUntil = Date.now() + 180000;            // sondeo rápido 3 min
+        city.fastUntil = Date.now() + 180000;
         if(state.status && !state.status.mining && !(state.status.peers||[]).length)
           st.textContent += " " + t("Nadie está minando ahora: activa Minar para que se confirme.");
       }
-      setTimeout(loadCity, 600);
+      setTimeout(loadCity, 600); setTimeout(loadMarket, 800);
     }).catch(function(){ st.textContent = t("✗ sin conexión con el nodo"); });
   }
   document.getElementById("cityActions").addEventListener("click", function(e){
     var b = e.target.closest("button"); if(!b || !city.sel) return;
-    var x = city.sel.x, y = city.sel.y, id = b.getAttribute("data-id");
+    var x = city.sel.x, y = city.sel.y, id = b.getAttribute("data-id"), p = parcelAt(x,y);
     if(b.id==="cyClaim"){ cityAct("/api/city/claim", {x:x,y:y,name:document.getElementById("cyName").value.trim(),kind:Number(document.getElementById("cyKind").value)}, t("parcela reclamada")); }
     else if(b.id==="cyMint"){ cityAct("/api/city/mint", {x:x,y:y,kind:Number(document.getElementById("cyAKind").value),meta:document.getElementById("cyMeta").value.trim()}, t("activo acuñado")); }
     else if(b.id==="cyHarvest"){ if(confirm(t("Repartirás ese total de TU saldo entre los arrendatarios activos. ¿Continuar?"))) cityAct("/api/city/harvest", {x:x,y:y,total:document.getElementById("cyTotal").value.trim()}, t("cosecha repartida")); }
+    else if(b.id==="cySell"){ cityAct("/api/city/sell", {x:x,y:y,price:document.getElementById("cySalePrice").value.trim()}, t("venta publicada")); }
+    else if(b.id==="cyUnsell"){ cityAct("/api/city/sell", {x:x,y:y,price:"0"}, t("venta retirada")); }
+    else if(b.id==="cyBuy"){ if(p && p.sale && confirm(t("Pagarás")+" "+ramShort(p.sale)+" RAMI "+t("al dueño. ¿Continuar?"))) cityAct("/api/city/buy", {x:x,y:y,max_price:ramFmt(p.sale)}, t("compra enviada")); }
     else if(b.classList.contains("cyList")){ cityAct("/api/city/list", {asset:id, price:document.querySelector('.cyPrice[data-id="'+id+'"]').value.trim(), term:Number(document.querySelector('.cyTerm[data-id="'+id+'"]').value)}, t("alquiler publicado")); }
+    else if(b.classList.contains("cySellA")){ cityAct("/api/city/sell_asset", {asset:id, price:document.querySelector('.cyPrice[data-id="'+id+'"]').value.trim()}, t("venta publicada")); }
+    else if(b.classList.contains("cyUnsellA")){ cityAct("/api/city/sell_asset", {asset:id, price:"0"}, t("venta retirada")); }
+    else if(b.classList.contains("cyBuyA")){ var pr = Number(b.getAttribute("data-price")); if(confirm(t("Pagarás")+" "+ramShort(pr)+" RAMI "+t("al dueño. ¿Continuar?"))) cityAct("/api/city/buy_asset", {asset:id, max_price:ramFmt(pr)}, t("compra enviada")); }
     else if(b.classList.contains("cyRent")){ cityAct("/api/city/rent", {asset:id}, t("activo alquilado")); }
     else if(b.classList.contains("cyXfer")){ cityAct("/api/city/transfer", {asset:id, to:document.querySelector('.cyTo[data-id="'+id+'"]').value.trim()}, t("activo transferido")); }
   });
+  // ---- Presencia (avatar) y chat: efímeros, firmados por la identidad del nodo ----
+  function nick(){
+    var el = document.getElementById("cyNick"), v = el.value.trim();
+    if(!v){ try{ v = localStorage.getItem("rami.nick") || ""; }catch(e){} if(v) el.value = v; }
+    return v;
+  }
+  document.getElementById("cyNick").addEventListener("change", function(){ try{ localStorage.setItem("rami.nick", this.value.trim()); }catch(e){} });
+  function avatarIndex(){ var a = (state.status && state.status.wallet && state.status.wallet.address) || ""; var h = 0; for(var i=0;i<a.length;i++) h = (h*31 + a.charCodeAt(i)) >>> 0; return h % 8; }
+  function pushPresence(){
+    if(!c3d.handle || currentView!=="ciudad") return;
+    var pose = c3d.handle.myPose(); if(!pose) return;
+    jpost("/api/city/presence", {name:nick(), x:pose.x, y:pose.y, z:pose.z, yaw:pose.yaw, avatar:avatarIndex()}).catch(function(){});
+  }
+  function pullPresence(){
+    if(currentView!=="ciudad") return;
+    fetch("/api/city/presence", {headers:hdrs()}).then(function(r){ return r.json(); }).then(function(p){
+      if(!p || !p.ok) return;
+      city.presence = p;
+      document.getElementById("cityFp").textContent = p.fingerprint || "—";
+      if(c3d.handle) c3d.handle.setPresence(p.avatars || []);
+      var who = document.getElementById("cityWho"), av = p.avatars || [];
+      who.textContent = av.length ? t("Conectados ahora:")+" "+av.map(function(a){ return (a.name||t("visitante"))+" ("+a.fingerprint.slice(0,9)+")"; }).join(", ") : t("Nadie más ahora mismo.");
+      var log = document.getElementById("cityChat"), h = "";
+      (p.chat||[]).forEach(function(c){ h += '<div class="msg'+(c.me?' me':'')+'"><span class="who">'+esc(c.name||t("visitante"))+' <span class="fp">'+esc(c.fingerprint.slice(0,9))+'</span></span> '+esc(c.text)+'</div>'; });
+      if(log.innerHTML !== h){ log.innerHTML = h; log.scrollTop = log.scrollHeight; }
+    }).catch(function(){});
+  }
+  document.getElementById("cyChatSend").addEventListener("click", function(){
+    var el = document.getElementById("cyChatText"), text = el.value.trim(), st = document.getElementById("cityStatus");
+    if(!text) return;
+    jpost("/api/city/chat", {name:nick(), text:text}).then(function(r){ if(r.ok){ el.value = ""; pullPresence(); } else st.textContent = "✗ "+(r.error||"error"); }).catch(function(){ st.textContent = t("✗ sin conexión con el nodo"); });
+  });
+  document.getElementById("cyChatText").addEventListener("keydown", function(e){ if(e.key==="Enter") document.getElementById("cyChatSend").click(); });
   setInterval(function(){
     if(currentView!=="ciudad") return;
     var fast = city.fastUntil && Date.now() < city.fastUntil;
     city.tick = (city.tick||0) + 1;
-    if(fast || city.tick % 2 === 0) loadCity();      // 2,5 s tras una acción; 5 s en reposo
+    if(fast || city.tick % 2 === 0) loadCity();
+    pullPresence();
   }, 2500);
+  setInterval(pushPresence, 1000);
+
+  // ---------- Mercado / cotización ----------
+  var market = { data:null, lastTxt:"" };
+  function tickerLabel(id){
+    if(!id) return "";
+    var m = id.match(/^PARCELA-(.+)_RAMI$/), a = id.match(/^ACTIVO-(.+)_RAMI$/);
+    if(m){ var ds = city.data && city.data.districts, k = m[1].toLowerCase(), i; if(ds) for(i=0;i<ds.length;i++) if(ds[i].clave===k) return t("Parcela")+" · "+ds[i].nombre; return t("Parcela")+" · "+k; }
+    if(a){ var names = {PLANTA:ASSET_NAMES[0], OBJETO:ASSET_NAMES[1], VEHICULO:ASSET_NAMES[2], LOCAL:ASSET_NAMES[3]}; return t(names[a[1]] || a[1]); }
+    return id;
+  }
+  function loadMarket(){
+    fetch("/api/market", {headers:hdrs()}).then(function(r){ return r.text(); }).then(function(body){
+      if(body === market.lastTxt) return; market.lastTxt = body;
+      var d = null; try{ d = JSON.parse(body); }catch(e){}
+      if(!d || !d.ok) return;
+      market.data = d; renderMarket();
+    }).catch(function(){});
+  }
+  function tile(lbl, val, sub){ return '<div class="tile"><div class="lbl">'+lbl+'</div><div class="val">'+val+'</div>'+(sub ? '<div class="muted" style="font-size:12px">'+sub+'</div>' : '')+'</div>'; }
+  function renderMarket(){
+    var d = market.data, ix = d.index || {};
+    var h = tile(t("Fondo de la ciudad"), ramShort(ix.fondo)+" RAMI", t("reparte")+" "+ramShort(ix.pago_bloque)+" RAMI/"+t("bloque")+" · "+t("entra")+" "+ramShort(ix.parte_ciudad_bloque)+"/"+t("bloque"))+
+      tile(t("Quemado en total"), ramShort(ix.quemado)+" RAMI", t("parcelas, acuñados e importaciones"))+
+      tile(t("Empresas · activos"), (ix.empresas||0)+" · "+(ix.activos||0), t("en venta")+": "+(ix.parcelas_en_venta||0)+" "+t("parcelas")+", "+(ix.activos_en_venta||0)+" "+t("activos"))+
+      tile(t("Operaciones cerradas"), fmtNum(ix.operaciones||0), ix.precio_medio_parcela ? t("parcela media")+" "+ramShort(ix.precio_medio_parcela)+" RAMI · "+t("última")+" "+ramShort(ix.ultimo_precio_parcela)+" RAMI" : t("sin ventas de parcelas todavía"))+
+      tile(t("Lo que compra 1 RAMI"), fmtNum(ix.m2_por_rami_max||0)+" m² … "+fmtNum(ix.m2_por_rami_min||0)+" m²", t("de parcela libre, del distrito más barato al más caro")+" ("+fmtNum(ix.m2_por_celda||0)+" m²/"+t("celda")+")")+
+      tile(t("Reglas de Dubái"), d.dubai ? t("vigentes") : t("aún no"), t("altura")+" "+fmtNum(d.height)+" · "+d.network);
+    document.getElementById("mkTiles").innerHTML = h;
+    var tk = "";
+    (d.tickers||[]).forEach(function(x){
+      if(!x.last_price && !x.asks && !x.trades_1440) return;
+      tk += "<tr><td>"+esc(tickerLabel(x.ticker_id))+' <span class="muted mono" style="font-size:11px">'+esc(x.ticker_id)+"</span></td><td>"+ramShort(x.base_price)+"</td><td>"+(x.low_ask ? ramShort(x.low_ask) : "—")+"</td><td>"+(x.last_price ? ramShort(x.last_price)+' <span class="muted">#'+fmtNum(x.last_height)+'</span>' : "—")+"</td><td>"+(x.trades_1440||0)+"</td><td>"+ramShort(x.volume_1440)+"</td></tr>";
+    });
+    document.getElementById("mkTickers").innerHTML = tk || '<tr><td colspan="6" class="muted">'+t("Sin órdenes ni operaciones todavía. Los pares aparecen en cuanto alguien publica una venta o se cierra una compra.")+'</td></tr>';
+    var me = city.data && city.data.me, od = "";
+    (d.orders||[]).forEach(function(o){
+      var mine = me && o.owner===me;
+      var what = o.kind==="parcel" ? (esc(o.name||"")+" · "+sectorName(o.sector)) : (t(ASSET_NAMES[o.sector]||ASSET_NAMES[1])+" "+esc(o.name||""));
+      var where = t("parcela")+" ("+o.x+","+o.y+")";
+      var btn = mine ? '<span class="muted">'+t("tuya")+'</span>' : '<button class="btn small mkBuy" data-kind="'+o.kind+'" data-x="'+o.x+'" data-y="'+o.y+'" data-asset="'+esc(o.asset)+'" data-price="'+o.price+'">'+t("Comprar")+'</button>';
+      od += "<tr><td>"+what+"</td><td>"+where+"</td><td>"+esc(shortAddr(o.owner))+"</td><td>"+ramShort(o.price)+" RAMI</td><td>"+btn+"</td></tr>";
+    });
+    document.getElementById("mkOrders").innerHTML = od || '<tr><td colspan="5" class="muted">'+t("No hay órdenes de venta abiertas.")+'</td></tr>';
+    var tr = "";
+    (d.trades||[]).slice().reverse().forEach(function(x){ tr += "<tr><td>"+fmtNum(x.height)+"</td><td>"+esc(tickerLabel(x.ticker_id))+"</td><td>("+x.x+","+x.y+")</td><td>"+ramShort(x.price)+" RAMI</td></tr>"; });
+    document.getElementById("mkTrades").innerHTML = tr || '<tr><td colspan="4" class="muted">'+t("Ninguna operación cerrada todavía.")+'</td></tr>';
+  }
+  document.getElementById("mkOrders").addEventListener("click", function(e){
+    var b = e.target.closest("button.mkBuy"); if(!b) return;
+    var pr = Number(b.getAttribute("data-price")), st = document.getElementById("mkStatus");
+    if(!confirm(t("Pagarás")+" "+ramShort(pr)+" RAMI "+t("al dueño. ¿Continuar?"))) return;
+    var body = b.getAttribute("data-kind")==="parcel" ? {x:Number(b.getAttribute("data-x")), y:Number(b.getAttribute("data-y")), max_price:ramFmt(pr)} : {asset:b.getAttribute("data-asset"), max_price:ramFmt(pr)};
+    var path = b.getAttribute("data-kind")==="parcel" ? "/api/city/buy" : "/api/city/buy_asset";
+    st.textContent = t("Enviando…");
+    jpost(path, body).then(function(r){ st.textContent = r.ok ? "✓ "+t("compra enviada")+" (txid "+String(r.txid).slice(0,12)+"…)" : "✗ "+(r.error||"error"); setTimeout(loadMarket, 800); setTimeout(loadCity, 800); }).catch(function(){ st.textContent = t("✗ sin conexión con el nodo"); });
+  });
+  setInterval(function(){ if(currentView==="mercado") loadMarket(); }, 5000);
 
   // ---------- actualización: aviso automático + sección «Actualizar» ----------
   // El backend (nodo) comprueba el Release oficial, descarga el instalador y

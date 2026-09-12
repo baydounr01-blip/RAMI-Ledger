@@ -116,7 +116,7 @@ fn sin_fecha_todo_sigue_como_en_v0_7() {
     let genesis = make_genesis(false, p, miner);
     let mut tree = BlockTree::new(genesis, p).unwrap();
     let firma = tree.firma_ctx(now_secs());
-    assert_eq!(firma, FirmaCtx { regla: Regla::V1, net: tree.genesis });
+    assert_eq!(firma, FirmaCtx { regla: Regla::V1, net: tree.genesis, dubai: false });
     let tx = build_transfer(&firma, &kp, [6u8; 32], 2, 1, 0);
     // La misma firma que produciría la v0.7.x (verify_tx = regla v1).
     assert!(rami_core::tx::verify_tx(&tx).is_ok());

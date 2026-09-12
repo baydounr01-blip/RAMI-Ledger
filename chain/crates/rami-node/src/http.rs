@@ -257,6 +257,12 @@ fn reason(status: u16) -> &'static str {
     }
 }
 
+/// El proceso sirve una API PÚBLICA de solo lectura (`rami-node market`): las
+/// respuestas llevan `Access-Control-Allow-Origin: *` para que una web (la de
+/// cotización) las lea desde el navegador. El panel local NUNCA lo activa: su
+/// defensa es justo lo contrario (Host exacto, Origin, token).
+static PUBLIC_CORS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Sirve para siempre. `handler` se comparte entre hilos.
 pub fn serve<F>(listener: TcpListener, handler: F)
 where
@@ -269,6 +275,16 @@ where
             let _ = handle_conn(stream, h);
         });
     }
+}
+
+/// Como `serve`, para una API pública de solo lectura: añade CORS abierto a
+/// TODAS las respuestas de este proceso. Solo lo usa `rami-node market`.
+pub fn serve_public<F>(listener: TcpListener, handler: F)
+where
+    F: Fn(Request) -> Response + Send + Sync + 'static,
+{
+    PUBLIC_CORS.store(true, std::sync::atomic::Ordering::Relaxed);
+    serve(listener, handler)
 }
 
 /// Lee una línea de como mucho `MAX_LINE` bytes; más largo = petición
@@ -365,8 +381,9 @@ fn write_simple(stream: TcpStream, status: u16, msg: &str) -> io::Result<()> {
 }
 
 fn write_response(mut w: TcpStream, resp: Response) -> io::Result<()> {
+    let cors = if PUBLIC_CORS.load(std::sync::atomic::Ordering::Relaxed) { "Access-Control-Allow-Origin: *\r\n" } else { "" };
     let head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n\r\n",
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n{cors}\r\n",
         resp.status,
         reason(resp.status),
         resp.content_type,
