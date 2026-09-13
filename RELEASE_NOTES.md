@@ -1,3 +1,41 @@
+## Novedades de v0.10.1 — al abrir Dubái se ve Dubái
+
+Arreglo del cliente 3D. **No toca el consenso, la red ni el formato de los
+ficheros**: la 0.10.1 y la 0.10.0 son la misma cadena, y sigue valiendo la
+fecha de activación del 1 de diciembre de 2026 (00:00 UTC).
+
+Quien abría la pestaña Dubái se encontraba una cuadrícula de parcelas sobre
+arena vacía, y de noche una pantalla negra. La ciudad estaba construida —los 56
+hitos y las 3.124 torres—, pero no se veía. Por qué, y qué se ha hecho:
+
+- **La vista de entrada era el emirato entero.** La cámara arrancaba a más de
+  20 km, así que una torre de 300 m ocupaba un píxel y de Dubái solo quedaban la
+  arena, las carreteras y la cuadrícula. Ahora se entra por el **skyline del
+  centro**, con el Burj Khalifa recortado contra el cielo. Los tres encuadres
+  están en la botonera: «🌇 Centro», «🌆 Dubái» (el emirato) y «▦ Parcelas».
+- **Las ventanas solo salían en los 56 hitos.** Las torres instanciadas se
+  levantan de una caja unidad escalada a su altura, y el sombreador miraba la
+  coordenada local sin escalar: nunca pasaba de 1, así que la condición que
+  enciende ventanas, forjados y cristal («por encima de 5 m») era falsa en
+  **todas** ellas y se dibujaban como cajas lisas. Ahora se mide la altura sobre
+  la base del edificio: toda la ciudad tiene fachada, de día y de noche.
+- **La noche era negra.** El cielo físico da casi cero al ponerse el sol y la
+  exposición además se cerraba. Ahora las ventanas encendidas mandan, hay
+  **resplandor urbano** cálido de luz ambiente y la exposición se abre de noche,
+  como el ojo. Con la hora real de Dubái, a las 22:00 se ve una ciudad
+  encendida.
+- **La cuadrícula de parcelas tapaba la ciudad.** Son 1.024 casillas de color
+  sobre el suelo: es la herramienta para comprar, no el paisaje. Ahora está
+  **apagada** y la enciende «▦ Parcelas» o un clic en cualquier parcela.
+- **Suelo de ciudad.** Los datos de elevación no saben de asfalto, así que las
+  torres se levantaban sobre un desierto liso; ahora el suelo de cada barrio
+  construido va teñido de ciudad (y de verde en los de villas).
+- **Sombras en calidad media**, que es la que trae de fábrica: era lo que más
+  se notaba y estaba reservado a «alta».
+- **Se dice cómo se maneja.** La primera vez sale una línea sobre el visor:
+  arrastrar para girar, rueda para acercarse, clic en una parcela, «🚶 A pie»
+  con WASD y «🥽 Gafas VR». En cinco idiomas, y no vuelve a salir.
+
 ## Novedades de v0.10.0 — identidad en la cadena, el multiverso como ciudades y un Dubái más real
 
 **Actualiza antes del 1 de diciembre de 2026 (00:00 UTC).** La 0.10.0 se
@@ -97,6 +135,43 @@ altura sin romperse.
   con los binarios de la v0.7.0 y la v0.7.3. Un binario v0.8.0 que abra un
   `chain.jsonl` escrito por la 0.9.0 con transacciones de mercado no lo lee
   (por red nunca las recibe): la salida es volver a la 0.9.0.
+
+## What's new in v0.10.1 — opening Dubai now shows Dubai
+
+A fix to the 3D client. **It touches neither consensus, nor the network, nor
+the file format**: 0.10.1 and 0.10.0 are the same chain, and the activation
+date of 1 December 2026 (00:00 UTC) still stands.
+
+Opening the Dubai tab showed a grid of parcels over empty sand, and a black
+screen at night. The city was built — the 56 landmarks and the 3,124 towers —
+but it was not visible. Why, and what was done:
+
+- **The opening shot was the whole emirate.** The camera started more than
+  20 km out, so a 300 m tower covered one pixel and all that was left of Dubai
+  was sand, roads and the grid. It now opens on the **downtown skyline**, with
+  the Burj Khalifa against the sky. The three framings are in the toolbar:
+  «🌇 Downtown», «🌆 Dubai» (the emirate) and «▦ Parcels».
+- **Windows only appeared on the 56 landmarks.** Instanced towers are built
+  from a unit box scaled to their height, and the shader read the unscaled
+  local coordinate: it never went above 1, so the test that turns on windows,
+  floor slabs and glass («above 5 m») was false on **all** of them and they
+  drew as plain boxes. It now measures the height above the building's base:
+  the whole city has a facade, by day and by night.
+- **Night was black.** The physical sky gives almost zero once the sun sets,
+  and the exposure closed down on top of that. Lit windows now lead, there is a
+  warm **city glow** in the ambient light and the exposure opens at night, the
+  way an eye does. On real Dubai time, at 22:00 you see a lit city.
+- **The parcel grid covered the city.** Those 1,024 coloured squares on the
+  ground are the tool for buying, not the landscape. They are now **off**, and
+  «▦ Parcels» or a click on any parcel turns them on.
+- **City ground.** Elevation data knows nothing about asphalt, so the towers
+  stood on smooth desert; the ground of every built-up district is now tinted
+  city (and green in the villa ones).
+- **Shadows at medium quality**, the one that ships by default: it was the
+  most noticeable feature and it was reserved for «high».
+- **The controls are spelled out.** The first time, a line appears over the
+  viewer: drag to turn, wheel to zoom, click a parcel, «🚶 On foot» with WASD
+  and «🥽 VR headset». In five languages, and it does not come back.
 
 ## What's new in v0.10.0 — identity on the chain, the multiverse as cities and a more real Dubai
 

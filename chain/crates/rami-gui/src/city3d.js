@@ -9,7 +9,8 @@
  *
  * API pública: window.RamiCity3D.mount(container, opts) -> handle
  *   handle.setCity(city) / select(x,y|null) / flyTo(x,y) / flyToCity() /
- *   flyToIsland() [vista general de Dubái] / flyToLandmark(id) / landmarks() /
+ *   flyToSkyline() [portada: el skyline del centro] / flyToIsland() [vista
+ *   general de Dubái] / flyToLandmark(id) / landmarks() /
  *   setMode('orbit'|'walk') / mode() / setQuality('baja'|'media'|'alta'|'ultra') /
  *   setTimeOfDay(horas|null) / setPresence(lista) / myPose() /
  *   resize() / setVisible(bool) / dispose() / xrSupported() / enterVR() /
@@ -405,6 +406,42 @@
    * visible exactamente, triángulo a triángulo). El 2 % exterior del mapa se
    * funde con el color del fondo marino (bedH) para ocultar el borde del bbox.
    */
+  /**
+   * Tiñe de ciudad el suelo bajo los barrios construidos. El relieve viene de
+   * datos de elevación, que no saben de asfalto: sin esto las torres se
+   * levantaban sobre un desierto liso y el conjunto no leía como una ciudad.
+   * Se hace una sola vez, sobre los colores por vértice ya calculados.
+   */
+  var URBANO = [108, 104, 99], URBANO_VERDE = [96, 116, 82];
+  function urbanizarTerreno(tr, clusters, geo) {
+    if (!clusters || !clusters.length) return;
+    var col = tr.mesh.geometry.attributes.color.array, i, j, c, k;
+    var cs = [];
+    for (c = 0; c < clusters.length; c++) {
+      var w = geo.toWorld(clusters[c].lat, clusters[c].lon);
+      cs.push({ x: w.x, z: w.z, r: (clusters[c].radius_m || 600) * 1.6, verde: clusters[c].kind === 'villas' });
+    }
+    for (j = 0; j < tr.nz; j++) for (i = 0; i < tr.nx; i++) {
+      k = j * tr.nx + i;
+      if (tr.grid[k] <= 0.4) continue;                 // el agua no se asfalta
+      var mx = 0, verde = 0;
+      for (c = 0; c < cs.length; c++) {
+        var dx = i * tr.dx - cs[c].x, dz = j * tr.dz - cs[c].z, d2 = dx * dx + dz * dz, rr = cs[c].r * cs[c].r;
+        if (d2 >= rr) continue;
+        // Meseta con borde suave: un barrio es asfalto de punta a punta, no un
+        // degradado radial desde su centro.
+        var f = clamp((1 - Math.sqrt(d2 / rr)) * 2.6, 0, 1);
+        if (f > mx) { mx = f; verde = cs[c].verde ? 1 : 0; }
+      }
+      if (mx <= 0) continue;
+      var t = Math.min(0.74, mx * 0.78) * (0.80 + 0.40 * hash2(i * 7 + 1, j * 5 + 3));
+      var dst = verde ? URBANO_VERDE : URBANO;
+      col[k * 3] = lerp(col[k * 3], dst[0], t);
+      col[k * 3 + 1] = lerp(col[k * 3 + 1], dst[1], t);
+      col[k * 3 + 2] = lerp(col[k * 3 + 2], dst[2], t);
+    }
+    tr.mesh.geometry.attributes.color.needsUpdate = true;
+  }
   function buildTerrain(field, geo, segs, material, bedH) {
     var W = geo.worldW, H = geo.worldH;
     var sx = W >= H ? segs : Math.max(8, Math.round(segs * W / H));
@@ -952,9 +989,9 @@
     '  #ifdef USE_INSTANCING', '  on = mat3(instanceMatrix) * on;', '  #endif',
     '  vec3 transformedNormal = normalMatrix * on;',
     '  vNormalW = normalize(mat3(modelMatrix) * on);',
-    '  vec4 wp = vec4(position, 1.0);',
-    '  #ifdef USE_INSTANCING', '  wp = instanceMatrix * wp;', '  #endif',
-    '  vec4 worldPosition = modelMatrix * wp; vWorld = worldPosition.xyz; vLocalY = position.y;',
+    '  vec4 wp = vec4(position, 1.0); float lh = position.y;',
+    '  #ifdef USE_INSTANCING', '  wp = instanceMatrix * wp; lh = wp.y - instanceMatrix[3].y;', '  #endif',
+    '  vec4 worldPosition = modelMatrix * wp; vWorld = worldPosition.xyz; vLocalY = lh;',
     '  vec4 mvPosition = viewMatrix * worldPosition;',
     '  gl_Position = projectionMatrix * mvPosition;',
     '  #include <logdepthbuf_vertex>',
@@ -1009,7 +1046,7 @@
     '  col += uSunColor * spec * mix(0.06, 0.55, mirror) * (1.0 - uNight) * max(uSun.y, 0.0);',
     '  float on = lit * max(uNight, uDusk * 0.45);',
     '  col = mix(col, col * 0.28 + vec3(0.008, 0.010, 0.018), uNight);',
-    '  col += vec3(1.0, 0.72, 0.42) * glass * on * (0.22 + 0.25 * rnd);',
+    '  col += vec3(1.0, 0.63, 0.32) * glass * on * (0.20 + 0.95 * rnd * rnd);',
     '  gl_FragColor = vec4(col, 1.0);',
     '  #include <tonemapping_fragment>',
     '  #include <encodings_fragment>',
@@ -1488,7 +1525,7 @@
   };
   var QUALITY = {
     baja: { pr: 0.75, vr: 1.0, shadows: false, shadowMap: 1024, traffic: 0, clusters: 0.4, far: 0.6, palms: 0 },
-    media: { pr: 1.0, vr: 1.2, shadows: false, shadowMap: 1024, traffic: 120, clusters: 1, far: 1, palms: 900 },
+    media: { pr: 1.0, vr: 1.2, shadows: true, shadowMap: 1536, traffic: 120, clusters: 1, far: 1, palms: 900 },
     alta: { pr: 2, vr: 1.5, shadows: true, shadowMap: 2048, traffic: 240, clusters: 1, far: 1, palms: 2200 },
     ultra: { pr: 3, vr: 2.0, shadows: true, shadowMap: 4096, traffic: 400, clusters: 1, far: 1, palms: 4000 }
   };
@@ -1579,7 +1616,7 @@
       gridCenter: new THREE.Vector3(), counts: null, inflatePath: null,
       sel: null, hover: null, frame: 0, fps: 0, fpsN: 0, fpsT: 0, lastT: 0, raf: 0,
       mode: 'orbit', hour: null, night: 0, landmarks: [], lmIndex: {}, clusterTotal: 0,
-      avatars: {}, avatarOrder: [], traffic: null
+      avatars: {}, avatarOrder: [], traffic: null, gridShown: false
     };
     var gridGroup = new THREE.Group(); scene.add(gridGroup);
     var pending = null, pendingFlight = null;
@@ -1667,7 +1704,7 @@
       g.setAttribute('cellColor', ca);
       g.setIndex(new THREE.BufferAttribute(idx, 1));
       C.tiles = new THREE.Mesh(g, makeDrapeMaterial(lodUniform, '#ffffff', 1, true));
-      C.tiles.frustumCulled = false; C.tiles.renderOrder = 2;
+      C.tiles.frustumCulled = false; C.tiles.renderOrder = 2; C.tiles.visible = S.gridShown;
       gridGroup.add(C.tiles);
       var M = N * SUB, nSeg = 2 * (N + 1) * M, bp = new Float32Array(nSeg * 6), bh = new Float32Array(nSeg * 2), o = 0, k, s;
       function seg(l0x, l0z, l1x, l1z) {
@@ -1683,7 +1720,7 @@
       bg.setAttribute('position', new THREE.BufferAttribute(bp, 3));
       bg.setAttribute('hc', new THREE.BufferAttribute(bh, 1));
       C.borders = new THREE.LineSegments(bg, makeDrapeMaterial(lodUniform, colors.border, 0.14, false));
-      C.borders.frustumCulled = false; C.borders.renderOrder = 3;
+      C.borders.frustumCulled = false; C.borders.renderOrder = 3; C.borders.visible = S.gridShown;
       gridGroup.add(C.borders);
       C.hover = cellMesh(colors.hover, 0.3); C.hover.renderOrder = 4;
       C.selFill = cellMesh(colors.select, 0.22); C.selFill.renderOrder = 5;
@@ -2328,6 +2365,7 @@
       if (cell && !(cell.x >= 0 && cell.x < N && cell.y >= 0 && cell.y < N)) cell = null;
       if (fromUser && cell && S.sel && S.sel.x === cell.x && S.sel.y === cell.y) return;
       S.sel = cell ? { x: cell.x, y: cell.y } : null;
+      if (cell) setParcelGrid(true);
       refreshSelection();
       if (fromUser) onSelect(cell ? cell.x : null, cell ? cell.y : null);
     }
@@ -2345,6 +2383,44 @@
     function cityView() {
       var tg = S.gridCenter.clone(); tg.y = S.cellH[(N >> 1) * N + (N >> 1)];
       return { theta: 0.55, phi: 0.78, radius: N * CELL * 1.05, target: tg };
+    }
+    /** El hito más alto: el ancla del centro cuando no hay `burj_khalifa`. */
+    function tallestLandmark() {
+      var best = null, i;
+      for (i = 0; i < S.landmarks.length; i++) if (!best || S.landmarks[i].h > best.h) best = S.landmarks[i];
+      return best;
+    }
+    /**
+     * Vista de portada: el skyline del centro desde poco más alto que las
+     * torres. Es lo PRIMERO que ve quien abre la pestaña, y por eso no puede
+     * ser la vista del emirato entero: a 20 km de distancia una torre de 300 m
+     * ocupa un píxel, así que la ciudad desaparecía y solo quedaban la arena y
+     * la cuadrícula de parcelas.
+     */
+    function skylineView() {
+      var l = S.lmIndex.burj_khalifa || tallestLandmark();
+      var tg = l ? new THREE.Vector3(l.x, l.y, l.z) : S.gridCenter.clone();
+      var r = clamp(l ? l.h * 3.1 : 2600, 1800, 4200);
+      // Acimut del mundo (no del tejido de parcelas): deja el desierto delante,
+      // el skyline en el centro con el Burj Khalifa recortado y el golfo al fondo.
+      return { theta: 3.2, phi: 1.22, radius: r, target: tg };
+    }
+    /**
+     * Capa de parcelas: 1024 (o 4096) casillas de color sobre el suelo. Es la
+     * herramienta para comprar y mirar quién tiene qué, no el paisaje; encendida
+     * siempre tapaba la ciudad con una cuadrícula y era lo único que se veía.
+     * Se enciende sola al seleccionar una parcela.
+     */
+    function setParcelGrid(on) {
+      S.gridShown = !!on;
+      if (C.tiles) C.tiles.visible = S.gridShown;
+      if (C.borders) C.borders.visible = S.gridShown;
+      return S.gridShown;
+    }
+    function flyToSkyline() {
+      if (!S.ready) { pendingFlight = { fn: flyToSkyline, args: [] }; return; }
+      if (S.mode === 'walk') setMode('orbit');
+      fly(skylineView(), 1600);
     }
     function flyToCity() {
       if (!S.ready) { pendingFlight = { fn: flyToCity, args: [] }; return; }
@@ -2457,12 +2533,16 @@
       var mixc = [zen[0] * 0.5 + fog[0] * 0.5, zen[1] * 0.5 + fog[1] * 0.5, zen[2] * 0.5 + fog[2] * 0.5];
       var lum = 0.2126 * mixc[0] + 0.7152 * mixc[1] + 0.0722 * mixc[2], ambI = clamp(lum, 0, 1) * 0.42 + 0.02;
       hemiSky.setRGB(mixc[0] / Math.max(lum, 1e-3) * ambI, mixc[1] / Math.max(lum, 1e-3) * ambI, mixc[2] / Math.max(lum, 1e-3) * ambI);
+      // Resplandor urbano: de noche el cielo físico da casi cero y la ciudad se
+      // quedaba negra. Una ciudad encendida devuelve luz cálida hacia arriba, y
+      // es lo que deja leer las fachadas y la calle sin falsear el modelo.
+      if (night > 0) { var gl = 0.085 * night; hemiSky.r += gl; hemiSky.g += gl * 0.74; hemiSky.b += gl * 0.50; }
       hemiGround.setRGB(SAND_LIN[0], SAND_LIN[1], SAND_LIN[2]).multiply(new THREE.Color().copy(hemiSky).multiplyScalar(0.8).add(new THREE.Color().copy(sunC).multiplyScalar(0.45 * Math.max(sunDir.y, 0))));
       shared.uSkyColor.value.copy(hemiSky); shared.uGroundColor.value.copy(hemiGround);
       hemi.color.copy(hemiSky); hemi.groundColor.copy(hemiGround); hemi.intensity = 1.0;
       sun.color.copy(sunC); sun.intensity = 1.0;
       sun.position.copy(lightDir).multiplyScalar(2500);
-      renderer.toneMappingExposure = 0.72 - 0.05 * dusk - 0.14 * night;
+      renderer.toneMappingExposure = 0.72 - 0.05 * dusk + 0.16 * night;
       // La niebla se mezcla DESPUÉS del tono y la codificación: se le aplica la misma curva.
       var fe = acesSRGB(fog, renderer.toneMappingExposure);
       fogC.setRGB(fe[0], fe[1], fe[2], THREE.NoColorSpace || undefined);
@@ -2522,6 +2602,8 @@
       S.cellState = new Uint8Array(N * N);
       buildTileLayer();
       buildCityMeshes();
+      urbanizarTerreno(S.fine, meta.clusters, geo);
+      urbanizarTerreno(S.coarse, meta.clusters, geo);
       buildLandmarks(meta);
       buildClusters(meta);
       S.trafficPaths = buildTrafficPaths(meta);
@@ -2541,7 +2623,7 @@
       S.townsTop = new LabelSet(viewportUniform, false); S.townsTop.set(top); scene.add(S.townsTop.mesh);
       S.towns = new LabelSet(viewportUniform, true); S.towns.set(low); scene.add(S.towns.mesh);
       cam.maxR = S.L * 4;
-      var cv = cityView();
+      var cv = skylineView();
       cam.cur.target.copy(cv.target); cam.goal.target.copy(cv.target);
       cam.cur.radius = cam.goal.radius = clamp(cv.radius, cam.minR, cam.maxR); cam.cur.phi = cam.goal.phi = cv.phi; cam.cur.theta = cam.goal.theta = cv.theta;
       updateSun();
@@ -2851,7 +2933,8 @@
         if (S.ready) applyCity(S.city); else pending = S.city;
       },
       select: function (x, y) { doSelect((x === null || x === undefined) ? null : { x: x | 0, y: y | 0 }, false); },
-      flyTo: flyTo, flyToIsland: flyToIsland, flyToCity: flyToCity, flyToLandmark: flyToLandmark,
+      flyTo: flyTo, flyToIsland: flyToIsland, flyToCity: flyToCity, flyToSkyline: flyToSkyline, flyToLandmark: flyToLandmark,
+      setParcelGrid: setParcelGrid, parcelGrid: function () { return S.gridShown; },
       landmarks: function () { return S.landmarks.map(function (l) { return { id: l.id, name: l.name, h: l.h, lat: l.lat, lon: l.lon, shape: l.shape }; }); },
       setMode: setMode, mode: function () { return S.xr ? 'vr' : S.mode; },
       setQuality: setQuality, quality: function () { return qualityName; },
