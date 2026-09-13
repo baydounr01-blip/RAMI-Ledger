@@ -805,6 +805,32 @@ mod tests {
             let tx = signed_con(&a, &con, perfil(&a, malo, "x", 0, None));
             assert!(verify_tx_con(&tx, &con).is_err(), "{malo} debería ser inválido");
         }
+        // Catálogo de avatar/color y topes de alias y biografía (los flags de la
+        // CLI y el panel se apoyan en estos rechazos).
+        let fuera = |avatar: u8, color: u8| {
+            let mut tx = perfil(&a, "rami", "Rami", 0, None);
+            if let Tx::SetProfile { avatar: av, color: co, .. } = &mut tx {
+                *av = avatar;
+                *co = color;
+            }
+            signed_con(&a, &con, tx)
+        };
+        assert!(verify_tx_con(&fuera(16, 0), &con).unwrap_err().contains("catálogo"));
+        assert!(verify_tx_con(&fuera(0, 16), &con).unwrap_err().contains("catálogo"));
+        assert!(verify_tx_con(&fuera(15, 15), &con).is_ok());
+        let largo = |display: Vec<u8>, bio: Vec<u8>| {
+            let mut tx = perfil(&a, "rami", "Rami", 0, None);
+            if let Tx::SetProfile { display: d, bio: b, .. } = &mut tx {
+                *d = display;
+                *b = bio;
+            }
+            signed_con(&a, &con, tx)
+        };
+        assert!(verify_tx_con(&largo(vec![b'x'; 33], vec![]), &con).unwrap_err().contains("alias"));
+        assert!(verify_tx_con(&largo(vec![], vec![b'x'; 161]), &con).unwrap_err().contains("biografía"));
+        assert!(verify_tx_con(&largo(vec![0xff], vec![]), &con).unwrap_err().contains("alias"), "alias no UTF-8");
+        assert!(verify_tx_con(&largo(vec![b'x'; 32], vec![b'x'; 160]), &con).is_ok());
+
         let firma_ajena = nodo.sign(&vinculo_mensaje(&pb)); // firma la cuenta de B, no la de A
         let tx = signed_con(&a, &con, perfil(&a, "rami", "Rami", 0, Some((pn, firma_ajena))));
         assert!(verify_tx_con(&tx, &con).unwrap_err().contains("vínculo"));

@@ -1736,6 +1736,9 @@
       var m = new THREE.InstancedMesh(geometry, material, capacity);
       m.count = 0; m.frustumCulled = false; m.name = name;
       m.castShadow = !!shadow;
+      // Sin esto three no compila USE_SHADOWMAP para el objeto y getShadowMask()
+      // vale 1 siempre: las sombras se verían en el suelo pero no sobre lo demás.
+      m.receiveShadow = true;
       for (var i = 0; i < capacity; i++) m.setColorAt(i, tmpColor.set(0xffffff));
       m.instanceColor.needsUpdate = true;
       gridGroup.add(m);
@@ -1909,7 +1912,7 @@
       }
       if (acc.pos.length) {
         C.landmarks = new THREE.Mesh(accGeometry(acc), buildMat);
-        C.landmarks.castShadow = true; C.landmarks.frustumCulled = false;
+        C.landmarks.castShadow = true; C.landmarks.receiveShadow = true; C.landmarks.frustumCulled = false;
         scene.add(C.landmarks);
       }
       S.lmLabels = new LabelSet(viewportUniform, true); S.lmLabels.set(labels); scene.add(S.lmLabels.mesh);
@@ -1941,12 +1944,13 @@
         var k = kinds[i], items = per[k];
         if (!items.length) continue;
         var m = new THREE.InstancedMesh(k === 'villas' ? villaGeo : unit, buildMat, items.length);
-        m.frustumCulled = false; m.castShadow = k !== 'villas'; m.name = 'cluster_' + k;
+        m.frustumCulled = false; m.castShadow = k !== 'villas'; m.receiveShadow = true; m.name = 'cluster_' + k;
         for (j = 0; j < items.length; j++) {
           var it = items[j], tone = TONES[k][Math.floor(it.tone * TONES[k].length)];
           dummy.position.set(it.x, it.y, it.z); dummy.rotation.set(0, it.yaw, 0); dummy.scale.set(it.w, it.h, it.d); dummy.updateMatrix();
           m.setMatrixAt(j, dummy.matrix);
-          m.setColorAt(j, tmpColor.setRGB(tone[0], tone[1], tone[2]).multiplyScalar(0.9 + 0.2 * hash2(j, i)));
+          var tl = lin3(tone);
+          m.setColorAt(j, tmpColor.setRGB(tl[0], tl[1], tl[2]).multiplyScalar(0.9 + 0.2 * hash2(j, i)));
         }
         m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true;
         m.userData.total = items.length; m.count = Math.round(items.length * Q.clusters);
@@ -2008,7 +2012,7 @@
         pi = Math.min(pi, paths.length - 1);
         cars.push({ path: paths[pi], t: rnd() * paths[pi].len, v: 22 + rnd() * 14, dir: rnd() < 0.5 ? 1 : -1, hue: rnd() });
       }
-      var m = new THREE.InstancedMesh(C.cars.geometry, plainMat, cars.length); m.frustumCulled = false; m.name = 'traffic';
+      var m = new THREE.InstancedMesh(C.cars.geometry, plainMat, cars.length); m.frustumCulled = false; m.receiveShadow = true; m.name = 'traffic';
       for (i = 0; i < cars.length; i++) m.setColorAt(i, tmpColor.setHSL(cars[i].hue, cars[i].hue < 0.3 ? 0.1 : 0.6, 0.55));
       m.instanceColor.needsUpdate = true;
       scene.add(m);
@@ -2047,7 +2051,10 @@
         var e = S.avatars[a.pk];
         var w = S.ready ? localToWorld(a.x, a.y) : { x: 0, z: 0 };
         var ty = S.ready ? groundH(w.x, w.z) : 0;
-        var label = a.verified ? (a.display || a.handle || a.name) : (a.name || ''), verified = !!a.verified;
+        // Con el sello va el nombre ÚNICO de la cadena: el alias es libre y no
+        // es único, así que rotular con él dejaría pasar avatares «✓ rami» que
+        // no son @rami. El alias se ve en la ficha del panel, junto a su cuenta.
+        var label = a.verified ? (a.handle || a.name) : (a.name || ''), verified = !!a.verified;
         var ci = a.verified ? (a.color | 0) : (a.avatar | 0), style = a.verified ? (a.style | 0) : (a.avatar | 0);
         if (!e) {
           e = S.avatars[a.pk] = { name: label, verified: verified, style: style % 4, color: new THREE.Color(AVATAR_COLORS[ci % AVATAR_COLORS.length]), cur: new THREE.Vector3(w.x, ty, w.z), tgt: new THREE.Vector3(w.x, ty, w.z), yaw: (a.yaw || 0) * Math.PI / 180, yawT: (a.yaw || 0) * Math.PI / 180, phase: hash2(i, 3) * 6, moving: 0 };

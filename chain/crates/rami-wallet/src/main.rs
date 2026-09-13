@@ -89,7 +89,13 @@ fn next_nonce(chain: &ChainDir, params: Params, me: &AccountId) -> Result<(u64, 
     Ok((base + pending, firma))
 }
 
-fn submit(chain: &ChainDir, tx: &Tx) -> ExitCode {
+fn submit(chain: &ChainDir, firma: &FirmaCtx, tx: &Tx) -> ExitCode {
+    // Las mismas reglas que aplicará el nodo: si la tx no vale, decirlo AQUÍ.
+    // Si no, se escribiría en el mempool, se anunciaría «enviada» y nunca
+    // entraría en un bloque (el minero la salta y la poda se la lleva).
+    if let Err(e) = verify_tx_con(tx, firma) {
+        return die(&e);
+    }
     if let Err(e) = chain.append_mempool(tx) {
         return die(&e);
     }
@@ -206,7 +212,7 @@ fn cmd_send(args: &[String]) -> ExitCode {
         Ok(n) => n,
         Err(e) => return die(&e),
     };
-    submit(&chain, &build_transfer(&firma, &kp, to, amount, fee_of(args), nonce))
+    submit(&chain, &firma, &build_transfer(&firma, &kp, to, amount, fee_of(args), nonce))
 }
 
 /// v0.10.0: `profile --handle NOMBRE [--display ALIAS] [--bio TEXTO] [--avatar N]
@@ -221,9 +227,25 @@ fn cmd_profile(args: &[String]) -> ExitCode {
         return die("nombre inválido: de 3 a 20 caracteres, solo a-z, 0-9 y _");
     }
     let display = arg(args, "--display").unwrap_or_default();
+    if display.len() > rami_core::tx::MAX_DISPLAY_BYTES {
+        return die("alias demasiado largo (máx. 32 bytes)");
+    }
     let bio = arg(args, "--bio").unwrap_or_default();
-    let avatar: u8 = arg(args, "--avatar").and_then(|s| s.parse().ok()).unwrap_or(0);
-    let color: u8 = arg(args, "--color").and_then(|s| s.parse().ok()).unwrap_or(0);
+    if bio.len() > rami_core::tx::MAX_BIO_BYTES {
+        return die("biografía demasiado larga (máx. 160 bytes)");
+    }
+    // Un `--avatar rojo` o un `--avatar 16` no pueden volverse 0 en silencio.
+    let catalogo = |flag: &str, max: u8| -> Result<u8, String> {
+        match arg(args, flag) {
+            None => Ok(0),
+            Some(v) => match v.trim().parse::<u8>() {
+                Ok(n) if n <= max => Ok(n),
+                _ => Err(format!("{flag} debe ser un número de 0 a {max}")),
+            },
+        }
+    };
+    let avatar = match catalogo("--avatar", rami_core::tx::MAX_AVATAR) { Ok(v) => v, Err(e) => return die(&e) };
+    let color = match catalogo("--color", rami_core::tx::MAX_COLOR) { Ok(v) => v, Err(e) => return die(&e) };
     let kp = match keypair_from(args) {
         Ok(k) => k,
         Err(e) => return die(&e),
@@ -234,7 +256,7 @@ fn cmd_profile(args: &[String]) -> ExitCode {
         Err(e) => return die(&e),
     };
     println!("perfil «{handle}» · registrar un nombre nuevo quema {} RAMI", fmt_ram(rami_core::ciudad::PRECIO_NOMBRE));
-    submit(&chain, &build_set_profile(&firma, &kp, &handle, &display, &bio, avatar, color, None, fee_of(args), nonce))
+    submit(&chain, &firma, &build_set_profile(&firma, &kp, &handle, &display, &bio, avatar, color, None, fee_of(args), nonce))
 }
 
 fn cmd_stake(args: &[String], unstake: bool) -> ExitCode {
@@ -253,7 +275,7 @@ fn cmd_stake(args: &[String], unstake: bool) -> ExitCode {
         Ok(n) => n,
         Err(e) => return die(&e),
     };
-    submit(&chain, &build_stake(&firma, &kp, amount, fee_of(args), nonce, unstake))
+    submit(&chain, &firma, &build_stake(&firma, &kp, amount, fee_of(args), nonce, unstake))
 }
 
 fn cmd_commit(args: &[String]) -> ExitCode {
@@ -280,7 +302,7 @@ fn cmd_commit(args: &[String]) -> ExitCode {
     save_reveal(&chain.root, &cid, &payload, &secret);
     println!("✓ commit txid: {}", hex::encode(cid));
     println!("  (revela luego con: rami-wallet reveal --commit {})", hex::encode(cid));
-    submit(&chain, &tx)
+    submit(&chain, &firma, &tx)
 }
 
 fn cmd_reveal(args: &[String]) -> ExitCode {
@@ -306,7 +328,7 @@ fn cmd_reveal(args: &[String]) -> ExitCode {
         Ok(n) => n,
         Err(e) => return die(&e),
     };
-    submit(&chain, &build_reveal(&firma, &kp, commit_txid, &payload, secret, fee_of(args), nonce))
+    submit(&chain, &firma, &build_reveal(&firma, &kp, commit_txid, &payload, secret, fee_of(args), nonce))
 }
 
 // ---- firma de release (Ed25519, la misma criptografía de la cadena) ----
