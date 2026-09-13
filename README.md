@@ -39,11 +39,11 @@ Workspace de Rust en [`chain/`](chain), con dependencias mínimas
 | `canon` | — | JSON canónico (paridad byte a byte con la referencia Python) |
 | `hashing` / `crypto` | P2 | SHA-256d, Merkle, firmas Ed25519, direcciones |
 | `block` | P1/P2 | Cabecera hasheada sobre bytes fijos big-endian (nunca floats) |
-| `tx` | P7 | Transacciones (Coinbase/Transfer/Stake/Unstake/**Commit/Reveal**, las de la ciudad y, desde v0.9.0, las de **mercado**), encoding binario determinista |
-| `state` | P7/P9 | Cuentas, emisión con halving, anti-doble-gasto, regla anti-look-ahead, parcelas y activos, fondo de la ciudad |
+| `tx` | P7 | Transacciones (Coinbase/Transfer/Stake/Unstake/**Commit/Reveal**, las de la ciudad, las de **mercado** desde v0.9.0 y el **perfil del jugador** desde v0.10.0), encoding binario determinista |
+| `state` | P7/P9 | Cuentas, emisión con halving, anti-doble-gasto, regla anti-look-ahead, parcelas y activos, fondo de la ciudad, perfiles y nombres únicos |
 | `ciudad` | P7/P9 | **Dubái RAMI** (v0.9.0): distritos, 30 sectores con su grafo de insumos, precios por distrito, fondo de la ciudad y su reparto por bloque, mercado en RAMI, el mentor (misma regla, sin tocar el estado) |
 | `pow` | P5 | PoW SHA-256d, objetivo compacto, retarget LWMA por bloque |
-| `blocktree` | P3/P4 | Árbol ramificado (todo se conserva) + fork-choice (decoherencia) |
+| `blocktree` | P3/P4 | Árbol ramificado (todo se conserva) + fork-choice (decoherencia); el estado de cada punta es una ciudad del **multiverso** (v0.10.0) |
 | `tiebreak` | P4 | **Matemática NO probada** (Collatz) como desempate, contenida |
 | `nn` | P3 | MLP entero bit-exacto de invarianza de rama (UBR) — **solo asesor** |
 | `ledger` | P6 | Capa commit-reveal RAMI (puerto de la referencia Python) |
@@ -62,7 +62,8 @@ Crates de red y aplicación (v0.2):
   escucha, sincroniza y mina), `mine`, `status`, `verify`, `show`. También es
   biblioteca del runtime que usa el monedero de escritorio.
 - [`rami-wallet`](chain/crates/rami-wallet) — CLI del monedero (claves, saldo,
-  envío, staking, commit/reveal) y biblioteca de firma compartida.
+  envío, staking, commit/reveal, perfil del jugador) y biblioteca de firma
+  compartida.
 - [`rami-gui`](chain/crates/rami-gui) — **monedero de escritorio**: un binario que
   arranca tu nodo P2P (minería opcional) y sirve un panel local en el navegador
   para hacerlo todo desde ahí. La red neuronal sigue siendo solo asesora.
@@ -176,6 +177,7 @@ rami-node faucet --network testnet --chain ./midato --label yo --drip 10 --coold
 
 # 2b') API pública de mercado (opcional, v0.9.0): solo lectura, formato de agregador
 rami-node market --network testnet --chain ./midato --port 8646 --bind 0.0.0.0
+rami-wallet profile --chain ./midato --network testnet --handle rami_dxb --display "Rami" --avatar 1 --color 5
 
 # 2c) o una red local instantánea (regtest, dificultad 1)
 rami-node init --chain ./midato --network regtest --miner $ADDR
@@ -266,6 +268,19 @@ Activación por fecha sin periodo mixto y sin retroceso dentro de una rama,
 como la firma v2; `Status.rule` anuncia 3. Los nodos que no actualicen se
 quedan en su altura sin romperse. Regtest: `--dubai-desde <unix>`.
 
+## Identidad y multiverso (v0.10.0)
+
+Desde la activación de Dubái, `Tx::SetProfile` da cara al jugador: un
+**nombre único** en toda la cadena (2 RAMI quemados al registrarlo), alias,
+presentación, estilo y color de avatar y, si quieres, el **vínculo con la
+identidad de tu nodo**: esa identidad firma tu cuenta y el consenso lo
+verifica, así que el avatar que firma tu presencia «es» tu cuenta (✓ en la
+ciudad). El nodo deriva de ahí la **ficha del jugador** (empresas, activos,
+saldo, ingresos) y un **código de fuente** como el de los pares. Y como el
+árbol conserva todas las ramas, cada punta se lee como una ciudad: el
+**multiverso**, con los edificios de otras ramas en superposición hasta que
+el consenso colapsa. Todo en `docs/MULTIVERSO.md`.
+
 ## Cotización interna y API de mercado (v0.9.0)
 
 RAMI **no cotiza en euros ni en otras criptomonedas** y este software no lo
@@ -336,7 +351,15 @@ aplicada a lo que RAMI-Chain dice; detalle en `docs/PALABRA-EXACTA.md`.
 
 ## Estado y hoja de ruta
 
-- **v0.9.0 (esto):** segundo cambio de consenso — **Dubái RAMI** con
+- **v0.10.0 (esto): identidad, multiverso y realismo.** `SetProfile`
+  (nombre único con 2 RAMI quemados, alias, bio, avatar, color y vínculo
+  verificado con la identidad del nodo; `Status.rule` 4, misma fecha de
+  activación que Dubái); ficha del jugador con código de fuente («C1»);
+  las puntas del árbol como ciudades paralelas con edificios en
+  superposición (`/api/city/multiverse`, `/api/city?tip=`); cliente 3D con
+  cielo físico, reflejos, sombras, agua con profundidad, palmeras y avatares
+  articulados (`docs/MULTIVERSO.md`).
+- **v0.9.0:** segundo cambio de consenso — **Dubái RAMI** con
   activación el 2026‑12‑01 00:00 UTC: cuadrícula 64×64 sobre una réplica
   abierta de Dubái, 35 distritos, 30 sectores con grafo de insumos, fondo de
   la ciudad (20 % de la emisión) repartido por bloque, mercado de parcelas y

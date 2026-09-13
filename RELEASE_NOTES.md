@@ -1,3 +1,42 @@
+## Novedades de v0.10.0 — identidad en la cadena, el multiverso como ciudades y un Dubái más real
+
+**Actualiza antes del 1 de diciembre de 2026 (00:00 UTC).** La 0.10.0 se
+habla con la 0.9.0 y la 0.8.0 hasta esa fecha; desde ella rigen las reglas de
+Dubái (`docs/DUBAI.md`) más el perfil del jugador. Un binario 0.9.0 se queda
+en su altura, sin romperse, en el primer bloque que lleve un perfil.
+
+- **Perfil del jugador en la cadena** (`docs/MULTIVERSO.md`, §1). Una
+  transacción nueva, `SetProfile`, registra un **nombre único** (3–20
+  caracteres `a-z`, `0-9`, `_`; 2 RAMI quemados al registrarlo o cambiarlo),
+  alias, presentación, estilo de avatar y color. Opcionalmente **vincula la
+  identidad de tu nodo** —la que firma tu presencia y tu chat— con tu cuenta,
+  y el consenso verifica esa firma: tu avatar lleva tu nombre con ✓ y nadie
+  puede pasearse con él. `Status.rule` anuncia 4.
+- **Ficha del jugador y código de fuente.** Panel → Dubái → «Mi perfil de
+  jugador» y «Jugadores»: empresas con sus cuentas, activos, saldo, ingresos,
+  y un código como el de los pares («C1»): una letra por los hechos de la
+  cadena (empresas, ingresos, antigüedad) y un número por lo que este nodo
+  observa ahora (avatar presente, con o sin vínculo). Describe; no decide.
+  `rami-wallet profile` desde la terminal.
+- **El multiverso.** Cada punta del árbol es una ciudad completa
+  (`GET /api/city/multiverse`, `GET /api/city?tip=`). Lo que existe en otra
+  rama y no en la observada se dibuja **en superposición** (edificios
+  translúcidos con su rama en la etiqueta) hasta que el consenso colapsa hacia
+  una; puedes visitar cualquier rama desde el panel. Nada de esto toca el
+  consenso ni la red.
+- **Gráficos.** Canal de color físico (lineal + ACES + sRGB); cielo por
+  **dispersión atmosférica** con calima y disco solar, y las mismas fórmulas
+  para niebla y luz ambiente; reflejos del cielo en cristal y agua (mapa
+  cúbico); **sombras reales** de sol y luna sobre terreno y edificios;
+  fachadas con forjados y ventanas que se encienden al anochecer; mar con
+  profundidad leída del relieve y espuma en la costa; arena con relieve fino;
+  palmeras; coches con habitáculo y faros; **avatares articulados** que andan,
+  con cuatro estilos (casual, kandura y gutra, abaya, traje) y 16 colores. A
+  pie se empieza en la calle, delante de la parcela.
+- **Compatibilidad.** Ningún fichero existente cambia de formato;
+  `tools/compat/roundtrip.sh` sigue en verde con la v0.7.0. Un binario 0.9.0
+  que abra un `chain.jsonl` con perfiles no lo lee: la salida es actualizar.
+
 ## Novedades de v0.9.0 — Dubái RAMI: el metaverso como reglas de consenso, con fecha de activación
 
 **Actualiza antes del 1 de diciembre de 2026 (00:00 UTC).** Hasta esa fecha
@@ -48,6 +87,46 @@ altura sin romperse.
   con los binarios de la v0.7.0 y la v0.7.3. Un binario v0.8.0 que abra un
   `chain.jsonl` escrito por la 0.9.0 con transacciones de mercado no lo lee
   (por red nunca las recibe): la salida es volver a la 0.9.0.
+
+## What's new in v0.10.0 — identity on the chain, the multiverse as cities and a more real Dubai
+
+**Update before 1 December 2026 (00:00 UTC).** 0.10.0 talks to 0.9.0 and
+0.8.0 until that date; from then on the Dubai rules (`docs/DUBAI.md`) apply
+plus the player profile. A 0.9.0 binary stays at its height, without
+breaking, at the first block that carries a profile.
+
+- **Player profile on the chain** (`docs/MULTIVERSO.md`, §1). A new
+  transaction, `SetProfile`, registers a **unique name** (3–20 characters
+  `a-z`, `0-9`, `_`; 2 RAMI burned when registering or changing it), a display
+  name, an introduction, an avatar style and a colour. Optionally it **binds
+  your node identity** — the one that signs your presence and chat — to your
+  account, and consensus verifies that signature: your avatar carries your
+  name with ✓ and nobody can walk around with it. `Status.rule` announces 4.
+- **Player card and source code.** Dashboard → Dubai → "My player profile"
+  and "Players": companies with their accounts, assets, balance, income, and
+  a code like the peers' ("C1"): a letter for the chain's facts (companies,
+  income, age) and a number for what this node observes now (avatar present,
+  with or without a link). It describes; it does not decide. `rami-wallet
+  profile` from the terminal.
+- **The multiverse.** Every tip of the tree is a complete city
+  (`GET /api/city/multiverse`, `GET /api/city?tip=`). Whatever exists in
+  another branch and not in the observed one is drawn **in superposition**
+  (translucent buildings with their branch in the label) until consensus
+  collapses towards one; you can visit any branch from the dashboard. None of
+  this touches consensus or the network.
+- **Graphics.** Physical colour pipeline (linear + ACES + sRGB); sky by
+  **atmospheric scattering** with haze and a sun disc, and the same formulas
+  for fog and ambient light; sky reflections on glass and water (cube map);
+  **real shadows** from sun and moon on terrain and buildings; facades with
+  floor slabs and windows that light up at dusk; sea with depth read from the
+  relief and foam on the shore; sand with fine relief; palm trees; cars with
+  a cabin and headlights; **articulated avatars** that walk, with four styles
+  (casual, kandura and ghutra, abaya, suit) and 16 colours. On foot you start
+  on the street, in front of the parcel.
+- **Compatibility.** No existing file changes format;
+  `tools/compat/roundtrip.sh` stays green with v0.7.0. A 0.9.0 binary that
+  opens a `chain.jsonl` with profiles does not read it: the way out is to
+  update.
 
 ## What's new in v0.9.0 — RAMI Dubai: the metaverse as consensus rules, with an activation date
 

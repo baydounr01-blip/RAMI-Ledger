@@ -245,6 +245,12 @@ impl BlockTree {
         Ok(h)
     }
 
+    /// Estado de una punta (hoja), sin copiar. `None` si `h` no es una punta.
+    /// El multiverso del metaverso (v0.10.0) lee aquí cada Dubái paralelo.
+    pub fn tip_state_of(&self, h: &Hash) -> Option<&State> {
+        self.tip_state.get(h)
+    }
+
     /// Puntas (hojas) actuales.
     pub fn tips(&self) -> Vec<Hash> {
         self.tip_state.keys().copied().collect()

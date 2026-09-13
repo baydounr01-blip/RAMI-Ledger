@@ -418,7 +418,8 @@ pub fn sign_into(firma: &FirmaCtx, kp: &KeyPair, mut tx: Tx) -> Tx {
         | Tx::SellAsset { sig: s, .. }
         | Tx::BuyAsset { sig: s, .. }
         | Tx::SellParcel { sig: s, .. }
-        | Tx::BuyParcel { sig: s, .. } => *s = sig,
+        | Tx::BuyParcel { sig: s, .. }
+        | Tx::SetProfile { sig: s, .. } => *s = sig,
         Tx::Coinbase { .. } => {}
     }
     tx
@@ -505,6 +506,43 @@ pub fn build_sell_parcel(firma: &FirmaCtx, kp: &KeyPair, x: u16, y: u16, price: 
 /// Compra una parcela en venta pagando como mucho `max_price`.
 pub fn build_buy_parcel(firma: &FirmaCtx, kp: &KeyPair, x: u16, y: u16, max_price: u64, fee: u64, nonce: u64) -> Tx {
     sign_into(firma, kp, Tx::BuyParcel { who: kp.public_bytes(), x, y, max_price, fee, nonce, sig: [0u8; 64] })
+}
+
+// ---------- Dubái RAMI (fase 2, v0.10.0): identidad ----------
+/// Crea o actualiza el perfil. `vinculo` = (clave pública del nodo, firma de
+/// ese nodo sobre `tx::vinculo_mensaje(cuenta)`), o `None` para no vincular
+/// (o para soltar un vínculo anterior).
+#[allow(clippy::too_many_arguments)]
+pub fn build_set_profile(
+    firma: &FirmaCtx,
+    kp: &KeyPair,
+    handle: &str,
+    display: &str,
+    bio: &str,
+    avatar: u8,
+    color: u8,
+    vinculo: Option<([u8; 32], [u8; 64])>,
+    fee: u64,
+    nonce: u64,
+) -> Tx {
+    let (node_pk, node_sig) = vinculo.unwrap_or(([0u8; 32], [0u8; 64]));
+    sign_into(
+        firma,
+        kp,
+        Tx::SetProfile {
+            who: kp.public_bytes(),
+            handle: handle.as_bytes().to_vec(),
+            display: display.as_bytes().to_vec(),
+            bio: bio.as_bytes().to_vec(),
+            avatar,
+            color,
+            node_pk,
+            node_sig,
+            fee,
+            nonce,
+            sig: [0u8; 64],
+        },
+    )
 }
 
 /// Almacén local de reveals (payload+secreto) por txid de commit. Nunca se
