@@ -2339,7 +2339,7 @@
       document.getElementById("cityFp").textContent = p.fingerprint || "—";
       if(c3d.handle) c3d.handle.setPresence(p.avatars || []);
       var who = document.getElementById("cityWho"), av = p.avatars || [];
-      who.textContent = av.length ? t("Conectados ahora:")+" "+av.map(function(a){ return (a.verified ? "✓ "+(a.display||a.handle) : (a.name||t("visitante")))+" ("+a.fingerprint.slice(0,9)+")"; }).join(", ") : t("Nadie más ahora mismo.");
+      who.textContent = av.length ? t("Conectados ahora:")+" "+av.map(function(a){ return (a.verified ? "✓ @"+a.handle+(a.display ? " ("+a.display+")" : "") : (a.name||t("visitante")))+" ["+a.fingerprint.slice(0,9)+"]"; }).join(", ") : t("Nadie más ahora mismo.");
       var log = document.getElementById("cityChat"), h = "";
       (p.chat||[]).forEach(function(c){ h += '<div class="msg'+(c.me?' me':'')+'"><span class="who">'+esc(c.name||t("visitante"))+' <span class="fp">'+esc(c.fingerprint.slice(0,9))+'</span></span> '+esc(c.text)+'</div>'; });
       if(log.innerHTML !== h){ log.innerHTML = h; log.scrollTop = log.scrollHeight; }
@@ -2361,7 +2361,7 @@
   setInterval(pushPresence, 1000);
 
   // ---------- Identidad del jugador y multiverso (v0.10.0) ----------
-  var prof = { me:null, color:0, players:null, mv:null, ghosts:false, tip:null, lastPlayers:"", lastMv:"" };
+  var prof = { me:null, color:0, avatar:null, players:null, mv:null, ghosts:false, tip:null, lastPlayers:"", lastMv:"" };
   var AV_COLORS = ['#7ef0c0','#6ea8fe','#ffd166','#ff6b6b','#c77dff','#4ccf6e','#f2b84b','#3ad1e0','#f4f4f4','#2b3a67','#8c5a3c','#e07a5f','#81b29a','#f2cc8f','#9b5de5','#00bbf9'];
   function buildSwatches(){
     var box = document.getElementById("cyColors"), h = "";
@@ -2370,6 +2370,11 @@
   }
   buildSwatches();
   document.getElementById("cyColors").addEventListener("click", function(e){ var sw = e.target.closest(".sw"); if(!sw) return; prof.color = +sw.getAttribute("data-i"); buildSwatches(); });
+  /** Estilo a guardar: el de la cadena si el desplegable sigue en su familia. */
+  function avatarElegido(){
+    var sel = +document.getElementById("cyStyle").value;
+    return (prof.avatar !== null && prof.avatar % 4 === sel) ? prof.avatar : sel;
+  }
   function gradeHtml(g){ return g ? '<span class="grade" title="'+esc((g.motivos||[]).join("\n"))+'">'+esc(g.codigo)+'</span>' : "—"; }
   function profileLine(p){
     return '<b>'+esc(p.display||p.handle)+'</b> <span class="mono">@'+esc(p.handle)+'</span> · '+t("fuente")+' '+gradeHtml(p.grado)+' · '+p.empresas.length+' '+t("empresa(s)")+' · '+t("ingresos")+' '+ramShort(p.ingresos)+' RAMI · '+t("saldo")+' '+ramShort(p.balance)+' RAMI'+
@@ -2391,7 +2396,10 @@
       if(first){
         var hEl = document.getElementById("cyHandle"), dEl = document.getElementById("cyDisplay"), bEl = document.getElementById("cyBio");
         if(!hEl.value) hEl.value = p.handle; if(!dEl.value) dEl.value = p.display; if(!bEl.value) bEl.value = p.bio;
-        document.getElementById("cyStyle").value = String((p.avatar|0) % 4); prof.color = (p.color|0) % AV_COLORS.length; buildSwatches();
+        // El cliente 3D dibuja cuatro cuerpos, pero la cadena guarda 0..15: se
+        // recuerda el valor tal cual para no rebajarlo al guardar sin tocarlo.
+        prof.avatar = p.avatar|0;
+        document.getElementById("cyStyle").value = String(prof.avatar % 4); prof.color = (p.color|0) % AV_COLORS.length; buildSwatches();
         document.getElementById("cyLink").checked = !!p.node_pk;
         var nk = document.getElementById("cyNick"); if(!nk.value.trim()) nk.value = p.handle;
       }
@@ -2400,7 +2408,7 @@
   document.getElementById("cyProfileSave").addEventListener("click", function(){
     var st = document.getElementById("cyProfileStatus");
     var body = { handle: document.getElementById("cyHandle").value.trim().toLowerCase(), display: document.getElementById("cyDisplay").value.trim(), bio: document.getElementById("cyBio").value.trim(),
-      avatar: +document.getElementById("cyStyle").value, color: prof.color, link: document.getElementById("cyLink").checked };
+      avatar: avatarElegido(), color: prof.color, link: document.getElementById("cyLink").checked };
     if(!/^[a-z0-9_]{3,20}$/.test(body.handle)){ st.textContent = "✗ "+t("nombre inválido: de 3 a 20 caracteres, solo a-z, 0-9 y _"); return; }
     st.textContent = t("Enviando…");
     jpost("/api/city/profile", body).then(function(r){

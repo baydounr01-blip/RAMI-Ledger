@@ -33,6 +33,16 @@ en su altura, sin romperse, en el primer bloque que lleve un perfil.
   palmeras; coches con habitáculo y faros; **avatares articulados** que andan,
   con cuatro estilos (casual, kandura y gutra, abaya, traje) y 16 colores. A
   pie se empieza en la calle, delante de la parcela.
+- **Revisión y arreglos.** Una revisión por subsistemas de este mismo cambio
+  dejó cinco defectos confirmados, ya corregidos aquí: junto al ✓ va el
+  **nombre único** y no el alias (el alias es libre y no es único, así que
+  servía para imitar a otro jugador); `rami-wallet` comprueba **toda** tx con
+  las reglas del consenso antes de escribirla en el mempool (antes anunciaba
+  «enviada» una tx que nunca entraría en un bloque) y valida `--avatar`,
+  `--color`, `--display` y `--bio`; el panel ya no rebaja a 0–3 un estilo de
+  avatar 4–15 guardado desde la terminal; los edificios, hitos, coches,
+  palmeras y avatares **reciben** sombra (antes solo la proyectaban); y los
+  tonos del skyline por barrio se linealizan como el resto de la paleta.
 - **Compatibilidad.** Ningún fichero existente cambia de formato;
   `tools/compat/roundtrip.sh` sigue en verde con la v0.7.0. Un binario 0.9.0
   que abra un `chain.jsonl` con perfiles no lo lee: la salida es actualizar.
@@ -123,6 +133,17 @@ breaking, at the first block that carries a profile.
   a cabin and headlights; **articulated avatars** that walk, with four styles
   (casual, kandura and ghutra, abaya, suit) and 16 colours. On foot you start
   on the street, in front of the parcel.
+- **Review and fixes.** A per-subsystem review of this very change left five
+  confirmed defects, fixed here: the ✓ now carries the **unique name** and not
+  the display name (free text, not unique: it served to imitate another
+  player); `rami-wallet` checks **every** transaction against
+  the consensus rules before writing it to the mempool (it used to announce
+  "sent" for a transaction that would never enter a block) and validates
+  `--avatar`, `--color`, `--display` and `--bio`; the dashboard no longer
+  downgrades an avatar style of 4–15 set from the terminal to 0–3; buildings,
+  landmarks, cars, palm trees and avatars now **receive** shadows (they only
+  cast them before); and the per-district skyline tones are linearised like
+  the rest of the palette.
 - **Compatibility.** No existing file changes format;
   `tools/compat/roundtrip.sh` stays green with v0.7.0. A 0.9.0 binary that
   opens a `chain.jsonl` with profiles does not read it: the way out is to

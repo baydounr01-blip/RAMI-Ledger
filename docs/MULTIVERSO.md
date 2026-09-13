@@ -32,7 +32,9 @@ duplican: se derivan del estado.
 diciendo llamarse como otro. Con él, un avatar «es» una cuenta solo si el
 nodo que firma su presencia firmó también, en la cadena, el vínculo con esa
 cuenta; el panel lo marca con ✓ y muestra el nombre y las empresas del
-perfil, no el nombre declarado. Un atacante sin la clave del nodo no puede
+perfil, no el nombre declarado. Junto al ✓ va siempre el **nombre único**
+(`handle`), nunca el alias: el alias es texto libre y no es único, así que
+rotular con él dejaría pasar avatares «✓ rami» que no son @rami. Un atacante sin la clave del nodo no puede
 producir esa firma, y sin la clave de la cuenta no puede publicar el perfil.
 
 **Qué pasa con la 0.9.0.** Anuncia la regla 3; la 0.10.0 anuncia la 4
@@ -107,9 +109,9 @@ Hecho, lo que hace el código de `city3d.js`:
   casen sin costura;
 - el cielo se renderiza a un **mapa cúbico** cada ~2 s; edificios y mar lo
   reflejan con Fresnel (cristal según el color de la fachada);
-- **sombras reales** del sol (y de la luna de noche) sobre terreno y
-  edificios, con un encuadre que sigue a la cámara (350 m a pie, hasta
-  3,5 km en órbita);
+- **sombras reales** del sol (y de la luna de noche): terreno, edificios,
+  hitos, coches, palmeras y avatares las proyectan y las reciben, con un
+  encuadre que sigue a la cámara (350 m a pie, hasta 3,5 km en órbita);
 - fachadas con forjados, retícula de ventanas, oclusión de contacto en la
   base y ventanas que se encienden al anochecer;
 - mar con olas de varias frecuencias, brillo del sol, **profundidad leída del
