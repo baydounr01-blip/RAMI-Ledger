@@ -126,6 +126,25 @@ impl Asset {
     }
 }
 
+/// Perfil del jugador (v0.10.0): lo que la cadena sabe de una cuenta que
+/// quiere tener cara en la ciudad. Todo lo demás (empresas, activos,
+/// operaciones) se deriva del estado; nada se duplica aquí.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Profile {
+    /// Nombre único (`a-z`, `0-9`, `_`), el que se ve en la ciudad.
+    pub handle: String,
+    pub display: String,
+    pub bio: String,
+    pub avatar: u8,
+    pub color: u8,
+    /// Identidad del nodo con la que este jugador se pasea por la ciudad
+    /// (firma de presencia y chat), si la vinculó. Verificada por consenso.
+    pub node_pk: Option<AccountId>,
+    /// Altura del primer perfil y de la última actualización.
+    pub since: u64,
+    pub updated: u64,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct State {
     pub accounts: HashMap<AccountId, Account>,
@@ -145,6 +164,11 @@ pub struct State {
     pub quemado: Amount,
     /// Dubái: últimas operaciones del mercado (cotización), acotadas.
     pub trades: VecDeque<Trade>,
+    /// v0.10.0: perfiles por cuenta, nombres únicos → cuenta y vínculos
+    /// identidad-del-nodo → cuenta (un nodo, una cuenta).
+    pub profiles: BTreeMap<AccountId, Profile>,
+    pub handles: BTreeMap<String, AccountId>,
+    pub nodes: BTreeMap<AccountId, AccountId>,
 }
 
 impl State {
@@ -572,6 +596,63 @@ pub fn apply_tx(
             );
             Ok(())
         }
+
+        // ---------- Dubái RAMI (fase 2): identidad ----------
+        Tx::SetProfile { who, handle, display, bio, avatar, color, node_pk, fee, nonce, .. } => {
+            if !dubai {
+                return Err("las reglas de Dubái no rigen todavía".into());
+            }
+            require_nonce(state, who, *nonce)?;
+            // La forma (longitudes, alfabeto, UTF-8, firma del vínculo) ya la
+            // comprobó `verify_tx_con`; aquí, lo que depende del estado.
+            let handle_s = String::from_utf8(handle.clone()).map_err(|_| "nombre no UTF-8".to_string())?;
+            if let Some(dueno) = state.handles.get(&handle_s) {
+                if dueno != who {
+                    return Err("ese nombre ya tiene dueño".into());
+                }
+            }
+            let vinculo = if *node_pk == [0u8; 32] { None } else { Some(*node_pk) };
+            if let Some(npk) = vinculo {
+                if let Some(cuenta) = state.nodes.get(&npk) {
+                    if cuenta != who {
+                        return Err("ese nodo ya está vinculado a otra cuenta".into());
+                    }
+                }
+            }
+            let anterior = state.profiles.get(who).cloned();
+            let nombre_nuevo = anterior.as_ref().map(|p| p.handle != handle_s).unwrap_or(true);
+            let quema = if nombre_nuevo { ciudad::PRECIO_NOMBRE } else { 0 };
+            spend(state, who, quema, *fee)?;
+            state.quemado += quema;
+            if let Some(p) = &anterior {
+                if p.handle != handle_s {
+                    state.handles.remove(&p.handle);
+                }
+                if let Some(old) = p.node_pk {
+                    if Some(old) != vinculo {
+                        state.nodes.remove(&old);
+                    }
+                }
+            }
+            state.handles.insert(handle_s.clone(), *who);
+            if let Some(npk) = vinculo {
+                state.nodes.insert(npk, *who);
+            }
+            state.profiles.insert(
+                *who,
+                Profile {
+                    handle: handle_s,
+                    display: String::from_utf8_lossy(display).to_string(),
+                    bio: String::from_utf8_lossy(bio).to_string(),
+                    avatar: *avatar,
+                    color: *color,
+                    node_pk: vinculo,
+                    since: anterior.as_ref().map(|p| p.since).unwrap_or(height),
+                    updated: height,
+                },
+            );
+            Ok(())
+        }
     }
 }
 
@@ -660,7 +741,8 @@ mod tests {
             | Tx::SellAsset { sig: s, .. }
             | Tx::BuyAsset { sig: s, .. }
             | Tx::SellParcel { sig: s, .. }
-            | Tx::BuyParcel { sig: s, .. } => *s = sig,
+            | Tx::BuyParcel { sig: s, .. }
+            | Tx::SetProfile { sig: s, .. } => *s = sig,
             Tx::Coinbase { .. } => {}
         }
         tx
@@ -684,10 +766,105 @@ mod tests {
             | Tx::SellAsset { sig: s, .. }
             | Tx::BuyAsset { sig: s, .. }
             | Tx::SellParcel { sig: s, .. }
-            | Tx::BuyParcel { sig: s, .. } => *s = sig,
+            | Tx::BuyParcel { sig: s, .. }
+            | Tx::SetProfile { sig: s, .. } => *s = sig,
             Tx::Coinbase { .. } => {}
         }
         tx
+    }
+
+    /// Identidad (v0.10.0): el nombre es único y cuesta 2 RAMI quemados, el
+    /// vínculo con el nodo exige la firma de ese nodo, cambiar de nombre libera
+    /// el anterior, actualizar sin cambiar de nombre no quema, y nada de esto
+    /// vale antes de la activación de Dubái.
+    #[test]
+    fn perfil_nombre_unico_vinculo_y_quema() {
+        use crate::tx::vinculo_mensaje;
+        let net = [9u8; 32];
+        let con = FirmaCtx::v2(net).con_dubai(true);
+        let sin = FirmaCtx::v2(net);
+        let a = KeyPair::from_secret(&[41u8; 32]);
+        let b = KeyPair::from_secret(&[42u8; 32]);
+        let nodo = KeyPair::from_secret(&[43u8; 32]);
+        let (pa, pb, pn) = (a.public_bytes(), b.public_bytes(), nodo.public_bytes());
+        let mut st = State::default();
+        let b0 = block_with(0, ZERO_HASH, vec![coinbase(0, pa, 50 * COIN)]);
+        apply_block_con(&mut st, &b0, 0, &sin).unwrap();
+        let perfil = |kp: &KeyPair, handle: &str, display: &str, nonce: u64, vinculo: Option<([u8; 32], [u8; 64])>| {
+            let (node_pk, node_sig) = vinculo.unwrap_or(([0u8; 32], [0u8; 64]));
+            Tx::SetProfile {
+                who: kp.public_bytes(), handle: handle.as_bytes().to_vec(), display: display.as_bytes().to_vec(),
+                bio: b"aprendo a hacer negocios".to_vec(), avatar: 3, color: 5, node_pk, node_sig, fee: 1, nonce, sig: [0u8; 64],
+            }
+        };
+        // Antes de la activación no vale (ni siquiera por la forma).
+        let temprano = signed_con(&a, &sin, perfil(&a, "rami", "Rami", 0, None));
+        assert!(verify_tx_con(&temprano, &sin).unwrap_err().contains("antes de su activación"));
+        // Forma: nombre inválido, vínculo mal firmado.
+        for malo in ["Ra", "Rami", "rami-ledger", "abcdefghijklmnopqrstu", "ramí"] {
+            let tx = signed_con(&a, &con, perfil(&a, malo, "x", 0, None));
+            assert!(verify_tx_con(&tx, &con).is_err(), "{malo} debería ser inválido");
+        }
+        let firma_ajena = nodo.sign(&vinculo_mensaje(&pb)); // firma la cuenta de B, no la de A
+        let tx = signed_con(&a, &con, perfil(&a, "rami", "Rami", 0, Some((pn, firma_ajena))));
+        assert!(verify_tx_con(&tx, &con).unwrap_err().contains("vínculo"));
+        let tx = signed_con(&a, &con, perfil(&a, "rami", "Rami", 0, Some(([0u8; 32], [1u8; 64]))));
+        assert!(verify_tx_con(&tx, &con).is_err());
+
+        // Bloque 1: A registra «rami» vinculado a su nodo; B paga con el saldo que A le manda.
+        let firma_nodo = nodo.sign(&vinculo_mensaje(&pa));
+        let alta = signed_con(&a, &con, perfil(&a, "rami", "Rami", 0, Some((pn, firma_nodo))));
+        let pago_b = signed_con(&a, &con, Tx::Transfer { from: pa, to: pb, amount: 10 * COIN, fee: 1, nonce: 1, sig: [0u8; 64] });
+        let quemado_antes = st.quemado;
+        let saldo_antes = st.balance_of(&pa);
+        let b1 = block_with(1, b0.hash(), vec![coinbase(1, pa, 40 * COIN + 2), alta, pago_b]);
+        apply_block_con(&mut st, &b1, 1, &con).unwrap();
+        let p = &st.profiles[&pa];
+        assert_eq!(p.handle, "rami");
+        assert_eq!(p.node_pk, Some(pn));
+        assert_eq!((p.since, p.updated), (1, 1));
+        assert_eq!(st.handles["rami"], pa);
+        assert_eq!(st.nodes[&pn], pa);
+        assert_eq!(st.quemado, quemado_antes + ciudad::PRECIO_NOMBRE);
+        assert_eq!(st.balance_of(&pa), saldo_antes + 40 * COIN + 2 - ciudad::PRECIO_NOMBRE - 1 - 10 * COIN - 1);
+        // Un binario sin Dubái no admite el bloque.
+        let mut viejo = State::default();
+        apply_block_con(&mut viejo, &b0, 0, &sin).unwrap();
+        assert!(apply_block_con(&mut viejo, &b1, 1, &sin).is_err());
+
+        // Bloque 2: B no puede coger «rami» ni el nodo de A; sí «beatriz».
+        let usurpa = signed_con(&b, &con, perfil(&b, "rami", "B", 0, None));
+        let b2mal = block_with(2, b1.hash(), vec![coinbase(2, pa, 40 * COIN), usurpa]);
+        assert!(apply_block_con(&mut st.clone(), &b2mal, 2, &con).unwrap_err().contains("ya tiene dueño"));
+        let firma_nodo_b = nodo.sign(&vinculo_mensaje(&pb));
+        let roba_nodo = signed_con(&b, &con, perfil(&b, "beatriz", "B", 0, Some((pn, firma_nodo_b))));
+        let b2mal = block_with(2, b1.hash(), vec![coinbase(2, pa, 40 * COIN), roba_nodo]);
+        assert!(apply_block_con(&mut st.clone(), &b2mal, 2, &con).unwrap_err().contains("vinculado a otra cuenta"));
+        let alta_b = signed_con(&b, &con, perfil(&b, "beatriz", "Beatriz", 0, None));
+        // A actualiza su alias sin cambiar de nombre: no quema.
+        let alias = signed_con(&a, &con, perfil(&a, "rami", "Rami B.", 2, Some((pn, firma_nodo))));
+        let b2 = block_with(2, b1.hash(), vec![coinbase(2, pa, 40 * COIN + 2), alta_b, alias]);
+        let quemado_antes = st.quemado;
+        apply_block_con(&mut st, &b2, 2, &con).unwrap();
+        assert_eq!(st.quemado, quemado_antes + ciudad::PRECIO_NOMBRE, "solo el nombre de B quema");
+        assert_eq!(st.profiles[&pa].display, "Rami B.");
+        assert_eq!((st.profiles[&pa].since, st.profiles[&pa].updated), (1, 2));
+        assert_eq!(st.profiles[&pb].handle, "beatriz");
+
+        // Bloque 3: A cambia de nombre y suelta el vínculo: «rami» queda libre y el nodo también.
+        let cambio = signed_con(&a, &con, perfil(&a, "rami_2", "Rami", 3, None));
+        let b3 = block_with(3, b2.hash(), vec![coinbase(3, pa, 40 * COIN + 1), cambio]);
+        apply_block_con(&mut st, &b3, 3, &con).unwrap();
+        assert!(!st.handles.contains_key("rami"));
+        assert_eq!(st.handles["rami_2"], pa);
+        assert!(st.nodes.is_empty());
+        assert_eq!(st.profiles[&pa].node_pk, None);
+        // Y ahora B puede quedarse con «rami».
+        let hereda = signed_con(&b, &con, perfil(&b, "rami", "Beatriz", 1, None));
+        let b4 = block_with(4, b3.hash(), vec![coinbase(4, pa, 40 * COIN + 1), hereda]);
+        apply_block_con(&mut st, &b4, 4, &con).unwrap();
+        assert_eq!(st.handles["rami"], pb);
+        assert!(!st.handles.contains_key("beatriz"));
     }
 
     /// Dubái de punta a punta: la coinbase deja el 20 % al fondo, la parcela

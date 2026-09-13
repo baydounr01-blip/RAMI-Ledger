@@ -56,6 +56,38 @@ const T_SELL_ASSET: u8 = 0x20;
 const T_BUY_ASSET: u8 = 0x21;
 const T_SELL_PARCEL: u8 = 0x22;
 const T_BUY_PARCEL: u8 = 0x23;
+// Dubái RAMI (fase 2, v0.10.0): identidad del jugador en la cadena. Solo válida
+// desde la activación de Dubái (`FirmaCtx.dubai`).
+const T_SET_PROFILE: u8 = 0x30;
+
+/// Perfil (v0.10.0): nombre único de 3 a 20 bytes `a-z`, `0-9` y `_`.
+pub const MIN_HANDLE_BYTES: usize = 3;
+pub const MAX_HANDLE_BYTES: usize = 20;
+/// Alias visible (UTF-8) y biografía (UTF-8), topes en bytes.
+pub const MAX_DISPLAY_BYTES: usize = 32;
+pub const MAX_BIO_BYTES: usize = 160;
+/// Estilos de avatar y colores del catálogo del cliente (0..=15).
+pub const MAX_AVATAR: u8 = 15;
+pub const MAX_COLOR: u8 = 15;
+/// Etiqueta de dominio del vínculo cuenta ↔ identidad del nodo: la identidad
+/// del nodo (la que firma presencia y chat en la ciudad) firma la clave de la
+/// cuenta, y así un avatar «es» la cuenta que dice ser. Nadie puede vincular
+/// un nodo ajeno sin su clave.
+pub const DS_VINCULO: &[u8] = b"RAMI-CITY/vinculo/v1";
+
+/// ¿Es un nombre válido? Solo minúsculas ASCII, dígitos y guion bajo; sin
+/// normalización Unicode (el consenso no depende de tablas que cambian).
+pub fn handle_valido(h: &[u8]) -> bool {
+    (MIN_HANDLE_BYTES..=MAX_HANDLE_BYTES).contains(&h.len())
+        && h.iter().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_')
+}
+
+/// Mensaje que firma la identidad del nodo para vincularse a una cuenta.
+pub fn vinculo_mensaje(cuenta: &AccountId) -> Vec<u8> {
+    let mut m = DS_VINCULO.to_vec();
+    m.extend_from_slice(cuenta);
+    m
+}
 
 /// Lado de la cuadrícula de la ciudad HASTA la activación de Dubái (parcelas
 /// 0..CITY_SIZE en x e y). Desde Dubái: `crate::ciudad::CITY_SIZE_DUBAI` (64).
@@ -122,6 +154,27 @@ pub enum Tx {
     SellParcel { who: AccountId, x: u16, y: u16, price: Amount, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
     /// Compra una parcela en venta: paga al dueño y la parcela pasa al comprador.
     BuyParcel { who: AccountId, x: u16, y: u16, max_price: Amount, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
+    // ---------- Dubái RAMI (fase 2, v0.10.0): identidad del jugador ----------
+    /// Crea o actualiza el perfil de la cuenta: nombre único (`handle`), alias,
+    /// biografía, avatar y color, y —opcional— el vínculo con la identidad del
+    /// nodo (`node_pk`, con `node_sig` = firma de ese nodo sobre la cuenta).
+    /// Registrar un nombre nuevo quema `ciudad::PRECIO_NOMBRE`; actualizar el
+    /// resto con el mismo nombre solo paga la comisión.
+    SetProfile {
+        who: AccountId,
+        handle: Vec<u8>,
+        display: Vec<u8>,
+        bio: Vec<u8>,
+        avatar: u8,
+        color: u8,
+        node_pk: [u8; 32],
+        #[serde(with = "crate::serdehex::b64")]
+        node_sig: [u8; 64],
+        fee: Amount,
+        nonce: u64,
+        #[serde(with = "crate::serdehex::b64")]
+        sig: [u8; 64],
+    },
 }
 
 fn put_u8(o: &mut Vec<u8>, x: u8) {
@@ -274,6 +327,21 @@ pub fn encode_body(tx: &Tx) -> Vec<u8> {
             put_u64(&mut o, *fee);
             put_u64(&mut o, *nonce);
         }
+        Tx::SetProfile { who, handle, display, bio, avatar, color, node_pk, node_sig, fee, nonce, .. } => {
+            put_u8(&mut o, T_SET_PROFILE);
+            put_32(&mut o, who);
+            put_var(&mut o, handle);
+            put_var(&mut o, display);
+            put_var(&mut o, bio);
+            put_u8(&mut o, *avatar);
+            put_u8(&mut o, *color);
+            put_32(&mut o, node_pk);
+            // La firma del nodo forma parte del cuerpo: la firma de la cuenta
+            // cubre el vínculo entero.
+            o.extend_from_slice(node_sig);
+            put_u64(&mut o, *fee);
+            put_u64(&mut o, *nonce);
+        }
     }
     o
 }
@@ -295,7 +363,8 @@ fn sig_of(tx: &Tx) -> Option<&[u8; 64]> {
         | Tx::SellAsset { sig, .. }
         | Tx::BuyAsset { sig, .. }
         | Tx::SellParcel { sig, .. }
-        | Tx::BuyParcel { sig, .. } => Some(sig),
+        | Tx::BuyParcel { sig, .. }
+        | Tx::SetProfile { sig, .. } => Some(sig),
     }
 }
 
@@ -314,7 +383,8 @@ pub fn signer_of(tx: &Tx) -> Option<&AccountId> {
         | Tx::SellAsset { who, .. }
         | Tx::BuyAsset { who, .. }
         | Tx::SellParcel { who, .. }
-        | Tx::BuyParcel { who, .. } => Some(who),
+        | Tx::BuyParcel { who, .. }
+        | Tx::SetProfile { who, .. } => Some(who),
         Tx::TransferAsset { from, .. } => Some(from),
     }
 }
@@ -337,13 +407,14 @@ pub fn fee_of(tx: &Tx) -> Amount {
         | Tx::SellAsset { fee, .. }
         | Tx::BuyAsset { fee, .. }
         | Tx::SellParcel { fee, .. }
-        | Tx::BuyParcel { fee, .. } => *fee,
+        | Tx::BuyParcel { fee, .. }
+        | Tx::SetProfile { fee, .. } => *fee,
     }
 }
 
 /// ¿Es una transacción de la fase Dubái (solo válida desde la activación)?
 pub fn es_tx_dubai(tx: &Tx) -> bool {
-    matches!(tx, Tx::SellAsset { .. } | Tx::BuyAsset { .. } | Tx::SellParcel { .. } | Tx::BuyParcel { .. })
+    matches!(tx, Tx::SellAsset { .. } | Tx::BuyAsset { .. } | Tx::SellParcel { .. } | Tx::BuyParcel { .. } | Tx::SetProfile { .. })
 }
 
 /// Mensaje firmado (regla v1) = DS_TAG || cuerpo(sin firma).
@@ -559,8 +630,33 @@ pub fn verify_tx_con(tx: &Tx, ctx: &FirmaCtx) -> Result<(), String> {
                 return Err("la cosecha debe repartir algo".into());
             }
         }
-        Tx::SellAsset { .. } | Tx::BuyAsset { .. } | Tx::SellParcel { .. } | Tx::BuyParcel { .. } if !ctx.dubai => {
+        Tx::SellAsset { .. } | Tx::BuyAsset { .. } | Tx::SellParcel { .. } | Tx::BuyParcel { .. } | Tx::SetProfile { .. }
+            if !ctx.dubai =>
+        {
             return Err("transacción de Dubái antes de su activación".into());
+        }
+        Tx::SetProfile { who, handle, display, bio, avatar, color, node_pk, node_sig, .. } => {
+            if !handle_valido(handle) {
+                return Err("nombre inválido: de 3 a 20 caracteres, solo a-z, 0-9 y _".into());
+            }
+            if display.len() > MAX_DISPLAY_BYTES || std::str::from_utf8(display).is_err() {
+                return Err("alias demasiado largo o no UTF-8".into());
+            }
+            if bio.len() > MAX_BIO_BYTES || std::str::from_utf8(bio).is_err() {
+                return Err("biografía demasiado larga o no UTF-8".into());
+            }
+            if *avatar > MAX_AVATAR || *color > MAX_COLOR {
+                return Err("avatar o color fuera del catálogo".into());
+            }
+            if *node_pk == [0u8; 32] {
+                if *node_sig != [0u8; 64] {
+                    return Err("vínculo vacío con firma: la firma del nodo debe ir a cero".into());
+                }
+            } else {
+                let nk = VerifyingKey::from_bytes(node_pk).map_err(|_| "clave del nodo inválida".to_string())?;
+                nk.verify_strict(&vinculo_mensaje(who), &Signature::from_bytes(node_sig))
+                    .map_err(|_| "el vínculo con el nodo no está firmado por ese nodo".to_string())?;
+            }
         }
         Tx::SellParcel { x, y, .. } | Tx::BuyParcel { x, y, .. } => {
             if *x >= size || *y >= size {

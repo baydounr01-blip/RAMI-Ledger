@@ -20,7 +20,7 @@ use rami_core::store::ChainDir;
 use rami_core::tx::{signer_of, txid, verify_tx_con, AccountId, FirmaCtx, Tx};
 
 use rami_wallet::{
-    build_commit, build_reveal, build_stake, build_transfer, default_keystore_path, fmt_ram,
+    build_commit, build_reveal, build_set_profile, build_stake, build_transfer, default_keystore_path, fmt_ram,
     load_reveal, parse_pubkey, parse_ram, save_reveal, Keystore,
 };
 
@@ -209,6 +209,34 @@ fn cmd_send(args: &[String]) -> ExitCode {
     submit(&chain, &build_transfer(&firma, &kp, to, amount, fee_of(args), nonce))
 }
 
+/// v0.10.0: `profile --handle NOMBRE [--display ALIAS] [--bio TEXTO] [--avatar N]
+/// [--color N]`. Desde la CLI el perfil va sin vínculo con un nodo; el vínculo
+/// (el avatar de tu nodo «es» esta cuenta) lo firma el monedero de escritorio,
+/// que tiene la identidad del nodo a mano.
+fn cmd_profile(args: &[String]) -> ExitCode {
+    let Some(dir) = arg(args, "--chain") else { return die("falta --chain DIR") };
+    let Some(handle) = arg(args, "--handle") else { return die("falta --handle NOMBRE (3–20: a-z, 0-9, _)") };
+    let handle = handle.trim().to_lowercase();
+    if !rami_core::tx::handle_valido(handle.as_bytes()) {
+        return die("nombre inválido: de 3 a 20 caracteres, solo a-z, 0-9 y _");
+    }
+    let display = arg(args, "--display").unwrap_or_default();
+    let bio = arg(args, "--bio").unwrap_or_default();
+    let avatar: u8 = arg(args, "--avatar").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let color: u8 = arg(args, "--color").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let kp = match keypair_from(args) {
+        Ok(k) => k,
+        Err(e) => return die(&e),
+    };
+    let chain = ChainDir::new(&dir);
+    let (nonce, firma) = match next_nonce(&chain, params_of(args), &kp.public_bytes()) {
+        Ok(n) => n,
+        Err(e) => return die(&e),
+    };
+    println!("perfil «{handle}» · registrar un nombre nuevo quema {} RAMI", fmt_ram(rami_core::ciudad::PRECIO_NOMBRE));
+    submit(&chain, &build_set_profile(&firma, &kp, &handle, &display, &bio, avatar, color, None, fee_of(args), nonce))
+}
+
 fn cmd_stake(args: &[String], unstake: bool) -> ExitCode {
     let Some(dir) = arg(args, "--chain") else { return die("falta --chain DIR") };
     let Some(amount_s) = arg(args, "--amount") else { return die("falta --amount RAMI") };
@@ -347,7 +375,7 @@ fn cmd_release_verify(args: &[String]) -> ExitCode {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let Some(cmd) = args.get(1) else {
-        eprintln!("uso: rami-wallet new|address|balance|send|stake|unstake|commit|reveal [opciones]");
+        eprintln!("uso: rami-wallet new|address|balance|send|stake|unstake|commit|reveal|profile [opciones]");
         eprintln!("⚠ TESTNET experimental — sin valor monetario, no es una inversión.");
         return ExitCode::FAILURE;
     };
@@ -364,6 +392,7 @@ fn main() -> ExitCode {
         "unstake" => cmd_stake(&args[2..], true),
         "commit" => cmd_commit(&args[2..]),
         "reveal" => cmd_reveal(&args[2..]),
+        "profile" => cmd_profile(&args[2..]),
         other => die(&format!("subcomando desconocido: {other}")),
     }
 }

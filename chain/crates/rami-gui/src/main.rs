@@ -30,8 +30,9 @@ use rami_node::{spawn, NodeConfig, NodeHandle};
 use rami_wallet::calibracion;
 use rami_wallet::{
     build_buy_asset, build_buy_parcel, build_claim_parcel, build_commit, build_harvest, build_list_lease,
-    build_mint_asset, build_rent, build_reveal, build_sell_asset, build_sell_parcel, build_stake, build_transfer,
-    build_transfer_asset, default_keystore_path, fmt_ram, load_reveal, parse_pubkey, parse_ram, save_reveal, Keystore,
+    build_mint_asset, build_rent, build_reveal, build_sell_asset, build_sell_parcel, build_set_profile, build_stake,
+    build_transfer, build_transfer_asset, default_keystore_path, fmt_ram, load_reveal, parse_pubkey, parse_ram, save_reveal,
+    Keystore,
 };
 
 use http::{Request, Response};
@@ -643,9 +644,91 @@ fn route(g: &Gui, req: Request) -> Response {
         ("GET", "/api/city") => {
             let node = match g.node_ready() { Ok(n) => n, Err(r) => return r };
             let me = g.wallet.lock().unwrap_or_else(|e| e.into_inner()).pubkey.map(hex::encode);
-            let mut v = serde_json::to_value(node.city()).unwrap_or_else(|_| json!({}));
+            // v0.10.0: `?tip=<hash>` devuelve la ciudad tal como es en otra
+            // punta del árbol (una realidad alternativa del multiverso).
+            let city = match req.query_get("tip") {
+                Some(h) if !h.is_empty() => {
+                    let Ok(bytes) = hex::decode(h) else { return err("tip no es hex") };
+                    let Ok(tip) = <[u8; 32]>::try_from(bytes) else { return err("tip inválido") };
+                    match node.city_of(tip) {
+                        Some(c) => c,
+                        None => return err("esa punta no está en el árbol de este nodo"),
+                    }
+                }
+                _ => node.city(),
+            };
+            let mut v = serde_json::to_value(city).unwrap_or_else(|_| json!({}));
             v["ok"] = json!(true);
             v["me"] = json!(me);
+            Response::json(&v)
+        }
+        // v0.10.0: identidad del jugador y multiverso.
+        ("GET", "/api/city/profile") => {
+            let node = match g.node_ready() { Ok(n) => n, Err(r) => return r };
+            let handle = req.query_get("handle").map(|h| h.trim().to_lowercase()).filter(|h| !h.is_empty());
+            let account = match req.query_get("pk").filter(|p| !p.is_empty()) {
+                Some(p) => match parse_pubkey(&p) { Ok(a) => Some(a), Err(e) => return err(e) },
+                None if handle.is_none() => g.wallet.lock().unwrap_or_else(|e| e.into_inner()).pubkey,
+                None => None,
+            };
+            if account.is_none() && handle.is_none() {
+                return err("monedero sin dirección todavía");
+            }
+            match node.profile(account, handle) {
+                Some(p) => {
+                    let mut v = serde_json::to_value(p).unwrap_or_else(|_| json!({}));
+                    v["ok"] = json!(true);
+                    Response::json(&v)
+                }
+                None => Response::json(&json!({"ok": true, "profile": Value::Null})),
+            }
+        }
+        ("GET", "/api/city/players") => {
+            let node = match g.node_ready() { Ok(n) => n, Err(r) => return r };
+            let max = req.query_get("max").and_then(|s| s.parse::<usize>().ok()).unwrap_or(64);
+            let mut v = serde_json::to_value(node.players(max)).unwrap_or_else(|_| json!({}));
+            v["ok"] = json!(true);
+            Response::json(&v)
+        }
+        ("POST", "/api/city/profile") => {
+            let b = body_json(&req);
+            let handle = str_field(&b, "handle").to_lowercase();
+            if !rami_core::tx::handle_valido(handle.as_bytes()) {
+                return err("nombre inválido: de 3 a 20 caracteres, solo a-z, 0-9 y _");
+            }
+            let display = str_field(&b, "display").to_string();
+            let bio = str_field(&b, "bio").to_string();
+            if display.len() > rami_core::tx::MAX_DISPLAY_BYTES {
+                return err("alias demasiado largo (máx. 32 bytes)");
+            }
+            if bio.len() > rami_core::tx::MAX_BIO_BYTES {
+                return err("biografía demasiado larga (máx. 160 bytes)");
+            }
+            let avatar = b.get("avatar").and_then(|v| v.as_u64()).unwrap_or(0);
+            let color = b.get("color").and_then(|v| v.as_u64()).unwrap_or(0);
+            if avatar > rami_core::tx::MAX_AVATAR as u64 || color > rami_core::tx::MAX_COLOR as u64 {
+                return err("avatar o color fuera del catálogo");
+            }
+            let link = b.get("link").and_then(|v| v.as_bool()).unwrap_or(true);
+            let fee = fee_of(&b);
+            let node = match g.node_ready() { Ok(n) => n, Err(r) => return r };
+            let vinculo = if link {
+                let Some(pk) = g.wallet.lock().unwrap_or_else(|e| e.into_inner()).pubkey else {
+                    return err("monedero bloqueado: desbloquéalo con tu contraseña");
+                };
+                match node.vinculo(pk) {
+                    Some(v) => Some(v),
+                    None => return err("el nodo no pudo firmar el vínculo"),
+                }
+            } else {
+                None
+            };
+            signed_submit(g, move |firma, kp, nonce| build_set_profile(firma, kp, &handle, &display, &bio, avatar as u8, color as u8, vinculo, fee, nonce))
+        }
+        ("GET", "/api/city/multiverse") => {
+            let node = match g.node_ready() { Ok(n) => n, Err(r) => return r };
+            let mut v = serde_json::to_value(node.multiverse()).unwrap_or_else(|_| json!({}));
+            v["ok"] = json!(true);
             Response::json(&v)
         }
         // Dubái: el mentor (una regla pública, no una persona) sobre una parcela.

@@ -227,10 +227,14 @@ pub fn build_block(
 }
 
 /// Regla más alta que entiende este binario (se anuncia en `Status.rule`):
-/// 1 firma v1, 2 firma v2 (v0.8.0), 3 firma v2 + Dubái (v0.9.0).
-pub const REGLA_SOPORTADA: u32 = 3;
+/// 1 firma v1, 2 firma v2 (v0.8.0), 3 firma v2 + Dubái (v0.9.0), 4 Dubái con
+/// identidad del jugador (v0.10.0; misma fecha de activación que Dubái).
+pub const REGLA_SOPORTADA: u32 = 4;
 /// Regla que anunciaba la v0.8.0 (firma v2 sin Dubái).
 pub const REGLA_V2: u32 = 2;
+/// Regla que anunciaba la v0.9.0 (Dubái sin perfiles): entiende presencia y
+/// chat, y sigue la cadena hasta el primer bloque con un perfil.
+pub const REGLA_DUBAI: u32 = 3;
 
 /// El bloque génesis para inicializar una cadena. Testnet = génesis canónico
 /// fijo (network-id estable); regtest = uno minado localmente.
@@ -400,6 +404,8 @@ pub struct ConsensoInfo {
     pub dubai_vigente: bool,
     pub dubai_faltan_segundos: u64,
     pub pares_dubai: usize,
+    /// Pares que anuncian la regla 4 (perfiles de jugador, v0.10.0).
+    pub pares_perfil: usize,
 }
 
 /// El hecho detrás del juicio «sincronizado»: alturas, no adjetivos.
@@ -651,6 +657,19 @@ fn tx_view(tx: &Tx) -> TxView {
             amount: Some(*max_price),
             fee: *fee,
             memo: Some(format!("compra de la parcela ({x},{y})")),
+        },
+        Tx::SetProfile { who, handle, node_pk, fee, .. } => TxView {
+            kind: "set_profile".into(),
+            txid: id,
+            from: Some(hex::encode(who)),
+            to: None,
+            amount: None,
+            fee: *fee,
+            memo: Some(format!(
+                "perfil «{}»{}",
+                String::from_utf8_lossy(handle),
+                if *node_pk == [0u8; 32] { String::new() } else { format!(" · nodo {}", fingerprint_of(node_pk)) }
+            )),
         },
     }
 }
@@ -1107,6 +1126,247 @@ fn market_view(st: &State, height: u64, firma: &FirmaCtx, network: &str, network
 
 // ------------------------- Dubái: presencia y chat (efímeros) -------------------------
 
+// ------------------------- Identidad y multiverso (v0.10.0) -------------------------
+
+/// Reputación del jugador como fuente graduada (código Admiralty, como los
+/// pares): una LETRA por lo que la cadena sabe de él —hechos, no opiniones— y
+/// un NÚMERO por lo observado en esta sesión. Describe; no decide nada.
+#[derive(Clone, Debug, Serialize, Default, PartialEq, Eq)]
+pub struct GradoJugador {
+    pub letra: char,
+    pub numero: u8,
+    /// «B2».
+    pub codigo: String,
+    pub motivos: Vec<String>,
+}
+
+/// Empresa de un jugador, resumida para su ficha.
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct EmpresaView {
+    pub x: u16,
+    pub y: u16,
+    pub name: String,
+    pub kind: u8,
+    pub distrito: u8,
+    pub since: u64,
+    pub ingresos: u64,
+    pub ventas: u64,
+    pub sale: Option<u64>,
+}
+
+/// Ficha pública de un jugador: lo que la cadena sabe (perfil, empresas,
+/// activos, saldo) y lo que este nodo observa (presencia).
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct ProfileView {
+    pub account: String,
+    pub handle: String,
+    pub display: String,
+    pub bio: String,
+    pub avatar: u8,
+    pub color: u8,
+    /// Identidad de nodo vinculada (hex) y su huella, si la hay.
+    pub node_pk: String,
+    pub node_fingerprint: String,
+    pub since: u64,
+    pub updated: u64,
+    pub balance: u64,
+    pub empresas: Vec<EmpresaView>,
+    pub activos: usize,
+    pub ingresos: u64,
+    pub ventas: u64,
+    /// El avatar de este jugador está ahora en la ciudad (visto por este nodo).
+    pub presente: bool,
+    pub grado: GradoJugador,
+}
+
+/// Directorio de jugadores (ordenado por ingresos y antigüedad).
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct PlayersView {
+    pub height: u64,
+    pub total: usize,
+    pub players: Vec<ProfileView>,
+}
+
+/// Una parcela que existe (o es distinta) en otra rama: un edificio «en
+/// superposición» hasta que el consenso colapse hacia una de las dos.
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct GhostView {
+    pub x: u16,
+    pub y: u16,
+    pub name: String,
+    pub kind: u8,
+    pub owner: String,
+    pub distrito: u8,
+    /// `solo_alli`: existe en esa rama y no en la cabeza; `distinta`: existe
+    /// en ambas con otro dueño, nombre o sector; `solo_aqui`: existe en la
+    /// cabeza y no en esa rama (desaparecería si esa rama ganara).
+    pub estado: String,
+}
+
+/// Una punta del árbol vista como una realidad alternativa de la ciudad.
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct TipView {
+    pub hash: String,
+    pub height: u64,
+    /// Trabajo acumulado, como texto decimal (u128).
+    pub work: String,
+    pub is_head: bool,
+    /// Altura del último bloque común con la cabeza y bloques propios desde él.
+    pub fork_height: u64,
+    pub since_fork: u64,
+    pub timestamp: u64,
+    pub dubai: bool,
+    pub empresas: usize,
+    pub fund: u64,
+    pub quemado: u64,
+    /// Diferencias de esta rama frente a la cabeza (acotadas).
+    pub ghosts: Vec<GhostView>,
+    pub ghosts_total: usize,
+}
+
+/// El multiverso: la cabeza y las demás puntas, con lo que cambia en cada una.
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct MultiverseView {
+    pub head: String,
+    pub height: u64,
+    pub tips_total: usize,
+    pub tips: Vec<TipView>,
+}
+
+/// Puntas que se describen (las más pesadas) y fantasmas por punta.
+pub const MULTIVERSE_TIPS: usize = 12;
+pub const MULTIVERSE_GHOSTS: usize = 256;
+
+fn empresas_de(st: &State, cuenta: &AccountId) -> Vec<EmpresaView> {
+    st.parcels
+        .iter()
+        .filter(|(_, p)| p.owner == *cuenta)
+        .map(|((x, y), p)| EmpresaView {
+            x: *x,
+            y: *y,
+            name: p.name.clone(),
+            kind: p.kind,
+            distrito: ciudad::distrito(*x, *y).id,
+            since: p.since,
+            ingresos: p.ingresos,
+            ventas: p.ventas,
+            sale: p.sale,
+        })
+        .collect()
+}
+
+/// La letra del jugador: hechos de la cadena. Sin perfil, F; con perfil pero
+/// sin empresa, E; una empresa, D; empresas con ingresos y un mes de historia,
+/// C; y así hasta A. Los umbrales son enteros y públicos.
+pub fn grado_jugador(st: &State, height: u64, cuenta: &AccountId, presente: bool, verificado: bool) -> GradoJugador {
+    let mut motivos = Vec::new();
+    let Some(p) = st.profiles.get(cuenta) else {
+        motivos.push("sin perfil en la cadena".to_string());
+        return GradoJugador { letra: 'F', numero: 6, codigo: "F6".into(), motivos };
+    };
+    let empresas = empresas_de(st, cuenta);
+    let edad = height.saturating_sub(p.since);
+    let ingresos: u64 = empresas.iter().map(|e| e.ingresos).sum();
+    let ventas: u64 = empresas.iter().map(|e| e.ventas).sum();
+    let activos = st.assets.values().filter(|a| a.owner == *cuenta).count();
+    let letra = if empresas.len() >= 3 && ingresos > 0 && ventas > 0 && edad >= 10_080 {
+        'A'
+    } else if empresas.len() >= 2 && ingresos > 0 && edad >= 1440 {
+        'B'
+    } else if !empresas.is_empty() && ingresos > 0 {
+        'C'
+    } else if !empresas.is_empty() {
+        'D'
+    } else {
+        'E'
+    };
+    motivos.push(format!(
+        "perfil desde la altura {} ({edad} bloques), {} empresa(s), {activos} activo(s), ingresos {} y ventas {} en unidades base",
+        p.since,
+        empresas.len(),
+        ingresos,
+        ventas
+    ));
+    motivos.push(match letra {
+        'A' => "A: tres o más empresas con ingresos y ventas a otras, y una semana de historia (10 080 bloques)".into(),
+        'B' => "B: dos o más empresas con ingresos y un día de historia (1440 bloques)".into(),
+        'C' => "C: al menos una empresa que ya cobra del fondo".into(),
+        'D' => "D: empresa sin ingresos todavía".into(),
+        _ => "E: perfil sin empresa".into(),
+    });
+    let numero = if presente && verificado {
+        1
+    } else if presente {
+        2
+    } else if p.node_pk.is_some() {
+        3
+    } else {
+        4
+    };
+    motivos.push(match numero {
+        1 => "1: su avatar está en la ciudad ahora y el vínculo con ese nodo está en la cadena".into(),
+        2 => "2: un avatar con su nombre está en la ciudad ahora, sin vínculo verificado".into(),
+        3 => "3: vinculó su nodo; no está en la ciudad ahora".into(),
+        _ => "4: sin vínculo con ningún nodo".into(),
+    });
+    GradoJugador { letra, numero, codigo: format!("{letra}{numero}"), motivos }
+}
+
+/// Ficha de un jugador a partir del estado. `presentes` = identidades de nodo
+/// con avatar visible ahora; `nombres_presentes` = nombres declarados en esas presencias.
+pub fn profile_view(st: &State, height: u64, cuenta: &AccountId, presentes: &HashSet<[u8; 32]>, nombres_presentes: &HashSet<String>) -> Option<ProfileView> {
+    let p = st.profiles.get(cuenta)?;
+    let empresas = empresas_de(st, cuenta);
+    let verificado = p.node_pk.map(|n| presentes.contains(&n)).unwrap_or(false);
+    let presente = verificado || nombres_presentes.contains(&p.handle);
+    let grado = grado_jugador(st, height, cuenta, presente, verificado);
+    Some(ProfileView {
+        account: hex::encode(cuenta),
+        handle: p.handle.clone(),
+        display: p.display.clone(),
+        bio: p.bio.clone(),
+        avatar: p.avatar,
+        color: p.color,
+        node_pk: p.node_pk.map(hex::encode).unwrap_or_default(),
+        node_fingerprint: p.node_pk.map(|n| fingerprint_of(&n)).unwrap_or_default(),
+        since: p.since,
+        updated: p.updated,
+        balance: st.balance_of(cuenta),
+        activos: st.assets.values().filter(|a| a.owner == *cuenta).count(),
+        ingresos: empresas.iter().map(|e| e.ingresos).sum(),
+        ventas: empresas.iter().map(|e| e.ventas).sum(),
+        empresas,
+        presente,
+        grado,
+    })
+}
+
+/// Diferencias de la ciudad de `otra` frente a la de `cabeza`, acotadas.
+pub fn fantasmas(cabeza: &State, otra: &State) -> (Vec<GhostView>, usize) {
+    let mut out = Vec::new();
+    let mut total = 0usize;
+    let mut push = |g: GhostView| {
+        total += 1;
+        if out.len() < MULTIVERSE_GHOSTS {
+            out.push(g);
+        }
+    };
+    for ((x, y), p) in &otra.parcels {
+        let estado = match cabeza.parcels.get(&(*x, *y)) {
+            None => "solo_alli",
+            Some(q) if q.owner != p.owner || q.name != p.name || q.kind != p.kind => "distinta",
+            Some(_) => continue,
+        };
+        push(GhostView { x: *x, y: *y, name: p.name.clone(), kind: p.kind, owner: hex::encode(p.owner), distrito: ciudad::distrito(*x, *y).id, estado: estado.into() });
+    }
+    for ((x, y), p) in &cabeza.parcels {
+        if !otra.parcels.contains_key(&(*x, *y)) {
+            push(GhostView { x: *x, y: *y, name: p.name.clone(), kind: p.kind, owner: hex::encode(p.owner), distrito: ciudad::distrito(*x, *y).id, estado: "solo_aqui".into() });
+        }
+    }
+    (out, total)
+}
+
 /// Lo que el panel manda del avatar local (metros locales de la cuadrícula).
 #[derive(Clone, Debug, Default, serde::Deserialize, Serialize)]
 pub struct PresenceLocal {
@@ -1133,6 +1393,22 @@ pub struct AvatarView {
     pub age: u64,
     pub ts: u64,
     pub me: bool,
+    /// v0.10.0: perfil de la cadena vinculado a esta identidad de nodo (si
+    /// existe): cuenta, nombre, alias, estilo y color. `verified` = el vínculo
+    /// está en la cadena y lo firmó este mismo nodo; el `name` declarado en la
+    /// presencia es solo eso, declarado.
+    #[serde(default)]
+    pub account: String,
+    #[serde(default)]
+    pub handle: String,
+    #[serde(default)]
+    pub display: String,
+    #[serde(default)]
+    pub style: u8,
+    #[serde(default)]
+    pub color: u8,
+    #[serde(default)]
+    pub verified: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1269,6 +1545,13 @@ enum NodeCmd {
     SetPresence(Box<PresenceLocal>),
     GetPresence(Sender<PresenceView>),
     SendChat(String, String, Sender<Result<(), String>>),
+    /// v0.10.0: ficha de un jugador (por cuenta o por nombre), directorio,
+    /// multiverso, la ciudad de otra punta y el vínculo cuenta ↔ nodo.
+    GetProfile(Option<AccountId>, Option<String>, Sender<Option<ProfileView>>),
+    GetPlayers(usize, Sender<PlayersView>),
+    GetMultiverse(Sender<MultiverseView>),
+    GetCityOf(Hash, Sender<Option<CityView>>),
+    Vinculo(AccountId, Sender<([u8; 32], [u8; 64])>),
 }
 
 /// Manejador del nodo para la CLI y el monedero de escritorio.
@@ -1382,6 +1665,47 @@ impl NodeHandle {
         let (r, rx) = channel();
         self.tx.send(NodeMsg::Cmd(NodeCmd::SendChat(name, text, r))).map_err(|_| "nodo caído".to_string())?;
         rx.recv_timeout(Duration::from_secs(3)).map_err(|_| "el nodo está ocupado".to_string())?
+    }
+    /// v0.10.0: ficha pública de un jugador, por cuenta o por nombre.
+    pub fn profile(&self, account: Option<AccountId>, handle: Option<String>) -> Option<ProfileView> {
+        let (r, rx) = channel();
+        if self.tx.send(NodeMsg::Cmd(NodeCmd::GetProfile(account, handle, r))).is_err() {
+            return None;
+        }
+        rx.recv_timeout(Duration::from_secs(3)).unwrap_or_default()
+    }
+    /// v0.10.0: directorio de jugadores (los `max` con más ingresos).
+    pub fn players(&self, max: usize) -> PlayersView {
+        let (r, rx) = channel();
+        if self.tx.send(NodeMsg::Cmd(NodeCmd::GetPlayers(max, r))).is_err() {
+            return PlayersView::default();
+        }
+        rx.recv_timeout(Duration::from_secs(3)).unwrap_or_default()
+    }
+    /// v0.10.0: el multiverso (las puntas del árbol como ciudades paralelas).
+    pub fn multiverse(&self) -> MultiverseView {
+        let (r, rx) = channel();
+        if self.tx.send(NodeMsg::Cmd(NodeCmd::GetMultiverse(r))).is_err() {
+            return MultiverseView::default();
+        }
+        rx.recv_timeout(Duration::from_secs(5)).unwrap_or_default()
+    }
+    /// v0.10.0: la ciudad tal como es en otra punta del árbol.
+    pub fn city_of(&self, tip: Hash) -> Option<CityView> {
+        let (r, rx) = channel();
+        if self.tx.send(NodeMsg::Cmd(NodeCmd::GetCityOf(tip, r))).is_err() {
+            return None;
+        }
+        rx.recv_timeout(Duration::from_secs(5)).unwrap_or_default()
+    }
+    /// v0.10.0: la identidad de este nodo firma el vínculo con `account`
+    /// (`tx::vinculo_mensaje`); devuelve (clave del nodo, firma) para `SetProfile`.
+    pub fn vinculo(&self, account: AccountId) -> Option<([u8; 32], [u8; 64])> {
+        let (r, rx) = channel();
+        if self.tx.send(NodeMsg::Cmd(NodeCmd::Vinculo(account, r))).is_err() {
+            return None;
+        }
+        rx.recv_timeout(Duration::from_secs(3)).ok()
     }
 }
 
@@ -2254,7 +2578,7 @@ impl Node {
     /// Pares que entienden Dubái (anuncian regla ≥ 3): solo a ellos se les
     /// retransmite lo efímero del metaverso (los demás lo ignorarían igual).
     fn peers_dubai(&self, except: Option<PeerId>) -> Vec<PeerId> {
-        self.peer_rule.iter().filter(|(p, r)| **r >= REGLA_SOPORTADA && Some(**p) != except).map(|(p, _)| *p).collect()
+        self.peer_rule.iter().filter(|(p, r)| **r >= REGLA_DUBAI && Some(**p) != except).map(|(p, _)| *p).collect()
     }
 
     /// Presencia recibida: identidad con prueba de trabajo, firma válida,
@@ -2356,8 +2680,67 @@ impl Node {
         }
     }
 
-    fn avatar_view(&self, pk: &[u8; 32], e: &PresenceEntry) -> AvatarView {
-        AvatarView {
+    /// Identidades de nodo con avatar visible ahora (la propia incluida si se
+    /// publica) y los nombres que declaran.
+    fn presentes(&self) -> (HashSet<[u8; 32]>, HashSet<String>) {
+        let mut ids: HashSet<[u8; 32]> = self.presence.keys().copied().collect();
+        let mut nombres: HashSet<String> = self.presence.values().map(|e| e.name.clone()).collect();
+        if let Some(p) = &self.my_presence {
+            ids.insert(self.identity.pubkey);
+            nombres.insert(p.name.clone());
+        }
+        (ids, nombres)
+    }
+
+    /// El multiverso: cada punta del árbol es una ciudad; lo que existe en una
+    /// y no en la cabeza está «en superposición» hasta que el consenso colapse.
+    fn multiverse_view(&self) -> MultiverseView {
+        let head = self.tree.head();
+        let height = self.head_height();
+        let mut v = MultiverseView { head: hex::encode(head), height, ..Default::default() };
+        let Some(cabeza) = self.tree.tip_state_of(&head) else { return v };
+        let tips = self.tree.tips_by_work();
+        v.tips_total = tips.len();
+        for (tip, work) in tips.into_iter().take(MULTIVERSE_TIPS) {
+            let Some(node) = self.tree.get(&tip) else { continue };
+            let Some(st) = self.tree.tip_state_of(&tip) else { continue };
+            let is_head = tip == head;
+            let (fork_height, since_fork) = if is_head {
+                (node.block.header.height, 0)
+            } else {
+                let r = self.tree.reorg_between(head, tip);
+                let fh = self.tree.get(&r.common_ancestor).map(|n| n.block.header.height).unwrap_or(0);
+                (fh, r.connected.len() as u64)
+            };
+            let (ghosts, ghosts_total) = if is_head { (Vec::new(), 0) } else { fantasmas(cabeza, st) };
+            v.tips.push(TipView {
+                hash: hex::encode(tip),
+                height: node.block.header.height,
+                work: work.to_string(),
+                is_head,
+                fork_height,
+                since_fork,
+                timestamp: node.block.header.timestamp,
+                dubai: node.dubai,
+                empresas: st.parcels.len(),
+                fund: st.city_fund,
+                quemado: st.quemado,
+                ghosts,
+                ghosts_total,
+            });
+        }
+        v
+    }
+
+    /// Perfil de la cadena vinculado a una identidad de nodo, si lo hay.
+    fn perfil_de_nodo<'a>(st: Option<&'a State>, node_pk: &[u8; 32]) -> Option<(AccountId, &'a rami_core::state::Profile)> {
+        let st = st?;
+        let cuenta = *st.nodes.get(node_pk)?;
+        st.profiles.get(&cuenta).map(|p| (cuenta, p))
+    }
+
+    fn avatar_view(&self, st: Option<&State>, pk: &[u8; 32], e: &PresenceEntry) -> AvatarView {
+        let mut v = AvatarView {
             pk: hex::encode(pk),
             fingerprint: fingerprint_of(pk),
             name: e.name.clone(),
@@ -2369,25 +2752,59 @@ impl Node {
             age: e.seen.elapsed().as_secs(),
             ts: e.ts,
             me: false,
+            account: String::new(),
+            handle: String::new(),
+            display: String::new(),
+            style: 0,
+            color: 0,
+            verified: false,
+        };
+        if let Some((cuenta, p)) = Self::perfil_de_nodo(st, pk) {
+            v.account = hex::encode(cuenta);
+            v.handle = p.handle.clone();
+            v.display = p.display.clone();
+            v.style = p.avatar;
+            v.color = p.color;
+            v.verified = true;
         }
+        v
     }
 
     fn presence_view(&self) -> PresenceView {
         let me_pk = self.identity.pubkey;
-        let mut avatars: Vec<AvatarView> = self.presence.iter().map(|(pk, e)| self.avatar_view(pk, e)).collect();
+        let head = self.tree.head();
+        let st = self.tree.tip_state_of(&head);
+        let mut avatars: Vec<AvatarView> = self.presence.iter().map(|(pk, e)| self.avatar_view(st, pk, e)).collect();
         avatars.sort_by(|a, b| a.fingerprint.cmp(&b.fingerprint));
-        let me = self.my_presence.as_ref().map(|p| AvatarView {
-            pk: hex::encode(me_pk),
-            fingerprint: self.identity.fingerprint(),
-            name: p.name.clone(),
-            x: p.x,
-            y: p.y,
-            z: p.z,
-            yaw: p.yaw,
-            avatar: p.avatar,
-            age: self.my_presence_at.map(|t| t.elapsed().as_secs()).unwrap_or(0),
-            ts: now_secs(),
-            me: true,
+        let me = self.my_presence.as_ref().map(|p| {
+            let mut v = AvatarView {
+                pk: hex::encode(me_pk),
+                fingerprint: self.identity.fingerprint(),
+                name: p.name.clone(),
+                x: p.x,
+                y: p.y,
+                z: p.z,
+                yaw: p.yaw,
+                avatar: p.avatar,
+                age: self.my_presence_at.map(|t| t.elapsed().as_secs()).unwrap_or(0),
+                ts: now_secs(),
+                me: true,
+                account: String::new(),
+                handle: String::new(),
+                display: String::new(),
+                style: 0,
+                color: 0,
+                verified: false,
+            };
+            if let Some((cuenta, pr)) = Self::perfil_de_nodo(st, &me_pk) {
+                v.account = hex::encode(cuenta);
+                v.handle = pr.handle.clone();
+                v.display = pr.display.clone();
+                v.style = pr.avatar;
+                v.color = pr.color;
+                v.verified = true;
+            }
+            v
         });
         let chat = self
             .chat
@@ -2571,6 +2988,7 @@ impl Node {
                         Tx::BuyAsset { asset, max_price, .. } => PendingView { op: "buy_asset".into(), who, asset: hex::encode(asset), price: *max_price, txid: id, ..Default::default() },
                         Tx::SellParcel { x, y, price, .. } => PendingView { op: "sell_parcel".into(), who, x: *x, y: *y, price: *price, txid: id, ..Default::default() },
                         Tx::BuyParcel { x, y, max_price, .. } => PendingView { op: "buy_parcel".into(), who, x: *x, y: *y, price: *max_price, txid: id, ..Default::default() },
+                        Tx::SetProfile { handle, .. } => PendingView { op: "profile".into(), who, name: String::from_utf8_lossy(handle).to_string(), txid: id, ..Default::default() },
                         _ => continue,
                     };
                     v.pending.push(pv);
@@ -2616,6 +3034,45 @@ impl Node {
             }
             NodeCmd::GetPresence(reply) => {
                 let _ = reply.send(self.presence_view());
+            }
+            NodeCmd::GetProfile(account, handle, reply) => {
+                let head = self.tree.head();
+                let r = self.tree.tip_state_of(&head).and_then(|st| {
+                    let cuenta = account.or_else(|| handle.as_ref().and_then(|h| st.handles.get(h).copied()))?;
+                    let (presentes, nombres) = self.presentes();
+                    profile_view(st, self.head_height(), &cuenta, &presentes, &nombres)
+                });
+                let _ = reply.send(r);
+            }
+            NodeCmd::GetPlayers(max, reply) => {
+                let head = self.tree.head();
+                let height = self.head_height();
+                let mut v = PlayersView { height, ..Default::default() };
+                if let Some(st) = self.tree.tip_state_of(&head) {
+                    let (presentes, nombres) = self.presentes();
+                    let mut players: Vec<ProfileView> = st.profiles.keys().filter_map(|c| profile_view(st, height, c, &presentes, &nombres)).collect();
+                    players.sort_by(|a, b| b.ingresos.cmp(&a.ingresos).then_with(|| a.since.cmp(&b.since)).then_with(|| a.handle.cmp(&b.handle)));
+                    v.total = players.len();
+                    players.truncate(max.clamp(1, 512));
+                    v.players = players;
+                }
+                let _ = reply.send(v);
+            }
+            NodeCmd::GetMultiverse(reply) => {
+                let _ = reply.send(self.multiverse_view());
+            }
+            NodeCmd::GetCityOf(tip, reply) => {
+                let ahora = now_secs();
+                let r = self.tree.tip_state_of(&tip).and_then(|st| {
+                    let node = self.tree.get(&tip)?;
+                    let firma = self.tree.firma_ctx_sobre(&tip, ahora);
+                    Some(city_view(st, node.block.header.height, &firma, self.tree.params().dubai_desde, ahora))
+                });
+                let _ = reply.send(r);
+            }
+            NodeCmd::Vinculo(account, reply) => {
+                let sig = self.identity.sign(&rami_core::tx::vinculo_mensaje(&account));
+                let _ = reply.send((self.identity.pubkey, sig));
             }
             NodeCmd::SendChat(name, text, reply) => {
                 let name = sane_name(&name);
@@ -2753,13 +3210,20 @@ impl Node {
                         "quedará fuera al activarse la regla v2"
                     };
                     g.motivos.push(format!("{que}: {efecto}"));
-                } else if self.tree.params().dubai_desde.is_some() && regla_tx < REGLA_SOPORTADA {
+                } else if self.tree.params().dubai_desde.is_some() && regla_tx < REGLA_DUBAI {
                     let efecto = if ctx_ahora.dubai {
                         "no sigue la cadena desde la activación de Dubái"
                     } else {
                         "quedará fuera al activarse Dubái"
                     };
                     g.motivos.push(format!("anuncia la regla {regla_tx} sin Dubái (binario anterior a v0.9.0): {efecto}"));
+                } else if self.tree.params().dubai_desde.is_some() && regla_tx < REGLA_SOPORTADA {
+                    let efecto = if ctx_ahora.dubai {
+                        "se queda en su altura en el primer bloque con un perfil de jugador"
+                    } else {
+                        "desde la activación de Dubái se quedará en el primer bloque con un perfil"
+                    };
+                    g.motivos.push(format!("anuncia la regla {regla_tx} sin perfiles (binario anterior a v0.10.0): {efecto}"));
                 }
                 PeerView {
                     addr: dial.clone().unwrap_or_else(|| addr.clone()),
@@ -2822,7 +3286,8 @@ impl Node {
                     dubai_desde,
                     dubai_vigente: ctx.dubai,
                     dubai_faltan_segundos: if ctx.dubai { 0 } else { dubai_desde.map(|d| d.saturating_sub(ahora)).unwrap_or(0) },
-                    pares_dubai: self.peer_rule.values().filter(|r| **r >= REGLA_SOPORTADA).count(),
+                    pares_dubai: self.peer_rule.values().filter(|r| **r >= REGLA_DUBAI).count(),
+                    pares_perfil: self.peer_rule.values().filter(|r| **r >= REGLA_SOPORTADA).count(),
                 }
             },
             sync: SyncInfo {

@@ -44,6 +44,9 @@ pub const PAYOUT_BPS: u64 = 100;
 pub const SUPPLY_BPS: u64 = 4000;
 /// Operaciones de mercado que se recuerdan en el estado (cotización).
 pub const MAX_TRADES: usize = 256;
+/// v0.10.0: registrar un nombre de jugador (o cambiarlo) quema 2 RAMI. Un
+/// nombre es único en toda la cadena; el precio frena el acaparamiento.
+pub const PRECIO_NOMBRE: Amount = 2 * COIN;
 
 /// Precio de acuñar cada tipo de activo desde Dubái (se quema).
 pub fn precio_acunado(kind: u8) -> Amount {

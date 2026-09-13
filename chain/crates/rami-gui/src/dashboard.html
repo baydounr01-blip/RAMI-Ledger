@@ -221,6 +221,13 @@
   .demo{background:rgba(126,240,192,.08);border:1px solid rgba(126,240,192,.3);border-radius:12px;padding:12px 14px;font-size:13px;margin-bottom:14px}
   .citybar select{background:#0d1220;border:1px solid var(--border);color:var(--text);border-radius:8px;padding:5px 8px;font-size:12.5px;font-family:inherit}
   .chatlog{max-height:180px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:13px;background:#0d1220;margin-top:6px}
+  .swatches{display:flex;gap:5px;flex-wrap:wrap}
+  .swatches .sw{width:18px;height:18px;border-radius:50%;border:2px solid transparent;cursor:pointer;display:inline-block}
+  .swatches .sw.on{border-color:#fff;box-shadow:0 0 0 1px #000}
+  .profgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  @media(max-width:560px){.profgrid{grid-template-columns:1fr}}
+  .players tr{cursor:pointer} .players tr:hover td{background:rgba(255,255,255,.04)}
+  .grade{font-family:var(--mono);font-weight:700;color:var(--accent)}
   .chatlog .msg{padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04)}
   .chatlog .msg.me .who{color:var(--accent)}
   .chatlog .who{font-weight:600;color:var(--blue)}
@@ -636,6 +643,46 @@
             <p class="note">La presencia (tu avatar) y el chat viajan por el túnel RAMI entre los nodos conectados, firmados con la
             identidad de tu nodo (huella <span id="cityFp" class="mono">—</span>). No se guardan en la cadena ni en disco y caducan en segundos.
             En VR y a pie tu avatar se mueve contigo; en órbita se sitúa donde mira la cámara.</p>
+          </div>
+          <div class="card" style="margin-top:12px;padding:14px">
+            <div class="lbl" style="margin-bottom:6px">🪪 Mi perfil de jugador</div>
+            <div class="note" id="cityMyProfile" style="margin-top:0">Todavía no tienes perfil en la cadena.</div>
+            <div class="profgrid" style="margin-top:8px">
+              <label class="field" style="margin:0"><span class="cap">Nombre único (3–20: a-z, 0-9, _)</span><input id="cyHandle" maxlength="20" autocomplete="off" placeholder="p. ej. rami_dxb"></label>
+              <label class="field" style="margin:0"><span class="cap">Alias visible</span><input id="cyDisplay" maxlength="32" autocomplete="off" placeholder="Rami"></label>
+            </div>
+            <label class="field" style="margin-top:8px"><span class="cap">Presentación (máx. 160 bytes)</span><input id="cyBio" maxlength="160" autocomplete="off" placeholder="Aprendo a hacer negocios en Dubái"></label>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:6px">
+              <select id="cyStyle" title="Estilo del avatar">
+                <option value="0">👕 Casual</option>
+                <option value="1">🤍 Kandura y gutra</option>
+                <option value="2">🖤 Abaya</option>
+                <option value="3">👔 Traje</option>
+              </select>
+              <div class="swatches" id="cyColors"></div>
+              <label class="note" style="margin:0"><input type="checkbox" id="cyLink" checked> vincular a este nodo (mi avatar soy yo, con ✓)</label>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+              <button class="btn small" id="cyProfileSave">Guardar perfil en la cadena</button>
+              <span class="muted" style="font-size:12px">Registrar un nombre nuevo quema 2 RAMI; actualizar el resto solo paga la comisión. Es una transacción de consenso: vale desde la activación de Dubái.</span>
+            </div>
+            <div class="status" id="cyProfileStatus"></div>
+          </div>
+          <div class="card" style="margin-top:12px;padding:14px">
+            <div class="lbl" style="margin-bottom:6px">👥 Jugadores de la ciudad</div>
+            <p class="note" style="margin-top:0">Cada jugador lleva un código de fuente como los pares de la red: una letra por lo que la cadena sabe (empresas, ingresos, antigüedad) y un número por lo que este nodo observa ahora (su avatar, con o sin vínculo). Describe; no decide.</p>
+            <div class="tbl-wrap"><table class="players"><thead><tr><th>Jugador</th><th>Fuente</th><th>Empresas</th><th>Ingresos</th><th>Ahora</th></tr></thead><tbody id="cityPlayers"></tbody></table></div>
+            <div class="note" id="cityPlayerCard" style="margin-top:8px"></div>
+          </div>
+          <div class="card" style="margin-top:12px;padding:14px">
+            <div class="lbl" style="margin-bottom:6px">🌌 Multiverso: cada rama del árbol es un Dubái</div>
+            <p class="note" style="margin-top:0">RAMI-Chain conserva todas las ramas válidas y observa la de más trabajo. Cada punta es una ciudad completa: lo que existe en otra rama y no en la observada está <b>en superposición</b> (edificios translúcidos) hasta que el consenso colapse hacia una. Puedes visitar cualquier rama.</p>
+            <div class="tbl-wrap"><table><thead><tr><th>Rama</th><th>Altura</th><th>Trabajo</th><th>Bloques propios</th><th>Empresas</th><th>En superposición</th><th></th></tr></thead><tbody id="cityTips"></tbody></table></div>
+            <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center">
+              <button class="btn small ghost" id="cyGhosts">👻 Ver la superposición en 3D</button>
+              <button class="btn small ghost" id="cyHead" style="display:none">↩ Volver a la rama observada</button>
+              <span class="muted" id="cyMvStatus" style="font-size:12px"></span>
+            </div>
           </div>
         </div>
         <div class="card" id="cityPanel">
@@ -2010,7 +2057,7 @@
       var d = null; try{ d = JSON.parse(txtBody); }catch(e){}
       if(!d || !d.ok){ document.getElementById("cityStatus").textContent = (d && d.error) || t("sin datos"); return; }
       city.data = d; buildCityIndex(d);
-      if(c3d.handle) c3d.handle.setCity(city.view);
+      if(c3d.handle && !prof.tip) c3d.handle.setCity(city.view);
       var cd = document.getElementById("cityCountdown");
       if(!d.dubai){
         cd.style.display = "";
@@ -2292,7 +2339,7 @@
       document.getElementById("cityFp").textContent = p.fingerprint || "—";
       if(c3d.handle) c3d.handle.setPresence(p.avatars || []);
       var who = document.getElementById("cityWho"), av = p.avatars || [];
-      who.textContent = av.length ? t("Conectados ahora:")+" "+av.map(function(a){ return (a.name||t("visitante"))+" ("+a.fingerprint.slice(0,9)+")"; }).join(", ") : t("Nadie más ahora mismo.");
+      who.textContent = av.length ? t("Conectados ahora:")+" "+av.map(function(a){ return (a.verified ? "✓ "+(a.display||a.handle) : (a.name||t("visitante")))+" ("+a.fingerprint.slice(0,9)+")"; }).join(", ") : t("Nadie más ahora mismo.");
       var log = document.getElementById("cityChat"), h = "";
       (p.chat||[]).forEach(function(c){ h += '<div class="msg'+(c.me?' me':'')+'"><span class="who">'+esc(c.name||t("visitante"))+' <span class="fp">'+esc(c.fingerprint.slice(0,9))+'</span></span> '+esc(c.text)+'</div>'; });
       if(log.innerHTML !== h){ log.innerHTML = h; log.scrollTop = log.scrollHeight; }
@@ -2312,6 +2359,124 @@
     pullPresence();
   }, 2500);
   setInterval(pushPresence, 1000);
+
+  // ---------- Identidad del jugador y multiverso (v0.10.0) ----------
+  var prof = { me:null, color:0, players:null, mv:null, ghosts:false, tip:null, lastPlayers:"", lastMv:"" };
+  var AV_COLORS = ['#7ef0c0','#6ea8fe','#ffd166','#ff6b6b','#c77dff','#4ccf6e','#f2b84b','#3ad1e0','#f4f4f4','#2b3a67','#8c5a3c','#e07a5f','#81b29a','#f2cc8f','#9b5de5','#00bbf9'];
+  function buildSwatches(){
+    var box = document.getElementById("cyColors"), h = "";
+    AV_COLORS.forEach(function(c, i){ h += '<span class="sw'+(i===prof.color?' on':'')+'" data-i="'+i+'" style="background:'+c+'" title="'+t("color")+' '+i+'"></span>'; });
+    box.innerHTML = h;
+  }
+  buildSwatches();
+  document.getElementById("cyColors").addEventListener("click", function(e){ var sw = e.target.closest(".sw"); if(!sw) return; prof.color = +sw.getAttribute("data-i"); buildSwatches(); });
+  function gradeHtml(g){ return g ? '<span class="grade" title="'+esc((g.motivos||[]).join("\n"))+'">'+esc(g.codigo)+'</span>' : "—"; }
+  function profileLine(p){
+    return '<b>'+esc(p.display||p.handle)+'</b> <span class="mono">@'+esc(p.handle)+'</span> · '+t("fuente")+' '+gradeHtml(p.grado)+' · '+p.empresas.length+' '+t("empresa(s)")+' · '+t("ingresos")+' '+ramShort(p.ingresos)+' RAMI · '+t("saldo")+' '+ramShort(p.balance)+' RAMI'+
+      (p.node_fingerprint ? ' · '+t("nodo")+' <span class="mono">'+esc(p.node_fingerprint)+'</span>' : ' · '+t("sin vínculo con un nodo"))+
+      (p.bio ? '<br><span style="color:var(--muted)">'+esc(p.bio)+'</span>' : '')+
+      '<br><span style="color:var(--muted)">'+esc((p.grado && p.grado.motivos || []).join(" · "))+'</span>'+
+      (p.empresas.length ? '<br>'+p.empresas.map(function(e){ return '<a href="#" class="pgo" data-x="'+e.x+'" data-y="'+e.y+'">'+esc(e.name)+'</a> ('+sectorName(e.kind)+', '+e.x+','+e.y+')'; }).join(' · ') : '');
+  }
+  function renderMyProfile(){
+    var el = document.getElementById("cityMyProfile"), p = prof.me;
+    if(!p){ el.innerHTML = t("Todavía no tienes perfil en la cadena. Elige un nombre único: tu avatar llevará tu nombre con ✓ y los demás verán tus empresas."); return; }
+    el.innerHTML = profileLine(p);
+  }
+  function loadProfile(){
+    fetch("/api/city/profile", {headers:hdrs()}).then(function(r){ return r.json(); }).then(function(d){
+      if(!d || !d.ok) return;
+      var p = d.handle ? d : null, first = !prof.me && p;
+      prof.me = p; renderMyProfile();
+      if(first){
+        var hEl = document.getElementById("cyHandle"), dEl = document.getElementById("cyDisplay"), bEl = document.getElementById("cyBio");
+        if(!hEl.value) hEl.value = p.handle; if(!dEl.value) dEl.value = p.display; if(!bEl.value) bEl.value = p.bio;
+        document.getElementById("cyStyle").value = String((p.avatar|0) % 4); prof.color = (p.color|0) % AV_COLORS.length; buildSwatches();
+        document.getElementById("cyLink").checked = !!p.node_pk;
+        var nk = document.getElementById("cyNick"); if(!nk.value.trim()) nk.value = p.handle;
+      }
+    }).catch(function(){});
+  }
+  document.getElementById("cyProfileSave").addEventListener("click", function(){
+    var st = document.getElementById("cyProfileStatus");
+    var body = { handle: document.getElementById("cyHandle").value.trim().toLowerCase(), display: document.getElementById("cyDisplay").value.trim(), bio: document.getElementById("cyBio").value.trim(),
+      avatar: +document.getElementById("cyStyle").value, color: prof.color, link: document.getElementById("cyLink").checked };
+    if(!/^[a-z0-9_]{3,20}$/.test(body.handle)){ st.textContent = "✗ "+t("nombre inválido: de 3 a 20 caracteres, solo a-z, 0-9 y _"); return; }
+    st.textContent = t("Enviando…");
+    jpost("/api/city/profile", body).then(function(r){
+      if(r.ok){ st.textContent = "✓ "+t("Perfil enviado; se aplica al minarse el próximo bloque.")+" txid "+(r.txid||"").slice(0,12)+"…"; city.fastUntil = Date.now()+90000; }
+      else st.textContent = "✗ "+(r.error||"error");
+    }).catch(function(){ st.textContent = t("✗ sin conexión con el nodo"); });
+  });
+  function loadPlayers(){
+    fetch("/api/city/players?max=64", {headers:hdrs()}).then(function(r){ return r.text(); }).then(function(txtBody){
+      if(txtBody === prof.lastPlayers) return; prof.lastPlayers = txtBody;
+      var d = null; try{ d = JSON.parse(txtBody); }catch(e){}
+      if(!d || !d.ok) return;
+      prof.players = d;
+      var tb = document.getElementById("cityPlayers"), h = "";
+      (d.players||[]).forEach(function(p){
+        h += '<tr data-h="'+esc(p.handle)+'"><td><b>'+esc(p.display||p.handle)+'</b> <span class="mono muted">@'+esc(p.handle)+'</span></td><td>'+gradeHtml(p.grado)+'</td><td>'+p.empresas.length+'</td><td>'+ramShort(p.ingresos)+'</td><td>'+(p.presente ? "🟢" : "—")+'</td></tr>';
+      });
+      tb.innerHTML = h || '<tr><td colspan="5" class="muted">'+t("Nadie tiene perfil todavía.")+'</td></tr>';
+    }).catch(function(){});
+  }
+  document.getElementById("cityPlayers").addEventListener("click", function(e){
+    var tr = e.target.closest("tr"); if(!tr || !tr.getAttribute("data-h")) return;
+    fetch("/api/city/profile?handle="+encodeURIComponent(tr.getAttribute("data-h")), {headers:hdrs()}).then(function(r){ return r.json(); }).then(function(d){
+      document.getElementById("cityPlayerCard").innerHTML = (d && d.ok && d.handle) ? profileLine(d) : t("sin datos");
+    }).catch(function(){});
+  });
+  document.getElementById("cityPlayerCard").addEventListener("click", goParcelLink);
+  document.getElementById("cityMyProfile").addEventListener("click", goParcelLink);
+  function goParcelLink(e){
+    var a = e.target.closest("a.pgo"); if(!a) return; e.preventDefault();
+    var x = +a.getAttribute("data-x"), y = +a.getAttribute("data-y");
+    city.sel = {x:x, y:y}; renderCityPanel(); if(c3d.handle){ c3d.handle.select(x, y); c3d.handle.flyTo(x, y); } else drawCity();
+  }
+  function shortHash(h){ return h ? h.slice(0,6)+"…" : ""; }
+  function allGhosts(){
+    var out = [];
+    ((prof.mv && prof.mv.tips) || []).forEach(function(tp){ if(tp.is_head) return; (tp.ghosts||[]).forEach(function(g){ out.push({x:g.x, y:g.y, name:g.name, kind:g.kind, estado:g.estado, tip:shortHash(tp.hash)}); }); });
+    return out;
+  }
+  function loadMultiverse(){
+    fetch("/api/city/multiverse", {headers:hdrs()}).then(function(r){ return r.text(); }).then(function(txtBody){
+      if(txtBody === prof.lastMv) return; prof.lastMv = txtBody;
+      var d = null; try{ d = JSON.parse(txtBody); }catch(e){}
+      if(!d || !d.ok) return;
+      prof.mv = d;
+      var tb = document.getElementById("cityTips"), h = "";
+      (d.tips||[]).forEach(function(tp){
+        var sup = tp.is_head ? "—" : (tp.ghosts_total+(tp.ghosts_total ? " ("+tp.ghosts.filter(function(g){ return g.estado==="solo_alli"; }).length+" "+t("solo allí")+", "+tp.ghosts.filter(function(g){ return g.estado==="distinta"; }).length+" "+t("distintas")+", "+tp.ghosts.filter(function(g){ return g.estado==="solo_aqui"; }).length+" "+t("solo aquí")+")" : ""));
+        h += '<tr><td><span class="mono">'+esc(shortHash(tp.hash))+'</span>'+(tp.is_head ? ' <b>'+t("observada")+'</b>' : '')+(prof.tip===tp.hash ? ' 👁' : '')+'</td><td>'+fmtNum(tp.height)+'</td><td>'+esc(tp.work)+'</td><td>'+(tp.is_head ? "—" : fmtNum(tp.since_fork)+" "+t("desde la altura")+" "+fmtNum(tp.fork_height))+'</td><td>'+tp.empresas+'</td><td>'+sup+'</td><td>'+(tp.is_head ? '' : '<button class="btn small ghost visit" data-tip="'+esc(tp.hash)+'">'+t("Visitar")+'</button>')+'</td></tr>';
+      });
+      tb.innerHTML = h;
+      document.getElementById("cyMvStatus").textContent = t("puntas")+": "+d.tips_total+" · "+t("cabeza")+" "+shortHash(d.head)+" · "+t("altura")+" "+fmtNum(d.height);
+      if(prof.ghosts && c3d.handle) c3d.handle.setGhosts(allGhosts());
+    }).catch(function(){});
+  }
+  document.getElementById("cyGhosts").addEventListener("click", function(){
+    prof.ghosts = !prof.ghosts; this.classList.toggle("on", prof.ghosts);
+    if(c3d.handle) c3d.handle.setGhosts(prof.ghosts ? allGhosts() : []);
+  });
+  document.getElementById("cityTips").addEventListener("click", function(e){
+    var b = e.target.closest("button.visit"); if(!b) return;
+    var tip = b.getAttribute("data-tip");
+    fetch("/api/city?tip="+tip, {headers:hdrs()}).then(function(r){ return r.json(); }).then(function(d){
+      if(!d || !d.ok){ document.getElementById("cityStatus").textContent = "✗ "+((d && d.error) || t("sin datos")); return; }
+      prof.tip = tip; document.getElementById("cyHead").style.display = "";
+      if(c3d.handle) c3d.handle.setCity(d);
+      document.getElementById("cityStatus").textContent = t("Estás viendo la rama")+" "+shortHash(tip)+" ("+t("altura")+" "+fmtNum(d.height)+"). "+t("Las acciones siguen aplicándose a la rama observada.");
+      prof.lastMv = ""; loadMultiverse();
+    }).catch(function(){});
+  });
+  document.getElementById("cyHead").addEventListener("click", function(){
+    prof.tip = null; this.style.display = "none"; document.getElementById("cityStatus").textContent = "";
+    if(c3d.handle && city.view) c3d.handle.setCity(city.view);
+    prof.lastMv = ""; loadMultiverse();
+  });
+  setInterval(function(){ if(currentView!=="ciudad") return; if(((city.tick||0) % 4) === 1){ loadProfile(); loadPlayers(); loadMultiverse(); } }, 2500);
 
   // ---------- Mercado / cotización ----------
   var market = { data:null, lastTxt:"" };
