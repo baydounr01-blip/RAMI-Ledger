@@ -1,3 +1,36 @@
+## Novedades de v0.10.3 — los edificios dejan de ser humo
+
+Entrega 1 del plan del metaverso (`docs/METAVERSO.md`). **No toca el consenso,
+la red ni el formato de los ficheros.**
+
+Hasta ahora la ciudad no existía para nadie más que para los ojos: se
+atravesaban las torres andando, y señalar con el ratón solo decía en qué casilla
+de 650 metros estabas, nunca qué edificio tenías delante. Sin esas dos cosas no
+puede haber portales que cruzar, coches a los que subir ni escaparates que
+mirar, así que era el primer ladrillo de todo lo demás.
+
+- **El catastro de sólidos.** Los 56 hitos y las 3.124 torres del skyline pasan
+  a tener huella —centro, medidas, giro y altura— en una rejilla espacial de
+  256 metros. Una sola estructura que resuelve las dos cosas: **3.180
+  edificios** consultables en tiempo constante.
+- **Los edificios paran.** A pie ya no se atraviesan. Andando contra la cara sur
+  del Burj Khalifa te quedas a 75 metros exactos de su centro, que es donde
+  acaba su fachada. Volando por encima de su altura, se pasa.
+- **Señalar dice qué es.** El rayo del ratón topa antes con el edificio que con
+  el suelo, así que la línea de estado dice «🏢 Burj Khalifa · 829 m» en vez de
+  solo la parcela. En los edificios genéricos, el tipo y el barrio.
+- **Aparecer a pie ya no te mete dentro de una torre.** El apartado que evitaba
+  esto solo miraba los 56 hitos; ahora mira los 3.180 edificios, y aparecer
+  dentro de una de las 3.124 torres del skyline era 56 veces más probable que lo
+  que se evitaba.
+- **El contrato de semillas.** Se fija en el código la frontera que ordena todo
+  lo que viene: la **forma** de un edificio sale solo de datos que no cambian
+  —su posición en la rejilla— y su **ropa** (tono, rótulo, luces) sale de lo que
+  la cadena mueve: dueño y antigüedad. Así una torre no se rehace entera cuando
+  alguien vende un piso, pero dos torres iguales de dueños distintos no se ven
+  idénticas. Ambas son aritmética entera: dan el mismo número en cualquier
+  máquina.
+
 ## Novedades de v0.10.2 — la ciudad va suelta, y el plan de lo que viene
 
 Versión de cimientos. **No toca el consenso, la red ni el formato de los
@@ -165,6 +198,38 @@ altura sin romperse.
   con los binarios de la v0.7.0 y la v0.7.3. Un binario v0.8.0 que abra un
   `chain.jsonl` escrito por la 0.9.0 con transacciones de mercado no lo lee
   (por red nunca las recibe): la salida es volver a la 0.9.0.
+
+## What's new in v0.10.3 — buildings stop being smoke
+
+Delivery 1 of the metaverse plan (`docs/METAVERSO.md`). **It touches neither
+consensus, nor the network, nor the file format.**
+
+Until now the city existed for the eyes only: you walked straight through the
+towers, and pointing at something only told you which 650-metre parcel you were
+over, never which building was in front of you. Without those two things there
+can be no doors to cross, no cars to get into and no shop windows to look at, so
+it was the first brick of everything else.
+
+- **The solid register.** The 56 landmarks and the 3,124 skyline towers now have
+  a footprint — centre, size, rotation and height — in a 256-metre spatial grid.
+  One structure that solves both problems: **3,180 buildings** queryable in
+  constant time.
+- **Buildings stop you.** On foot you no longer walk through them. Walking into
+  the south face of the Burj Khalifa leaves you exactly 75 metres from its
+  centre, which is where its facade ends. Flying above its height, you pass.
+- **Pointing says what it is.** The mouse ray now hits the building before the
+  ground, so the status line reads «🏢 Burj Khalifa · 829 m» instead of just the
+  parcel. On generic buildings, the type and the district.
+- **Arriving on foot no longer drops you inside a tower.** The code that avoided
+  this only looked at the 56 landmarks; it now looks at all 3,180, and landing
+  inside one of the 3,124 skyline towers was 56 times likelier than what was
+  being avoided.
+- **The seed contract.** The boundary that orders everything ahead is now in the
+  code: a building's **shape** comes only from data that never changes — its
+  position on the grid — and its **clothing** (tone, sign, lights) comes from
+  what the chain moves: owner and age. So a tower is not rebuilt whole when
+  someone sells a flat, but two identical towers with different owners do not
+  look the same. Both are integer arithmetic: the same number on any machine.
 
 ## What's new in v0.10.2 — the city runs loose, and the plan for what comes next
 

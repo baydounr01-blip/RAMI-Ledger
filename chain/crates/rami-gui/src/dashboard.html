@@ -1971,7 +1971,20 @@
       var h = window.RamiCity3D.mount(el, {
         heightUrl:"/geo/dubai.hgt.png", metaUrl:"/geo/dubai.json", gridSize:gridN(), anchor:CITY_ANCHOR, t:t, quality:savedQuality(),
         onSelect:function(x,y){ city.sel = (x==null) ? null : {x:x,y:y}; renderCityPanel(); if(c3d.mode==="2d") drawCity(); },
-        onHover:function(x,y){ var el2 = document.getElementById("cityHover"); if(el2) el2.textContent = (x==null) ? "" : t("parcela")+" ("+x+","+y+")"; },
+        onHover:function(x,y,so){
+          var el2 = document.getElementById("cityHover"); if(!el2) return;
+          if(x==null){ el2.textContent = ""; return; }
+          var txt = t("parcela")+" ("+x+","+y+")";
+          // Desde la v0.10.3 el rayo topa con los edificios antes que con el
+          // suelo, así que se puede decir QUÉ se está señalando y no solo dónde.
+          if(so){
+            var tipos = { towers:t("torre"), blocks:t("bloque"), villas:t("villa"), warehouses:t("nave") };
+            var n = (so.tipo === "hito") ? so.nombre
+                  : ((tipos[so.tipo] || t("edificio")) + (so.nombre ? " · " + so.nombre : ""));
+            txt = "🏢 " + n + " · " + Math.round(so.h) + " m — " + txt;
+          }
+          el2.textContent = txt;
+        },
         onMode:function(m){ document.getElementById("cyWalk").classList.toggle("on", m==="walk"); }
       });
       c3d.handle = h; window.__ramiCity3D = h;   // (pruebas automáticas)
