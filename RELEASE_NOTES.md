@@ -1,3 +1,33 @@
+## Novedades de v0.10.2 — la ciudad va suelta, y el plan de lo que viene
+
+Versión de cimientos. **No toca el consenso, la red ni el formato de los
+ficheros**, y a simple vista la ciudad se ve exactamente igual: lo que cambia es
+lo que cuesta dibujarla.
+
+| | Antes | Después |
+|---|---|---|
+| Triángulos por fotograma (calidad media) | 1.184.610 | 842.970 (−28,8 %) |
+| Llamadas de dibujo | 18 | 17 |
+| Programas de sombreado | 17 | 16 |
+| Binario descargable | 7.104.616 B | 6.551.976 B (−7,8 %) |
+
+- **Las palmeras eran el 44 % de la escena.** Y el 77 % de cada palmera era el
+  racimo de dátiles: una esfera de 440 triángulos a siete metros de altura, que
+  a esa distancia nadie distingue de una de 80. La capa de palmeras baja de
+  525.400 a 192.400 triángulos. Como además eran el 89 % del pase de sombras,
+  ese pase —que no sale en las estadísticas porque se dibuja antes de reiniciar
+  el contador— cae casi a la mitad. Las 24 cabinas de la noria, lo mismo.
+- **El manto y los bordes se dibujaban dos veces.** three.js reserva dos pasadas
+  para todo material transparente a doble cara salvo que se le diga que no hacen
+  falta; aquí no hacen falta, porque el manto va pegado al suelo y nunca se ve
+  por dentro.
+- **Los símbolos de depuración salen del binario.** Nadie los usa en una
+  descarga, y se pagaban en cada actualización.
+- **`docs/METAVERSO.md`**: el plan del metaverso, con las ocho entregas que
+  vienen, lo que cuesta cada una, lo que se descarta y por qué, y lo que este
+  plan no arregla. Sale de seis arquitecturas diseñadas por separado y sometidas
+  cada una a un verificador cuyo encargo era refutarla con el código delante.
+
 ## Novedades de v0.10.1 — al abrir Dubái se ve Dubái
 
 Arreglo del cliente 3D. **No toca el consenso, la red ni el formato de los
@@ -135,6 +165,36 @@ altura sin romperse.
   con los binarios de la v0.7.0 y la v0.7.3. Un binario v0.8.0 que abra un
   `chain.jsonl` escrito por la 0.9.0 con transacciones de mercado no lo lee
   (por red nunca las recibe): la salida es volver a la 0.9.0.
+
+## What's new in v0.10.2 — the city runs loose, and the plan for what comes next
+
+A foundations release. **It touches neither consensus, nor the network, nor the
+file format**, and the city looks exactly the same: what changes is what it
+costs to draw it.
+
+| | Before | After |
+|---|---|---|
+| Triangles per frame (medium quality) | 1,184,610 | 842,970 (−28.8%) |
+| Draw calls | 18 | 17 |
+| Shader programs | 17 | 16 |
+| Downloadable binary | 7,104,616 B | 6,551,976 B (−7.8%) |
+
+- **The palm trees were 44% of the scene.** And 77% of each palm was the bunch
+  of dates: a 440-triangle sphere seven metres up, which at that distance nobody
+  tells apart from an 80-triangle one. The palm layer drops from 525,400 to
+  192,400 triangles. Since they were also 89% of the shadow pass, that pass —
+  which never shows in the stats because it is drawn before the counter resets —
+  falls by almost half. The 24 cabins of the observation wheel, the same.
+- **The ground drape and the parcel borders were drawn twice.** three.js
+  reserves two passes for every double-sided transparent material unless told
+  they are not needed; here they are not, because the drape hugs the ground and
+  is never seen from inside.
+- **Debug symbols leave the binary.** Nobody uses them in a download, and they
+  were paid for on every update.
+- **`docs/METAVERSO.md`**: the metaverse plan — the eight deliveries ahead, what
+  each costs, what is dropped and why, and what the plan does not fix. It comes
+  out of six architectures designed independently, each one then handed to a
+  verifier whose job was to refute it with the code in front of them.
 
 ## What's new in v0.10.1 — opening Dubai now shows Dubai
 

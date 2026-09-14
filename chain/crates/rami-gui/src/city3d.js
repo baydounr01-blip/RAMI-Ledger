@@ -749,7 +749,7 @@
     return new THREE.ShaderMaterial({
       uniforms: u, vertexShader: DRAPE_VS, fragmentShader: DRAPE_FS,
       defines: cellColor ? { CELL_COLOR: 1 } : {},
-      transparent: true, depthWrite: false, fog: true, side: THREE.DoubleSide
+      transparent: true, depthWrite: false, fog: true, side: THREE.DoubleSide, forceSinglePass: true
     });
   }
 
@@ -933,6 +933,11 @@
       case 'cone': g = new THREE.ConeGeometry(0.5, 1, a || 16); g.translate(0, 0.5, 0); break;
       case 'prism3': g = new THREE.CylinderGeometry(0.5, 0.5, 1, 3); g.translate(0, 0.5, 0); break;
       case 'sphere': g = new THREE.SphereGeometry(0.5, 20, 12); break;
+      // Esfera de lejos: 80 triángulos en vez de 440. Para bultos que nunca se
+      // miran de cerca (racimos de dátiles, cabinas de noria). Un racimo a 20
+      // metros de altura no distingue 440 caras de 80, pero 925 palmeras sí
+      // distinguen medio millón de triángulos de ciento noventa mil.
+      case 'ball': g = new THREE.IcosahedronGeometry(0.5, 1); break;
       case 'hemi': g = new THREE.SphereGeometry(0.5, 24, 10, 0, Math.PI * 2, 0, Math.PI / 2); break;
       case 'torus': g = new THREE.TorusGeometry(0.5, a || 0.05, 10, 48); break;
       case 'halfcyl': g = new THREE.CylinderGeometry(0.5, 0.5, 1, 20, 1, false, 0, Math.PI); g.translate(0, 0.5, 0); break;
@@ -1206,7 +1211,7 @@
       for (i = 0; i < 12; i++) parts.push({ g: 'slab', sx: R * 0.02, sy: R * 2, sz: R * 0.02, y: cy, rz: i * Math.PI / 12, c: STEEL });
       for (i = 0; i < 24; i++) {
         var a = i / 24 * Math.PI * 2;
-        parts.push({ g: 'sphere', sx: R * 0.09, sy: R * 0.09, sz: R * 0.12, x: Math.cos(a) * R, y: cy + Math.sin(a) * R, c: GLASS });
+        parts.push({ g: 'ball', sx: R * 0.09, sy: R * 0.09, sz: R * 0.12, x: Math.cos(a) * R, y: cy + Math.sin(a) * R, c: GLASS });
       }
       parts.push({ g: 'slab', sx: R * 0.06, sy: cy * 1.05, sz: R * 0.06, x: -R * 0.35, y: cy / 2, rz: 0.32, c: WHITE });
       parts.push({ g: 'slab', sx: R * 0.06, sy: cy * 1.05, sz: R * 0.06, x: R * 0.35, y: cy / 2, rz: -0.32, c: WHITE });
@@ -1469,7 +1474,7 @@
       var a = k * Math.PI / 4 + seed * 0.7;
       parts.push({ g: 'slab', sx: 0.5, sy: 0.08, sz: 3.2, x: Math.sin(a) * 1.4, y: 7.6, z: Math.cos(a) * 1.4, ry: a, rx: 0.62, c: [1, 1, 1] });
     }
-    parts.push({ g: 'sphere', sx: 0.5, sy: 0.4, sz: 0.5, y: 7.5, c: [0.55, 0.42, 0.18] });
+    parts.push({ g: 'ball', sx: 0.5, sy: 0.4, sz: 0.5, y: 7.5, c: [0.55, 0.42, 0.18] });
     pushParts(out, parts);
     return accGeometry(out);
   }

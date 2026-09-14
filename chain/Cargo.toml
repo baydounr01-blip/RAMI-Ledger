@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/rami-core", "crates/rami-net", "crates/rami-node", "crates/rami-wallet", "crates/rami-gui"]
 
 [workspace.package]
-version = "0.10.1"
+version = "0.10.2"
 edition = "2021"
 license = "MIT"
 authors = ["Rami Baydoun Nabhan"]
@@ -30,3 +30,6 @@ ureq = { version = "2", features = ["native-certs"] }
 [profile.release]
 opt-level = 3
 lto = true
+# Los símbolos de depuración no los usa nadie en un binario que se descarga: son
+# 140 KB por plataforma que el usuario paga en cada actualización.
+strip = true
