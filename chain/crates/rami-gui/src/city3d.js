@@ -1095,6 +1095,83 @@
     return new THREE.ShaderMaterial({ uniforms: u, vertexShader: BUILD_VS, fragmentShader: BUILD_FS, vertexColors: true, fog: true, lights: true });
   }
 
+  // ---- Calzada (v0.10.4): asfalto, bordillo y acera con marcas viales ----------
+  // Las 21 polilíneas del dataset se dibujaban como LineSegments de un píxel a
+  // tres metros del suelo: de cerca no eran una carretera, eran un alambre
+  // flotando. Ahora son geometría: una cinta con perfil —acera, bordillo de cara
+  // vertical, calzada— remuestreada cada 100 m para que siga el relieve.
+  //
+  // Las marcas son analíticas, no una textura: la línea de eje, las de carril y
+  // las discontinuas salen de la coordenada transversal (metros desde el eje) y
+  // de la longitudinal (metros recorridos), que llegan por atributo. Cuestan
+  // cuatro instrucciones y no ocupan un byte de descarga.
+  var ROAD_VS = [
+    '#include <common>',
+    '#include <fog_pars_vertex>',
+    '#include <logdepthbuf_pars_vertex>',
+    '#include <shadowmap_pars_vertex>',
+    'attribute float hc; attribute vec3 via;',       // via = (u transversal, s longitudinal, clase)
+    'uniform float uLod;',
+    'varying vec3 vVia; varying vec3 vWorld;',
+    'void main(){',
+    '  vec3 p = position; p.y = mix(position.y, hc, uLod);',
+    '  vVia = via;',
+    '  vec3 transformedNormal = vec3(0.0, 1.0, 0.0);',
+    '  vec4 worldPosition = modelMatrix * vec4(p, 1.0); vWorld = worldPosition.xyz;',
+    '  vec4 mvPosition = viewMatrix * worldPosition;',
+    '  gl_Position = projectionMatrix * mvPosition;',
+    '  #include <logdepthbuf_vertex>',
+    '  #include <fog_vertex>',
+    '  #include <shadowmap_vertex>',
+    '}'].join('\n');
+  var ROAD_FS = [
+    '#include <common>',
+    '#include <packing>',
+    '#include <fog_pars_fragment>',
+    '#include <logdepthbuf_pars_fragment>',
+    '#include <lights_pars_begin>',
+    '#include <shadowmap_pars_fragment>',
+    '#include <shadowmask_pars_fragment>',
+    'uniform vec3 uSun, uSunColor, uSkyColor, uGroundColor; uniform float uNight; uniform sampler2D uNoise;',
+    'varying vec3 vVia; varying vec3 vWorld;',
+    'void main(){',
+    '  #include <logdepthbuf_fragment>',
+    '  float u = vVia.x, sl = vVia.y, clase = vVia.z;',
+    '  float dist = length(cameraPosition - vWorld);',
+    '  float cerca = 1.0 - smoothstep(120.0, 2600.0, dist);',   // las marcas se apagan de lejos: aliasing
+    '  float grano = texture2D(uNoise, vWorld.xz / 14.0).r, manchas = texture2D(uNoise, vWorld.xz / 220.0).r;',
+    '  vec3 asfalto = vec3(0.085, 0.086, 0.092) * (0.82 + 0.34 * grano) * (0.88 + 0.24 * manchas);',
+    '  vec3 acera = vec3(0.52, 0.50, 0.47) * (0.88 + 0.20 * grano);',
+    '  vec3 bordillo = vec3(0.68, 0.66, 0.62) * (0.9 + 0.16 * grano);',
+    '  vec3 base = clase < 0.5 ? asfalto : (clase < 1.5 ? bordillo : acera);',
+    // Marcas: eje doble continuo, carriles discontinuos cada 3,5 m de ancho.
+    '  if (clase < 0.5) {',
+    '    float eje = 1.0 - smoothstep(0.10, 0.34, abs(abs(u) - 0.42));',
+    '    float carril = mod(abs(u) + 1.75, 3.5) - 1.75;',
+    '    float linea = (1.0 - smoothstep(0.05, 0.16, abs(carril))) * step(1.9, abs(u));',
+    '    float trazo = step(0.42, fract(sl / 12.0));',   // 5 m pintados, 7 m de hueco
+    '    float pintura = clamp(eje + linea * trazo, 0.0, 1.0) * cerca;',
+    '    base = mix(base, vec3(0.72, 0.70, 0.64), pintura * 0.92);',
+    '  }',
+    '  float shadow = getShadowMask();',
+    '  vec3 n = vec3(0.0, 1.0, 0.0);',
+    '  float ndl = max(dot(n, uSun), 0.0) * shadow;',
+    '  vec3 amb = mix(uGroundColor, uSkyColor, 0.9);',
+    '  vec3 col = base * (amb * 0.9 + uSunColor * ndl * 1.15);',
+    '  col = mix(col, col * 0.22 + vec3(0.010, 0.010, 0.016), uNight);',
+    '  gl_FragColor = vec4(col, 1.0);',
+    '  #include <tonemapping_fragment>',
+    '  #include <encodings_fragment>',
+    '  #include <fog_fragment>',
+    '}'].join('\n');
+  function makeRoadMaterial(shared, lodUniform, noise) {
+    var u = THREE.UniformsUtils.merge([THREE.UniformsLib.lights, THREE.UniformsLib.fog]);
+    u.uSun = shared.uSun; u.uSunColor = shared.uSunColor; u.uSkyColor = shared.uSkyColor;
+    u.uGroundColor = shared.uGroundColor; u.uNight = shared.uNight;
+    u.uLod = lodUniform; u.uNoise = { value: noise };
+    return new THREE.ShaderMaterial({ uniforms: u, vertexShader: ROAD_VS, fragmentShader: ROAD_FS, fog: true, lights: true });
+  }
+
   // ---- Terreno (v0.10.0): color por vértice, sol con sombras, luz de cielo y
   // relieve fino de arena a partir de un ruido generado en el arranque ----
   var TERR_VS = [
@@ -2829,26 +2906,108 @@
       resize();
       if (pendingFlight) { var pf = pendingFlight; pendingFlight = null; pf.fn.apply(null, pf.args); }
     }
+    /** Paso de remuestreo en metros: el dataset trae tramos rectos de kilómetros. */
+    var VIA_PASO = 100;
+    /** El ancho sale de la longitud: el dataset no trae jerarquía ni carriles. */
+    function anchoVia(km) {
+      if (km > 40) return { calzada: 42, acera: 5 };   // troncal tipo Sheikh Zayed
+      if (km > 15) return { calzada: 26, acera: 4 };   // arteria
+      return { calzada: 15, acera: 3 };                // secundaria
+    }
+    /** Remuestrea una polilínea cada `paso` metros, en coordenadas de mundo. */
+    function remuestrea(line, geo, paso) {
+      var pts = [], i, w;
+      for (i = 0; i < line.length; i++) {
+        w = geo.toWorld(line[i][1], line[i][0]);
+        pts.push({ x: w.x, z: w.z });
+      }
+      var out = [], resto = 0, j;
+      for (j = 0; j + 1 < pts.length; j++) {
+        var a = pts[j], b = pts[j + 1];
+        var dx = b.x - a.x, dz = b.z - a.z, L = Math.sqrt(dx * dx + dz * dz);
+        if (L < 1e-3) continue;
+        dx /= L; dz /= L;
+        var t = resto;
+        while (t < L) { out.push({ x: a.x + dx * t, z: a.z + dz * t }); t += paso; }
+        resto = t - L;
+      }
+      if (pts.length) out.push(pts[pts.length - 1]);
+      return out;
+    }
+    /**
+     * Construye la calzada: una cinta por polilínea con perfil transversal de
+     * ocho puntos —acera, bordillo con cara vertical, calzada, y lo mismo al otro
+     * lado—, remuestreada para que siga el relieve. Cada vértice lleva su
+     * coordenada transversal y longitudinal, que es lo que pinta las marcas.
+     */
     function buildRoads(roads, geo) {
-      var pts = [], hcs = [], r, i;
+      var pos = [], hcs = [], vias = [], idx = [], base = 0, r, i, k;
+      // Perfil: [u relativo al semiancho de calzada, altura sobre la rasante, clase]
+      // clase 0 calzada · 1 bordillo · 2 acera
+      var ALTO = 0.18;
       for (r = 0; r < roads.length; r++) {
         var line = roads[r];
         if (!line || line.length < 2) continue;
-        var prev = null;
-        for (i = 0; i < line.length; i++) {
-          var w = geo.toWorld(line[i][1], line[i][0]);
-          if (w.x < 0 || w.z < 0 || w.x > geo.worldW || w.z > geo.worldH) { prev = null; continue; }
-          var p = [w.x, Math.max(surfaceH(w.x, w.z), 0) + 3, w.z, Math.max(coarseH(w.x, w.z), 0) + 3];
-          if (prev) { pts.push(prev[0], prev[1], prev[2], p[0], p[1], p[2]); hcs.push(prev[3], p[3]); }
-          prev = p;
+        var muestras = remuestrea(line, geo, VIA_PASO);
+        if (muestras.length < 2) continue;
+        var largoKm = 0;
+        for (i = 0; i + 1 < muestras.length; i++) {
+          largoKm += Math.sqrt(Math.pow(muestras[i + 1].x - muestras[i].x, 2) + Math.pow(muestras[i + 1].z - muestras[i].z, 2));
         }
+        largoKm /= 1000;
+        var an = anchoVia(largoKm), c = an.calzada * 0.5, kb = c + 0.45, ac = kb + an.acera;
+        var perfil = [[-ac, ALTO, 2], [-kb, ALTO, 2], [-kb, 0, 1], [-c, 0, 0], [c, 0, 0], [kb, 0, 1], [kb, ALTO, 2], [ac, ALTO, 2]];
+        var sAcum = 0, fila = 0;
+        for (i = 0; i < muestras.length; i++) {
+          var p0 = muestras[i];
+          if (p0.x < -ac || p0.z < -ac || p0.x > geo.worldW + ac || p0.z > geo.worldH + ac) continue;
+          // Normal transversal: perpendicular a la marcha, promediando en los quiebros.
+          var ant = muestras[i > 0 ? i - 1 : i], sig = muestras[i + 1 < muestras.length ? i + 1 : i];
+          var tx = sig.x - ant.x, tz = sig.z - ant.z, tl = Math.sqrt(tx * tx + tz * tz) || 1;
+          tx /= tl; tz /= tl;
+          var nx = -tz, nz = tx;
+          if (i > 0) sAcum += Math.sqrt(Math.pow(p0.x - muestras[i - 1].x, 2) + Math.pow(p0.z - muestras[i - 1].z, 2));
+          // Una sección de carretera es HORIZONTAL de lado a lado, y entre dos
+          // secciones va recta. Si cada punto se pegara a su propia cota, la
+          // cuerda de 100 m se hundiría bajo cualquier bulto intermedio y el
+          // terreno mordería la calzada a trozos. Se nivela por la cota máxima
+          // de una cruz de nueve puntos: la rasante queda por encima del relieve
+          // en todo el tramo, que es justo lo que hace un desmonte.
+          var hF = 0, hC = 0, dt, du2, qx, qz;
+          for (dt = -0.5; dt <= 0.51; dt += 0.5) for (du2 = -1; du2 <= 1; du2++) {
+            qx = p0.x + tx * VIA_PASO * dt + nx * ac * du2;
+            qz = p0.z + tz * VIA_PASO * dt + nz * ac * du2;
+            hF = Math.max(hF, surfaceH(qx, qz)); hC = Math.max(hC, coarseH(qx, qz));
+          }
+          for (k = 0; k < perfil.length; k++) {
+            var u = perfil[k][0], dy = perfil[k][1], cl = perfil[k][2];
+            var wx = p0.x + nx * u, wz = p0.z + nz * u;
+            pos.push(wx, hF + 0.22 + dy, wz);
+            hcs.push(hC + 0.22 + dy);
+            vias.push(u, sAcum, cl);
+          }
+          if (fila > 0) {
+            var a0 = base + (fila - 1) * perfil.length, b0 = base + fila * perfil.length;
+            // El devanado importa: cosidas al revés, las caras miran al suelo y la
+            // GPU las descarta. Con este orden la normal geométrica es +Y en la
+            // calzada y apunta hacia el eje en las dos caras del bordillo.
+            for (k = 0; k + 1 < perfil.length; k++) {
+              idx.push(a0 + k, a0 + k + 1, b0 + k, a0 + k + 1, b0 + k + 1, b0 + k);
+            }
+          }
+          fila++;
+        }
+        base = pos.length / 3;
       }
-      if (!pts.length) return null;
+      if (!idx.length) return null;
       var g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
       g.setAttribute('hc', new THREE.BufferAttribute(new Float32Array(hcs), 1));
-      var m = new THREE.LineSegments(g, makeDrapeMaterial(lodUniform, colors.road, 1, false));
-      m.frustumCulled = false; m.renderOrder = 2;
+      g.setAttribute('via', new THREE.BufferAttribute(new Float32Array(vias), 3));
+      g.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
+      g.computeBoundingSphere();
+      var m = new THREE.Mesh(g, makeRoadMaterial(shared, lodUniform, noiseTex));
+      m.frustumCulled = false; m.renderOrder = 1; m.receiveShadow = true;
       return m;
     }
     function normalizeMeta(meta, img) {

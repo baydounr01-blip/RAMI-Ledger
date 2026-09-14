@@ -1,3 +1,34 @@
+## Novedades de v0.10.4 — la calzada
+
+Entrega 2 del plan del metaverso (`docs/METAVERSO.md`). **No toca el consenso,
+la red ni el formato de los ficheros.**
+
+Las 21 vías del mapa se dibujaban como líneas de **un píxel** flotando tres
+metros sobre el suelo: de lejos parecían carreteras, de cerca eran un alambre.
+Ahora son geometría de verdad.
+
+- **Cinta con perfil.** Cada vía se remuestrea cada 100 metros y se levanta con
+  un perfil de ocho puntos: acera, bordillo con cara vertical, calzada, y lo
+  mismo al otro lado. El ancho sale de su longitud, porque el mapa abierto no
+  trae jerarquía: 42 metros las troncales, 26 las arterias, 15 las secundarias.
+  602 kilómetros de vía, 65.268 triángulos, **ni una llamada de dibujo más**
+  (la línea de antes gastaba dos por ser transparente a doble cara; la calzada
+  gasta una por ser opaca).
+- **Marcas viales analíticas.** La línea de eje, las de carril y las
+  discontinuas no son una textura: salen de la coordenada transversal —metros
+  desde el eje— y de la longitudinal —metros recorridos—, que cada vértice
+  lleva consigo. Cuestan cuatro instrucciones y **cero bytes de descarga**, y se
+  apagan solas en la distancia para no centellear.
+- **La rasante se nivela.** Una sección de carretera es horizontal de lado a
+  lado y recta entre secciones; si cada punto se pegara a su propia cota, la
+  cuerda de 100 metros se hundiría bajo cualquier bulto y el terreno mordería
+  la calzada a trozos. Se nivela por la cota máxima de una cruz de nueve
+  puntos, que es justo lo que hace un desmonte de verdad.
+
+**Lo que esto NO trae:** el mapa abierto solo tiene las 21 vías principales de
+Dubái. Dentro de los barrios **sigue sin haber calles**: el centro se cruza por
+arena entre los edificios. Las calles de ciudad son otro trabajo y otro dato.
+
 ## Novedades de v0.10.3 — los edificios dejan de ser humo
 
 Entrega 1 del plan del metaverso (`docs/METAVERSO.md`). **No toca el consenso,
@@ -198,6 +229,37 @@ altura sin romperse.
   con los binarios de la v0.7.0 y la v0.7.3. Un binario v0.8.0 que abra un
   `chain.jsonl` escrito por la 0.9.0 con transacciones de mercado no lo lee
   (por red nunca las recibe): la salida es volver a la 0.9.0.
+
+## What's new in v0.10.4 — the roadway
+
+Delivery 2 of the metaverse plan (`docs/METAVERSO.md`). **It touches neither
+consensus, nor the network, nor the file format.**
+
+The map's 21 roads were drawn as **one-pixel** lines floating three metres above
+the ground: from far away they looked like roads, from close up they were a
+wire. Now they are real geometry.
+
+- **A ribbon with a profile.** Each road is resampled every 100 metres and
+  raised with an eight-point cross-section: sidewalk, kerb with a vertical face,
+  roadway, and the same on the other side. The width comes from its length,
+  because the open map carries no hierarchy: 42 metres for trunk roads, 26 for
+  arterials, 15 for secondary. 602 kilometres of road, 65,268 triangles, **not
+  one extra draw call** (the old line spent two, being double-sided and
+  transparent; the roadway spends one, being opaque).
+- **Analytic lane markings.** The centre line, the lane lines and the dashes are
+  not a texture: they come from the across-track coordinate — metres from the
+  centre line — and the along-track one — metres travelled — which every vertex
+  carries. They cost four instructions and **zero bytes of download**, and they
+  fade out with distance so they do not shimmer.
+- **The grade is levelled.** A road section is horizontal from side to side and
+  straight between sections; if every point hugged its own height, the 100-metre
+  chord would sink below any bump and the terrain would bite the roadway into
+  pieces. It is levelled to the highest ground in a nine-point cross, which is
+  exactly what a real cutting does.
+
+**What this does NOT bring:** the open map only has Dubai's 21 main roads.
+Inside the districts there are **still no streets**: downtown is crossed on sand
+between the buildings. City streets are another job and another dataset.
 
 ## What's new in v0.10.3 — buildings stop being smoke
 
