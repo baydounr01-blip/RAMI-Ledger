@@ -1777,7 +1777,7 @@
       gridCenter: new THREE.Vector3(), counts: null, inflatePath: null,
       sel: null, hover: null, frame: 0, fps: 0, fpsN: 0, fpsT: 0, lastT: 0, raf: 0,
       mode: 'orbit', hour: null, night: 0, landmarks: [], lmIndex: {}, clusterTotal: 0,
-      avatars: {}, avatarOrder: [], traffic: null, gridShown: false, catastro: null
+      avatars: {}, avatarOrder: [], traffic: null, gridShown: false, catastro: null, tramas: []
     };
     var gridGroup = new THREE.Group(); scene.add(gridGroup);
     var pending = null, pendingFlight = null;
@@ -2277,6 +2277,10 @@
           var h = c.hmin + (c.hmax - c.hmin) * Math.pow(rnd(), 1.6);
           var fw = c.kind === 'towers' ? 22 + rnd() * 20 : (c.kind === 'blocks' ? 26 + rnd() * 24 : (c.kind === 'villas' ? 12 + rnd() * 8 : 40 + rnd() * 60));
           var fd = c.kind === 'warehouses' ? 25 + rnd() * 30 : fw * (0.8 + rnd() * 0.5);
+          // Un edificio no se planta en mitad de la calle. Rechazando las
+          // posiciones que pisan la trama, las MANZANAS salen solas: el edificio
+          // se queda donde queda sitio, que es exactamente como crece una ciudad.
+          if (enCalle(x, z, Math.max(fw, fd) * 0.5)) continue;
           list.push({ x: x, y: hg - 1, z: z, h: h + 1, w: fw, d: fd, yaw: rnd() * Math.PI, tone: rnd(), barrio: c.name || '' });
           j++;
         }
@@ -2962,6 +2966,21 @@
       if (km > 15) return { calzada: 26, acera: 4 };   // arteria
       return { calzada: 15, acera: 3 };                // secundaria
     }
+    /** Remuestrea una polilínea YA en coordenadas de mundo, cada `paso` metros. */
+    function remuestreaMundo(pts, paso) {
+      var out = [], resto = 0, j;
+      for (j = 0; j + 1 < pts.length; j++) {
+        var a = pts[j], b = pts[j + 1];
+        var dx = b.x - a.x, dz = b.z - a.z, L = Math.sqrt(dx * dx + dz * dz);
+        if (L < 1e-3) continue;
+        dx /= L; dz /= L;
+        var t = resto;
+        while (t < L) { out.push({ x: a.x + dx * t, z: a.z + dz * t }); t += paso; }
+        resto = t - L;
+      }
+      if (pts.length) out.push(pts[pts.length - 1]);
+      return out;
+    }
     /** Remuestrea una polilínea cada `paso` metros, en coordenadas de mundo. */
     function remuestrea(line, geo, paso) {
       var pts = [], i, w;
@@ -2988,39 +3007,112 @@
      * lado—, remuestreada para que siga el relieve. Cada vértice lleva su
      * coordenada transversal y longitudinal, que es lo que pinta las marcas.
      */
+    // --- La trama de barrio -------------------------------------------------------
+    // El mapa abierto solo trae las 21 vías principales de Dubái: dentro de los
+    // barrios no hay nada, y sin calles no hay aceras que pisar ni portales a los
+    // que llegar. Como la red de este entorno no alcanza OpenStreetMap, las calles
+    // menores se DEDUCEN, que es la mitad de la solución que en cualquier caso
+    // hacía falta: cada barrio recibe una retícula cuyo giro y cuyo paso salen de
+    // `semillaMorfologia` de su celda, así que es la misma en todas las máquinas y
+    // no cambia nunca. Si algún día entra un extracto de OpenStreetMap, sus vías
+    // con nombre se añaden a esta misma lista y mandan donde existan.
+    var TRAMA = {
+      towers: { paso: 165, calzada: 16, acera: 3.5 },
+      blocks: { paso: 150, calzada: 13, acera: 3.0 },
+      villas: { paso: 120, calzada: 10, acera: 2.4 },
+      warehouses: { paso: 210, calzada: 18, acera: 3.0 }
+    };
+    /** Retícula de un barrio: devuelve sus ejes de calle en coordenadas de mundo. */
+    function tramaBarrio(c, geo) {
+      var w = geo.toWorld(c.lat, c.lon), t = TRAMA[c.kind] || TRAMA.blocks;
+      var sem = semillaMorfologia(Math.round(w.x / CELL), Math.round(w.z / CELL), 9);
+      var ang = real01(sem) * Math.PI;            // el giro de la retícula
+      var R = (c.radius_m || 600) * 0.94;
+      S.tramas.push({ x: w.x, z: w.z, R: R, ang: ang, paso: t.paso, medio: t.calzada * 0.5 + t.acera });
+      var cs = Math.cos(ang), sn = Math.sin(ang), lineas = [], n = Math.floor(R / t.paso), i, d, semi;
+      for (i = -n; i <= n; i++) {
+        d = i * t.paso;
+        semi = Math.sqrt(Math.max(0, R * R - d * d));   // cuerda del círculo a esa altura
+        if (semi < t.paso * 0.6) continue;              // tramos demasiado cortos: sobran
+        // Familia paralela al giro, y la perpendicular.
+        lineas.push({ pts: [{ x: w.x + cs * -semi - sn * d, z: w.z + sn * -semi + cs * d },
+                            { x: w.x + cs * semi - sn * d, z: w.z + sn * semi + cs * d }],
+                      calzada: t.calzada, acera: t.acera });
+        lineas.push({ pts: [{ x: w.x + cs * d - sn * -semi, z: w.z + sn * d + cs * -semi },
+                            { x: w.x + cs * d - sn * semi, z: w.z + sn * d + cs * semi }],
+                      calzada: t.calzada, acera: t.acera });
+      }
+      return lineas;
+    }
+    /** ¿Cae el punto en una calle de barrio? Es analítico: la retícula es regular. */
+    function enCalle(wx, wz, margen) {
+      var i, t, dx, dz, cs, sn, lx, lz, d1, d2;
+      for (i = 0; i < S.tramas.length; i++) {
+        t = S.tramas[i];
+        dx = wx - t.x; dz = wz - t.z;
+        if (dx * dx + dz * dz > t.R * t.R) continue;
+        cs = Math.cos(-t.ang); sn = Math.sin(-t.ang);
+        lx = dx * cs - dz * sn; lz = dx * sn + dz * cs;
+        d1 = Math.abs(lx - Math.round(lx / t.paso) * t.paso);
+        d2 = Math.abs(lz - Math.round(lz / t.paso) * t.paso);
+        if (Math.min(d1, d2) < t.medio + (margen || 0)) return true;
+      }
+      return false;
+    }
+
+    /**
+     * Construye TODAS las calzadas —las 21 vías del mapa y la trama deducida de
+     * los 34 barrios— en una sola malla: cinta con perfil transversal de ocho
+     * puntos, remuestreada para seguir el relieve y nivelada por tramos.
+     */
     function buildRoads(roads, geo) {
       var pos = [], hcs = [], vias = [], idx = [], base = 0, r, i, k;
-      // Perfil: [u relativo al semiancho de calzada, altura sobre la rasante, clase]
-      // clase 0 calzada · 1 bordillo · 2 acera
-      var ALTO = 0.18;
+      var ALTO = 0.18;                            // altura del bordillo
+      // 1) Las vías del mapa abierto, con su ancho sacado de su longitud.
+      var lineas = [];
       for (r = 0; r < roads.length; r++) {
         var line = roads[r];
         if (!line || line.length < 2) continue;
-        var muestras = remuestrea(line, geo, VIA_PASO);
-        if (muestras.length < 2) continue;
+        var m0 = remuestrea(line, geo, VIA_PASO);
+        if (m0.length < 2) continue;
         var largoKm = 0;
-        for (i = 0; i + 1 < muestras.length; i++) {
-          largoKm += Math.sqrt(Math.pow(muestras[i + 1].x - muestras[i].x, 2) + Math.pow(muestras[i + 1].z - muestras[i].z, 2));
+        for (i = 0; i + 1 < m0.length; i++) {
+          largoKm += Math.sqrt(Math.pow(m0[i + 1].x - m0[i].x, 2) + Math.pow(m0[i + 1].z - m0[i].z, 2));
         }
-        largoKm /= 1000;
-        var an = anchoVia(largoKm), c = an.calzada * 0.5, kb = c + 0.45, ac = kb + an.acera;
+        var an = anchoVia(largoKm / 1000);
+        lineas.push({ muestras: m0, calzada: an.calzada, acera: an.acera });
+      }
+      // 2) La trama deducida de cada barrio.
+      S.tramas = [];
+      var cl = (S.meta && S.meta.clusters) || [];
+      for (r = 0; r < cl.length; r++) {
+        var tl = tramaBarrio(cl[r], geo);
+        for (i = 0; i < tl.length; i++) {
+          lineas.push({ muestras: remuestreaMundo(tl[i].pts, VIA_PASO), calzada: tl[i].calzada, acera: tl[i].acera });
+        }
+      }
+      // 3) Una sola malla con todo.
+      for (r = 0; r < lineas.length; r++) {
+        var muestras = lineas[r].muestras;
+        if (!muestras || muestras.length < 2) continue;
+        var c = lineas[r].calzada * 0.5, kb = c + 0.45, ac = kb + lineas[r].acera;
         var perfil = [[-ac, ALTO, 2], [-kb, ALTO, 2], [-kb, 0, 1], [-c, 0, 0], [c, 0, 0], [kb, 0, 1], [kb, ALTO, 2], [ac, ALTO, 2]];
         var sAcum = 0, fila = 0;
         for (i = 0; i < muestras.length; i++) {
           var p0 = muestras[i];
-          if (p0.x < -ac || p0.z < -ac || p0.x > geo.worldW + ac || p0.z > geo.worldH + ac) continue;
-          // Normal transversal: perpendicular a la marcha, promediando en los quiebros.
+          var dentro = p0.x >= ac && p0.z >= ac && p0.x <= geo.worldW - ac && p0.z <= geo.worldH - ac
+            && Math.max(surfaceH(p0.x, p0.z), 0) > 0.6;      // ni fuera del mapa ni en el agua
+          if (!dentro) { base = pos.length / 3; fila = 0; continue; }   // se corta la cinta, no se cose el hueco
           var ant = muestras[i > 0 ? i - 1 : i], sig = muestras[i + 1 < muestras.length ? i + 1 : i];
-          var tx = sig.x - ant.x, tz = sig.z - ant.z, tl = Math.sqrt(tx * tx + tz * tz) || 1;
-          tx /= tl; tz /= tl;
+          var tx = sig.x - ant.x, tz = sig.z - ant.z, tl2 = Math.sqrt(tx * tx + tz * tz) || 1;
+          tx /= tl2; tz /= tl2;
           var nx = -tz, nz = tx;
           if (i > 0) sAcum += Math.sqrt(Math.pow(p0.x - muestras[i - 1].x, 2) + Math.pow(p0.z - muestras[i - 1].z, 2));
           // Una sección de carretera es HORIZONTAL de lado a lado, y entre dos
           // secciones va recta. Si cada punto se pegara a su propia cota, la
-          // cuerda de 100 m se hundiría bajo cualquier bulto intermedio y el
-          // terreno mordería la calzada a trozos. Se nivela por la cota máxima
-          // de una cruz de nueve puntos: la rasante queda por encima del relieve
-          // en todo el tramo, que es justo lo que hace un desmonte.
+          // cuerda se hundiría bajo cualquier bulto intermedio y el terreno
+          // mordería la calzada a trozos. Se nivela por la cota máxima de una
+          // cruz de nueve puntos: es lo que hace un desmonte.
           var hF = 0, hC = 0, dt, du2, qx, qz;
           for (dt = -0.5; dt <= 0.51; dt += 0.5) for (du2 = -1; du2 <= 1; du2++) {
             qx = p0.x + tx * VIA_PASO * dt + nx * ac * du2;
@@ -3028,11 +3120,11 @@
             hF = Math.max(hF, surfaceH(qx, qz)); hC = Math.max(hC, coarseH(qx, qz));
           }
           for (k = 0; k < perfil.length; k++) {
-            var u = perfil[k][0], dy = perfil[k][1], cl = perfil[k][2];
+            var u = perfil[k][0], dy = perfil[k][1], cla = perfil[k][2];
             var wx = p0.x + nx * u, wz = p0.z + nz * u;
             pos.push(wx, hF + 0.22 + dy, wz);
             hcs.push(hC + 0.22 + dy);
-            vias.push(u, sAcum, cl);
+            vias.push(u, sAcum, cla);
           }
           if (fila > 0) {
             var a0 = base + (fila - 1) * perfil.length, b0 = base + fila * perfil.length;

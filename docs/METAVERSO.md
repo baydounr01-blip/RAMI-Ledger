@@ -176,9 +176,23 @@ por la cota máxima de su entorno, con marcas viales analíticas sacadas de las
 coordenadas transversal y longitudinal de cada vértice. 65.268 triángulos y
 ninguna llamada de dibujo más.
 
-**Pendiente de esta entrega:** el mapa abierto solo trae las vías principales,
-así que dentro de los barrios sigue sin haber calles y el centro se cruza por
-arena. Y queda el experimento que decide el presupuesto de todo lo demás:
+**Hecho en la v0.10.6:** las calles de barrio. Cada uno de los 34 barrios recibe
+una retícula cuyo giro y cuyo paso se **deducen** de la celda donde está, con la
+misma aritmética entera que el resto de la ciudad; y un edificio cuya posición
+pisa la trama busca otra, así que **las manzanas salen solas**.
+
+**Cambio sobre el plan.** Se eligió mezclar calles reales de OpenStreetMap con
+las deducidas. La red del entorno donde se construye el proyecto **no alcanza
+OpenStreetMap**: rechaza Overpass, Nominatim, Geofabrik y los teselados, igual
+que rechazaba las fuentes de textura. La mitad deducida está hecha; la mitad
+real queda **enchufable**: en cuanto haya un extracto de Dubái en el
+repositorio, sus vías con nombre entran en la misma lista de ejes y mandan donde
+existan. Nada del código que hay que escribir para eso cambia lo ya hecho.
+
+**Pendiente de esta entrega:** los cruces entre la trama de barrio y las vías
+principales se solapan sin resolverse (las dos calzadas se dibujan, no hay
+glorieta ni prioridad). Y queda el experimento que decide el presupuesto de todo
+lo demás:
 **quitar el buffer de profundidad logarítmico**, que hoy obliga a todos los
 sombreadores a escribir profundidad y anula el descarte temprano de píxeles en
 la escena entera. Es el número más grande que nadie ha medido.
