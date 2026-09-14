@@ -212,6 +212,11 @@
   #city3d{width:100%;max-width:960px;height:560px;border:1px solid var(--line);border-radius:12px;overflow:hidden;
     background:#0b0f14;position:relative;display:none;touch-action:none}
   #city3d canvas{display:block}
+  #cyHint{position:absolute;left:0;right:0;top:0;z-index:2;padding:11px 14px;display:none;
+    gap:10px;align-items:center;flex-wrap:wrap;font-size:13px;color:#e9eff7;
+    background:linear-gradient(rgba(6,10,15,.93) 45%,rgba(6,10,15,0))}
+  #cyHint.on{display:flex}
+  #cyHint b{color:#fff}
   .citybar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
   .citybar .btn.on{outline:2px solid var(--accent);outline-offset:1px}
   #cityCanvas.hidden{display:none}
@@ -598,8 +603,9 @@
       <div class="citywrap">
         <div>
           <div class="citybar">
+            <button class="btn small ghost" id="cyViewSkyline">🌇 Centro</button>
             <button class="btn small ghost" id="cyViewIsland">🌆 Dubái</button>
-            <button class="btn small ghost" id="cyViewCity">🏙️ Parcelas</button>
+            <button class="btn small ghost" id="cyViewCity">▦ Parcelas</button>
             <select id="cyLandmark" title="Ir a un hito"><option value="">🗼 Ir a un hito…</option></select>
             <span style="width:8px"></span>
             <button class="btn small ghost on" id="cyMode3d">3D</button>
@@ -621,7 +627,7 @@
             <button class="btn small" id="cyVR" style="display:none">🥽 Gafas VR</button>
             <span class="muted" id="cyLoad" style="font-size:12px"></span>
           </div>
-          <div id="city3d"></div>
+          <div id="city3d"><div id="cyHint"><span>🖱️ Arrastra para girar y gira la rueda para acercarte. Haz clic en una parcela para abrir su ficha, «🚶 A pie» para caminar por la ciudad con WASD y «🥽 Gafas VR» para entrar con gafas.</span><button class="btn small" id="cyHintOk" style="margin-left:auto">Entendido</button></div></div>
           <canvas id="cityCanvas" width="960" height="560" class="hidden"></canvas>
           <div class="legend" id="cityLegend"></div>
           <div class="legend">
@@ -2002,11 +2008,32 @@
       if(c3d.handle) c3d.handle.setVisible(false);
       drawCity();
     }
+    mostrarPista();
   }
+  var PISTA = "rami.ciudad.pista";
+  function mostrarPista(){
+    var el = document.getElementById("cyHint"); if(!el) return;
+    var visto = false; try{ visto = localStorage.getItem(PISTA) === "1"; }catch(e){}
+    el.classList.toggle("on", !visto && c3d.mode === "3d" && !c3d.failed);
+  }
+  document.getElementById("cyHintOk").addEventListener("click", function(){
+    try{ localStorage.setItem(PISTA, "1"); }catch(e){}
+    document.getElementById("cyHint").classList.remove("on");
+  });
   document.getElementById("cyMode3d").addEventListener("click", function(){ c3d.failed = false; setCityMode("3d"); });
   document.getElementById("cyMode2d").addEventListener("click", function(){ setCityMode("2d"); });
+  document.getElementById("cyViewSkyline").addEventListener("click", function(){ if(c3d.mode!=="3d") setCityMode("3d"); ensureCity3D().then(function(h){ h.flyToSkyline(); }).catch(function(){}); });
   document.getElementById("cyViewIsland").addEventListener("click", function(){ if(c3d.mode!=="3d") setCityMode("3d"); ensureCity3D().then(function(h){ h.flyToIsland(); }).catch(function(){}); });
-  document.getElementById("cyViewCity").addEventListener("click", function(){ if(c3d.mode!=="3d") setCityMode("3d"); ensureCity3D().then(function(h){ if(city.sel) h.flyTo(city.sel.x, city.sel.y); else h.flyToCity(); }).catch(function(){}); });
+  // «Parcelas» enciende y apaga la capa de casillas: es la herramienta para
+  // comprar, no el paisaje. Al encenderla va a la vista que las abarca todas.
+  document.getElementById("cyViewCity").addEventListener("click", function(){
+    if(c3d.mode!=="3d") setCityMode("3d");
+    ensureCity3D().then(function(h){
+      var on = h.setParcelGrid(!h.parcelGrid());
+      document.getElementById("cyViewCity").classList.toggle("on", on);
+      if(on){ if(city.sel) h.flyTo(city.sel.x, city.sel.y); else h.flyToCity(); }
+    }).catch(function(){});
+  });
   document.getElementById("cyLandmark").addEventListener("change", function(){ var id = this.value; if(!id) return; if(c3d.mode!=="3d") setCityMode("3d"); ensureCity3D().then(function(h){ h.flyToLandmark(id); }).catch(function(){}); });
   document.getElementById("cyWalk").addEventListener("click", function(){
     if(c3d.mode!=="3d") setCityMode("3d");
