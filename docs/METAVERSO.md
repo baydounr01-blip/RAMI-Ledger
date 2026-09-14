@@ -129,7 +129,7 @@ dejan de dibujarse dos veces (three.js reserva dos pasadas para todo material
 transparente a doble cara salvo que se le diga que no hacen falta); y los
 símbolos de depuración salen del binario.
 
-### Entrega 1 — el plano inmutable, la colisión y la selección · 6–8 sesiones
+### Entrega 1 — el plano inmutable, la colisión y la selección · **hecha en la v0.10.3**
 
 La base de todo lo que viene. Sin esto, TRAMA siembra la ciudad con datos que
 **cambian** (`owner`, `since`, `kind` se mueven en cada compra) y un edificio se
@@ -146,10 +146,24 @@ reconstruiría entero cada vez que alguien vende un piso.
 - **Selección de objetos.** `pick()` pasa de devolver una casilla a devolver
   *qué* hay ahí: puerta, coche, escaparate, portal.
 
+Entregado: **3.180 sólidos** (56 hitos + 3.124 torres) en una rejilla de 256 m;
+colisión a pie con salida por la cara más cercana; rayo de pantalla que topa
+antes con el edificio que con el suelo; y el contrato de semillas
+(`semillaMorfologia` / `semillaRopaje`) ya en uso, no como texto muerto: el tono
+y la esbeltez de cada edificio salen de canales de morfología, y una variación
+fina del tono sale del ropaje, así que dos torres iguales de dueños distintos no
+se ven idénticas.
+
+Comprobado con el panel real: el jugador andando contra la cara sur del Burj
+Khalifa se detiene a 75 m exactos del centro (su media huella); un rayo vertical
+lo toca a 830 m de altura y uno lateral a 825 m de distancia; en pleno desierto
+no hay nada. Queda fuera de esta entrega **la colisión con los coches y con
+otros avatares**, que son objetos que se mueven y necesitan otra estructura.
+
 ### Entrega 2 — el suelo · 6–8 sesiones
 
-Cierra el punto 1 de `PENDIENTE-v0.10.1.md` (hoy renumerado en `PENDIENTE-v0.10.2.md`), que es el defecto que el propio
-proyecto tenía escrito como pendiente número uno: *a pie el suelo sigue siendo
+Cierra el defecto que el propio
+proyecto arrastra desde la 0.9.0 como pendiente número uno: *a pie el suelo sigue siendo
 arena lisa*.
 
 Calzada con bordillo, aceras, marcas viales y aparcamientos, generados del grafo

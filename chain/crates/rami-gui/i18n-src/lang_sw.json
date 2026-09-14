@@ -507,7 +507,7 @@
  "al dueño. ¿Continuar?": "kwa mmiliki. Uendelee?",
  "al día": "kwa siku",
  "aún no": "bado",
- "bloque": "bloku",
+ "bloque": "jengo",
  "bloques": "bloku",
  "celda": "seli",
  "cobrado como proveedor": "mapato kama msambazaji",
@@ -686,5 +686,9 @@
  "@ph:Aprendo a hacer negocios en Dubái": "@ph:Najifunza kufanya biashara Dubai",
  "@title:Estilo del avatar": "@title:Mtindo wa avatar",
  "Entendido": "Nimeelewa",
- "🖱️ Arrastra para girar y gira la rueda para acercarte. Haz clic en una parcela para abrir su ficha, «🚶 A pie» para caminar por la ciudad con WASD y «🥽 Gafas VR» para entrar con gafas.": "🖱️ Buruta kugeuza na zungusha gurudumu kusogea karibu. Bofya kiwanja kufungua kadi yake, «🚶 Kwa miguu» kutembea mjini kwa WASD na «🥽 Miwani ya VR» kuingia na miwani."
+ "🖱️ Arrastra para girar y gira la rueda para acercarte. Haz clic en una parcela para abrir su ficha, «🚶 A pie» para caminar por la ciudad con WASD y «🥽 Gafas VR» para entrar con gafas.": "🖱️ Buruta kugeuza na zungusha gurudumu kusogea karibu. Bofya kiwanja kufungua kadi yake, «🚶 Kwa miguu» kutembea mjini kwa WASD na «🥽 Miwani ya VR» kuingia na miwani.",
+ "torre": "mnara",
+ "villa": "villa",
+ "nave": "ghala",
+ "edificio": "jengo"
 }

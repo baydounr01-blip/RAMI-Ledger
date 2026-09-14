@@ -507,7 +507,7 @@
  "al dueño. ¿Continuar?": "владельцу. Продолжить?",
  "al día": "в день",
  "aún no": "ещё нет",
- "bloque": "блок",
+ "bloque": "дом",
  "bloques": "блоков",
  "celda": "ячейка",
  "cobrado como proveedor": "получено как поставщик",
@@ -686,5 +686,9 @@
  "@ph:Aprendo a hacer negocios en Dubái": "@ph:Учусь вести бизнес в Дубае",
  "@title:Estilo del avatar": "@title:Стиль аватара",
  "Entendido": "Понятно",
- "🖱️ Arrastra para girar y gira la rueda para acercarte. Haz clic en una parcela para abrir su ficha, «🚶 A pie» para caminar por la ciudad con WASD y «🥽 Gafas VR» para entrar con gafas.": "🖱️ Перетаскивайте, чтобы поворачивать, колесо приближает. Нажмите на участок, чтобы открыть его карточку, «🚶 Пешком» — ходить по городу на WASD, «🥽 VR-гарнитура» — войти в гарнитуре."
+ "🖱️ Arrastra para girar y gira la rueda para acercarte. Haz clic en una parcela para abrir su ficha, «🚶 A pie» para caminar por la ciudad con WASD y «🥽 Gafas VR» para entrar con gafas.": "🖱️ Перетаскивайте, чтобы поворачивать, колесо приближает. Нажмите на участок, чтобы открыть его карточку, «🚶 Пешком» — ходить по городу на WASD, «🥽 VR-гарнитура» — войти в гарнитуре.",
+ "torre": "башня",
+ "villa": "вилла",
+ "nave": "склад",
+ "edificio": "здание"
 }

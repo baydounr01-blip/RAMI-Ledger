@@ -507,7 +507,7 @@
  "al dueño. ¿Continuar?": "给所有者。是否继续？",
  "al día": "每天",
  "aún no": "尚未",
- "bloque": "区块",
+ "bloque": "楼房",
  "bloques": "个区块",
  "celda": "格",
  "cobrado como proveedor": "作为供应商收取",
@@ -686,5 +686,9 @@
  "@ph:Aprendo a hacer negocios en Dubái": "@ph:在迪拜学习做生意",
  "@title:Estilo del avatar": "@title:虚拟形象风格",
  "Entendido": "知道了",
- "🖱️ Arrastra para girar y gira la rueda para acercarte. Haz clic en una parcela para abrir su ficha, «🚶 A pie» para caminar por la ciudad con WASD y «🥽 Gafas VR» para entrar con gafas.": "🖱️ 拖动可转动视角，滚轮可拉近。点击地块打开其卡片，「🚶 步行」用 WASD 在城中行走，「🥽 VR 头显」戴上头显进入。"
+ "🖱️ Arrastra para girar y gira la rueda para acercarte. Haz clic en una parcela para abrir su ficha, «🚶 A pie» para caminar por la ciudad con WASD y «🥽 Gafas VR» para entrar con gafas.": "🖱️ 拖动可转动视角，滚轮可拉近。点击地块打开其卡片，「🚶 步行」用 WASD 在城中行走，「🥽 VR 头显」戴上头显进入。",
+ "torre": "塔楼",
+ "villa": "别墅",
+ "nave": "仓库",
+ "edificio": "建筑"
 }

@@ -686,5 +686,9 @@
  "@ph:Aprendo a hacer negocios en Dubái": "@ph:Learning to do business in Dubai",
  "@title:Estilo del avatar": "@title:Avatar style",
  "Entendido": "Got it",
- "🖱️ Arrastra para girar y gira la rueda para acercarte. Haz clic en una parcela para abrir su ficha, «🚶 A pie» para caminar por la ciudad con WASD y «🥽 Gafas VR» para entrar con gafas.": "🖱️ Drag to turn and scroll to zoom in. Click a parcel to open its card, «🚶 On foot» to walk around the city with WASD and «🥽 VR headset» to go in with a headset."
+ "🖱️ Arrastra para girar y gira la rueda para acercarte. Haz clic en una parcela para abrir su ficha, «🚶 A pie» para caminar por la ciudad con WASD y «🥽 Gafas VR» para entrar con gafas.": "🖱️ Drag to turn and scroll to zoom in. Click a parcel to open its card, «🚶 On foot» to walk around the city with WASD and «🥽 VR headset» to go in with a headset.",
+ "torre": "tower",
+ "villa": "villa",
+ "nave": "warehouse",
+ "edificio": "building"
 }

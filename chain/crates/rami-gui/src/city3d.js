@@ -72,6 +72,37 @@
   }
 
   /** Generador congruencial (semilla entera): variaciones estables por barrio. */
+  /**
+   * GENOTIPO — la semilla entera de una parcela, y el contrato que separa dos
+   * capas que no se pueden mezclar:
+   *
+   *   morfología  lo que NO cambia nunca: la posición en la rejilla y el
+   *               terreno. De aquí sale la FORMA del edificio. Si dependiera
+   *               del dueño, una torre entera se reharía cada vez que alguien
+   *               vende un piso.
+   *   ropaje      lo que cambia con la cadena: dueño, antigüedad, activos. De
+   *               aquí salen el rótulo, el color y las luces encendidas.
+   *
+   * Las dos son enteras (`Math.imul`, `|0`, `>>>0`), así que dan el mismo
+   * número en cualquier máquina y cualquier navegador: dos nodos que sigan la
+   * misma rama deducen exactamente la misma ciudad. La malla en metros que sale
+   * de ellas es coma flotante y puede diferir en el último bit entre dos
+   * tarjetas gráficas; da igual, porque es pintura y no entra en consenso.
+   */
+  function semillaMorfologia(x, y, canal) {
+    var h = (Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(y | 0, 0x165667b1) ^ Math.imul(canal | 0, 0x9e3779b9)) | 0;
+    h = Math.imul(h ^ (h >>> 15), 0x2545f491);
+    return (h ^ (h >>> 13)) >>> 0;
+  }
+  /** La semilla entera llevada a [0,1) para usarla como medida. */
+  function real01(semilla) { return (semilla >>> 0) / 4294967296; }
+  /** Ropaje: la misma parcela con otro dueño da otro número, y debe darlo. */
+  function semillaRopaje(x, y, dueno, desde) {
+    var h = semillaMorfologia(x, y) | 0, i;
+    if (dueno) for (i = 0; i < dueno.length; i++) h = Math.imul(h ^ dueno.charCodeAt(i), 0x01000193) | 0;
+    h = Math.imul(h ^ ((desde | 0) + 0x9e3779b9), 0x85ebca6b);
+    return (h ^ (h >>> 16)) >>> 0;
+  }
   function lcg(seed) {
     var s = (seed >>> 0) || 1;
     return function () { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
@@ -1621,7 +1652,7 @@
       gridCenter: new THREE.Vector3(), counts: null, inflatePath: null,
       sel: null, hover: null, frame: 0, fps: 0, fpsN: 0, fpsT: 0, lastT: 0, raf: 0,
       mode: 'orbit', hour: null, night: 0, landmarks: [], lmIndex: {}, clusterTotal: 0,
-      avatars: {}, avatarOrder: [], traffic: null, gridShown: false
+      avatars: {}, avatarOrder: [], traffic: null, gridShown: false, catastro: null
     };
     var gridGroup = new THREE.Group(); scene.add(gridGroup);
     var pending = null, pendingFlight = null;
@@ -1876,7 +1907,15 @@
         paintCell(col, ci, own ? ownRGB[kind] : sectorRGB[kind], pend ? 30 : (own ? 95 : 42));
         state[ci] = own ? 3 : 2; cnt.plot++; if (own) cnt.own++;
         var w = cellWorld(x, y);
-        var v = 0.9 + 0.2 * hash2(x + 13, y + 29), sy = (pend ? 0.3 : 1) * (0.85 + 0.3 * hash2(x + 3, y + 7) + Math.min(pc.assets | 0, 6) * 0.03);
+        // Canal 1 el tono, canal 2 la esbeltez: los dos salen SOLO de (x,y), así
+        // que la torre no cambia de forma ni de color cuando cambia de dueño. Lo
+        // que sí depende de la cadena —los activos acuñados— se suma aparte.
+        var v = 0.9 + 0.2 * real01(semillaMorfologia(x, y, 1));
+        // Ropaje: dos torres de la misma forma pero de dueños distintos no son
+        // idénticas. Esto SÍ cambia cuando la parcela cambia de manos, y tiene
+        // que cambiar: es lo que hace que la ciudad se vea vivida.
+        v *= 0.94 + 0.12 * real01(semillaRopaje(x, y, pc.owner || '', pc.since | 0));
+        var sy = (pend ? 0.3 : 1) * (0.85 + 0.3 * real01(semillaMorfologia(x, y, 2)) + Math.min(pc.assets | 0, 6) * 0.03);
         var arch = SECTOR_ARCH[kind] || 'torre';
         perArch[arch].push({ x: w.x, y: S.cellH[ci] + 0.5, z: w.z, sy: sy, c: tmpColor.clone().copy(sectorColors[kind]).multiplyScalar(v) });
         if (pc.sale) {
@@ -1936,6 +1975,139 @@
       refreshSelection();
     }
 
+    // --- Catastro de sólidos ------------------------------------------------------
+    // Toda la ciudad construida —los 56 hitos modelados y las miles de instancias
+    // de skyline— en una rejilla espacial con la HUELLA de cada edificio: centro,
+    // medidas, giro y altura. Una sola estructura que resuelve las dos cosas que
+    // hasta ahora no se podían hacer:
+    //
+    //   chocar   a pie se atravesaban los edificios, los hitos y los coches;
+    //            `empujarFuera` saca al jugador de cualquier huella.
+    //   pinchar  `pick()` solo intersecta el terreno y devuelve una casilla de
+    //            650 m: no había forma de señalar un edificio concreto, así que
+    //            tampoco puede haber portales, escaparates ni coches a los que
+    //            subir. `rayoSolido` devuelve QUÉ hay, no dónde.
+    //
+    // La rejilla es de 256 m, del orden de una manzana: con ~3.200 edificios en
+    // 70 km de mapa, la celda típica tiene cero o un elemento y la consulta es
+    // constante. La huella es una caja orientada (el giro importa: las torres del
+    // skyline se colocan con una guiñada aleatoria).
+    var SOLIDO_CELDA = 256;
+    function catastroNuevo() {
+      var nx = Math.max(1, Math.ceil((S.geo.worldW + SOLIDO_CELDA) / SOLIDO_CELDA));
+      var nz = Math.max(1, Math.ceil((S.geo.worldH + SOLIDO_CELDA) / SOLIDO_CELDA));
+      return { nx: nx, nz: nz, bins: new Array(nx * nz), items: [] };
+    }
+    /** Mete un sólido en todas las celdas que toca su huella (con el giro ya aplicado). */
+    function catastroAlta(cat, so) {
+      var idx = cat.items.length; cat.items.push(so);
+      var r = Math.sqrt(so.hw * so.hw + so.hd * so.hd);      // radio que envuelve la caja girada
+      var i0 = Math.max(0, Math.floor((so.x - r) / SOLIDO_CELDA)), i1 = Math.min(cat.nx - 1, Math.floor((so.x + r) / SOLIDO_CELDA));
+      var j0 = Math.max(0, Math.floor((so.z - r) / SOLIDO_CELDA)), j1 = Math.min(cat.nz - 1, Math.floor((so.z + r) / SOLIDO_CELDA));
+      for (var j = j0; j <= j1; j++) for (var i = i0; i <= i1; i++) {
+        var k = j * cat.nx + i;
+        (cat.bins[k] || (cat.bins[k] = [])).push(idx);
+      }
+    }
+    /** Punto (wx,wz) en el marco local de la huella: girar por -yaw. */
+    function aLocal(so, wx, wz, out) {
+      var dx = wx - so.x, dz = wz - so.z, c = Math.cos(-so.yaw), sn = Math.sin(-so.yaw);
+      out.x = dx * c - dz * sn; out.z = dx * sn + dz * c;
+      return out;
+    }
+    var _loc = { x: 0, z: 0 }, _loc2 = { x: 0, z: 0 };
+    /**
+     * Saca un círculo de radio `r` de cualquier huella que pise, y devuelve el
+     * sólido del que lo sacó (o null). Dos pasadas: salir de una esquina puede
+     * meterte en el edificio de al lado.
+     */
+    function empujarFuera(pos, r) {
+      var cat = S.catastro; if (!cat) return null;
+      var choque = null, pass, i, j, k, n, lista, so, cx, cz, nx2, nz2;
+      for (pass = 0; pass < 2; pass++) {
+        var i0 = Math.max(0, Math.floor((pos.x - r) / SOLIDO_CELDA)), i1 = Math.min(cat.nx - 1, Math.floor((pos.x + r) / SOLIDO_CELDA));
+        var j0 = Math.max(0, Math.floor((pos.z - r) / SOLIDO_CELDA)), j1 = Math.min(cat.nz - 1, Math.floor((pos.z + r) / SOLIDO_CELDA));
+        var movido = false;
+        for (j = j0; j <= j1; j++) for (i = i0; i <= i1; i++) {
+          lista = cat.bins[j * cat.nx + i]; if (!lista) continue;
+          for (n = 0; n < lista.length; n++) {
+            so = cat.items[lista[n]];
+            aLocal(so, pos.x, pos.z, _loc);
+            cx = clamp(_loc.x, -so.hw, so.hw); cz = clamp(_loc.z, -so.hd, so.hd);
+            var ex = _loc.x - cx, ez = _loc.z - cz, d2 = ex * ex + ez * ez;
+            if (d2 >= r * r) continue;                        // fuera: no toca
+            var d = Math.sqrt(d2);
+            if (d > 1e-4) { ex /= d; ez /= d; }                // borde: empuja por la normal
+            else {                                            // dentro del todo: por la cara más cercana
+              var px = so.hw - Math.abs(_loc.x), pz = so.hd - Math.abs(_loc.z);
+              if (px < pz) { ex = _loc.x >= 0 ? 1 : -1; ez = 0; d = -px; } else { ex = 0; ez = _loc.z >= 0 ? 1 : -1; d = -pz; }
+            }
+            var empuje = r - d;
+            var c = Math.cos(so.yaw), sn = Math.sin(so.yaw);   // volver al mundo
+            nx2 = ex * c - ez * sn; nz2 = ex * sn + ez * c;
+            pos.x += nx2 * empuje; pos.z += nz2 * empuje;
+            movido = true; choque = so;
+          }
+        }
+        if (!movido) break;
+      }
+      return choque;
+    }
+    /** El sólido cuya huella contiene (wx,wz), o null. */
+    function solidoBajo(wx, wz) {
+      var cat = S.catastro; if (!cat) return null;
+      var i = Math.floor(wx / SOLIDO_CELDA), j = Math.floor(wz / SOLIDO_CELDA);
+      if (i < 0 || j < 0 || i >= cat.nx || j >= cat.nz) return null;
+      var lista = cat.bins[j * cat.nx + i]; if (!lista) return null;
+      for (var n = 0; n < lista.length; n++) {
+        var so = cat.items[lista[n]];
+        aLocal(so, wx, wz, _loc2);
+        if (Math.abs(_loc2.x) <= so.hw && Math.abs(_loc2.z) <= so.hd) return so;
+      }
+      return null;
+    }
+    /**
+     * Primer sólido que corta el rayo, recorriendo la rejilla celda a celda
+     * (nunca la ciudad entera). Devuelve {solido, t} o null.
+     */
+    function rayoSolido(o, dir, maxT) {
+      var cat = S.catastro; if (!cat) return null;
+      var vistos = {}, mejor = null, mejorT = maxT;
+      var paso = SOLIDO_CELDA * 0.5, t = 0;
+      while (t < mejorT) {
+        var wx = o.x + dir.x * t, wz = o.z + dir.z * t;
+        var i = Math.floor(wx / SOLIDO_CELDA), j = Math.floor(wz / SOLIDO_CELDA);
+        if (i >= 0 && j >= 0 && i < cat.nx && j < cat.nz) {
+          var lista = cat.bins[j * cat.nx + i];
+          if (lista) for (var n = 0; n < lista.length; n++) {
+            var id = lista[n]; if (vistos[id]) continue; vistos[id] = 1;
+            var tt = cortaCaja(cat.items[id], o, dir, mejorT);
+            if (tt !== null && tt < mejorT) { mejorT = tt; mejor = cat.items[id]; }
+          }
+        }
+        t += paso;
+      }
+      return mejor ? { solido: mejor, t: mejorT } : null;
+    }
+    /** Rayo contra caja orientada: se gira el rayo al marco local y se hace el test de láminas. */
+    function cortaCaja(so, o, dir, maxT) {
+      var c = Math.cos(-so.yaw), sn = Math.sin(-so.yaw);
+      var ox = o.x - so.x, oz = o.z - so.z;
+      var lx = ox * c - oz * sn, lz = ox * sn + oz * c;
+      var dx = dir.x * c - dir.z * sn, dz = dir.x * sn + dir.z * c;
+      var t0 = 0, t1 = maxT, i, a, b, tmp;
+      var mins = [-so.hw, so.y0, -so.hd], maxs = [so.hw, so.y0 + so.h, so.hd];
+      var orig = [lx, o.y, lz], dirs = [dx, dir.y, dz];
+      for (i = 0; i < 3; i++) {
+        if (Math.abs(dirs[i]) < 1e-9) { if (orig[i] < mins[i] || orig[i] > maxs[i]) return null; continue; }
+        a = (mins[i] - orig[i]) / dirs[i]; b = (maxs[i] - orig[i]) / dirs[i];
+        if (a > b) { tmp = a; a = b; b = tmp; }
+        if (a > t0) t0 = a; if (b < t1) t1 = b;
+        if (t0 > t1) return null;
+      }
+      return t0 > 0 ? t0 : (t1 > 0 ? t1 : null);
+    }
+
     // --- Hitos y skylines --------------------------------------------------------
     function buildLandmarks(meta) {
       var list = meta.landmarks || [], acc = newAcc(), labels = [], i, parent = new THREE.Matrix4();
@@ -1948,8 +2120,14 @@
         var dims = { h: l.h || 50, w: l.w || 60, d: l.d || 60 };
         parent.compose(new THREE.Vector3(w.x, hy - 1, w.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -(l.rot || 0) * Math.PI / 180, 0)), new THREE.Vector3(1, 1, 1));
         pushParts(acc, fn(dims, lcg(strSeed(l.id || l.name || ('lm' + i)))), parent);
-        var entry = { id: l.id, name: l.name, x: w.x, y: hy, z: w.z, h: dims.h, w: dims.w, lat: l.lat, lon: l.lon, shape: l.shape };
+        var entry = { id: l.id, name: l.name, x: w.x, y: hy, z: w.z, h: dims.h, w: dims.w, d: dims.d,
+          rot: (l.rot || 0) * Math.PI / 180, lat: l.lat, lon: l.lon, shape: l.shape };
         S.landmarks.push(entry); S.lmIndex[l.id] = entry;
+        // Al catastro solo lo que tiene cuerpo: una fuente o una explanada de dos
+        // metros no debe frenar a nadie. La huella es una caja aunque el hito sea
+        // redondo (la noria, las cúpulas): para chocar y para señalar sobra.
+        if (dims.h >= 4) catastroAlta(S.catastro, { x: w.x, z: w.z, hw: dims.w * 0.5, hd: dims.d * 0.5,
+          yaw: -entry.rot, y0: hy - 1, h: dims.h + 1, tipo: 'hito', id: l.id, nombre: l.name });
         labels.push({ x: w.x, y: hy + dims.h + 12, z: w.z, text: l.name, color: colors.labelLandmark, size: 12, maxDist: S.L * 0.55, bold: false, pin: true, priority: 3 });
       }
       if (acc.pos.length) {
@@ -1974,7 +2152,7 @@
           var h = c.hmin + (c.hmax - c.hmin) * Math.pow(rnd(), 1.6);
           var fw = c.kind === 'towers' ? 22 + rnd() * 20 : (c.kind === 'blocks' ? 26 + rnd() * 24 : (c.kind === 'villas' ? 12 + rnd() * 8 : 40 + rnd() * 60));
           var fd = c.kind === 'warehouses' ? 25 + rnd() * 30 : fw * (0.8 + rnd() * 0.5);
-          list.push({ x: x, y: hg - 1, z: z, h: h + 1, w: fw, d: fd, yaw: rnd() * Math.PI, tone: rnd() });
+          list.push({ x: x, y: hg - 1, z: z, h: h + 1, w: fw, d: fd, yaw: rnd() * Math.PI, tone: rnd(), barrio: c.name || '' });
           j++;
         }
       }
@@ -1989,6 +2167,8 @@
         m.frustumCulled = false; m.castShadow = k !== 'villas'; m.receiveShadow = true; m.name = 'cluster_' + k;
         for (j = 0; j < items.length; j++) {
           var it = items[j], tone = TONES[k][Math.floor(it.tone * TONES[k].length)];
+          catastroAlta(S.catastro, { x: it.x, z: it.z, hw: it.w * 0.5, hd: it.d * 0.5, yaw: it.yaw,
+            y0: it.y, h: it.h, tipo: k, id: k + ':' + j, nombre: it.barrio });
           dummy.position.set(it.x, it.y, it.z); dummy.rotation.set(0, it.yaw, 0); dummy.scale.set(it.w, it.h, it.d); dummy.updateMatrix();
           m.setMatrixAt(j, dummy.matrix);
           var tl = lin3(tone);
@@ -2203,14 +2383,16 @@
       C.selLabel.mesh.visible = true;
     }
     function setHover(cell) {
-      var same = (cell === null && S.hover === null) || (cell && S.hover && cell.x === S.hover.x && cell.y === S.hover.y);
+      var soA = cell && cell.solido ? cell.solido.id : null, soB = S.hover && S.hover.solido ? S.hover.solido.id : null;
+      var same = (cell === null && S.hover === null) ||
+        (cell && S.hover && cell.x === S.hover.x && cell.y === S.hover.y && soA === soB);
       if (same) return;
       S.hover = cell;
       if (cell) {
         fillCell(C.hover, cell.x, cell.y, LIFT * 0.3); C.hover.visible = true;
         canvas.style.cursor = 'pointer';
       } else { C.hover.visible = false; canvas.style.cursor = S.mode === 'walk' ? 'crosshair' : 'grab'; }
-      onHover(cell ? cell.x : null, cell ? cell.y : null);
+      onHover(cell ? cell.x : null, cell ? cell.y : null, cell ? cell.solido : null);
     }
     var raycaster = new THREE.Raycaster(), ndc = new THREE.Vector2(), _hit = new THREE.Vector3();
     function pickSurf(wx, wz, tr) { return insideMap(wx, wz) ? Math.max(meshSurfaceHeight(tr, wx, wz), 0) : 0; }
@@ -2237,13 +2419,27 @@
       }
       return false;
     }
+    /**
+     * Qué hay bajo el puntero. Devuelve {x, y, solido} —la casilla de parcela y,
+     * si el rayo topa antes con un edificio, el sólido del catastro— o null.
+     * Hasta ahora solo intersectaba el terreno, así que señalar un edificio
+     * concreto era imposible y el suelo se «veía» a través de las torres.
+     */
     function pick(clientX, clientY) {
       if (!S.ready) return null;
       var r = canvas.getBoundingClientRect();
       ndc.set(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
       raycaster.setFromCamera(ndc, camera);
-      if (!rayTerrain(raycaster.ray.origin, raycaster.ray.direction, _hit)) return null;
-      return worldToCell(_hit.x, _hit.z);
+      var o = raycaster.ray.origin, dir = raycaster.ray.direction;
+      var suelo = rayTerrain(o, dir, _hit) ? _hit.clone() : null;
+      var alcance = suelo ? o.distanceTo(suelo) : Math.min(S.L, 12000);
+      var so = rayoSolido(o, dir, alcance);
+      var p = so ? { x: o.x + dir.x * so.t, z: o.z + dir.z * so.t } : suelo;
+      if (!p) return null;
+      var cell = worldToCell(p.x, p.z);
+      if (!cell) return null;
+      cell.solido = so ? so.solido : null;
+      return cell;
     }
 
     // --- Cámara orbital + modo a pie -------------------------------------------------
@@ -2447,24 +2643,15 @@
     }
     /** Cambia entre órbita y a pie: a pie arranca en la parcela seleccionada (o donde apuntaba la cámara). */
     /**
-     * Aparta un punto de la huella de los hitos: a pie (y en VR) no se empieza
-     * DENTRO de un edificio modelado, que taparía la pantalla entera.
+     * Aparta un punto de la huella de cualquier edificio del catastro: a pie (y
+     * en VR) no se empieza DENTRO de uno, que taparía la pantalla entera. Antes
+     * solo miraba los 56 hitos, así que aparecer dentro de una de las 3.124
+     * torres del skyline era 56 veces más probable que lo que se evitaba.
      */
     function clearOfLandmarks(x, z) {
-      var pass, i, moved;
-      for (pass = 0; pass < 4; pass++) {
-        moved = false;
-        for (i = 0; i < S.landmarks.length; i++) {
-          var l = S.landmarks[i], r = (l.w || 60) * 0.75 + 14;
-          var dx = x - l.x, dz = z - l.z, d = Math.sqrt(dx * dx + dz * dz);
-          if (d < r) {
-            if (d < 1e-3) { dx = 1; dz = 0; d = 1; }
-            x = l.x + dx / d * r; z = l.z + dz / d * r; moved = true;
-          }
-        }
-        if (!moved) break;
-      }
-      return { x: x, z: z };
+      var pos = { x: x, z: z };
+      empujarFuera(pos, 1.6);            // 1,6 m: el jugador cabe y queda en la acera
+      return { x: pos.x, z: pos.z };
     }
     function setMode(m) {
       if (m !== 'walk' && m !== 'orbit') return;
@@ -2609,6 +2796,7 @@
       buildCityMeshes();
       urbanizarTerreno(S.fine, meta.clusters, geo);
       urbanizarTerreno(S.coarse, meta.clusters, geo);
+      S.catastro = catastroNuevo();
       buildLandmarks(meta);
       buildClusters(meta);
       S.trafficPaths = buildTrafficPaths(meta);
@@ -2745,6 +2933,11 @@
         _fwd.set(-Math.sin(walk.yaw), 0, -Math.cos(walk.yaw)); _right.set(Math.cos(walk.yaw), 0, -Math.sin(walk.yaw));
         walk.pos.x += (_fwd.x * -mz + _right.x * mx) * sp; walk.pos.z += (_fwd.z * -mz + _right.z * mx) * sp;
         walk.pos.x = clamp(walk.pos.x, -S.L * 0.2, S.geo.worldW + S.L * 0.2); walk.pos.z = clamp(walk.pos.z, -S.L * 0.2, S.geo.worldH + S.L * 0.2);
+        // Los edificios paran. Volando por encima de su altura, no: subir con E y
+        // pasar por encima de una torre tiene que seguir siendo posible.
+        if (walk.fly < 2) walk.choque = empujarFuera(walk.pos, 0.42);
+        else { var alto = solidoBajo(walk.pos.x, walk.pos.z); walk.choque = null;
+          if (!alto || walk.pos.y + walk.fly < alto.y0 + alto.h) empujarFuera(walk.pos, 0.42); }
       }
       walk.pos.y = groundH(walk.pos.x, walk.pos.z);
       // La capa de parcelas baja hasta rozar el suelo mientras se anda (si no,
@@ -2940,6 +3133,7 @@
       select: function (x, y) { doSelect((x === null || x === undefined) ? null : { x: x | 0, y: y | 0 }, false); },
       flyTo: flyTo, flyToIsland: flyToIsland, flyToCity: flyToCity, flyToSkyline: flyToSkyline, flyToLandmark: flyToLandmark,
       setParcelGrid: setParcelGrid, parcelGrid: function () { return S.gridShown; },
+      solidoEn: function (wx, wz) { return solidoBajo(wx, wz); },
       landmarks: function () { return S.landmarks.map(function (l) { return { id: l.id, name: l.name, h: l.h, lat: l.lat, lon: l.lon, shape: l.shape }; }); },
       setMode: setMode, mode: function () { return S.xr ? 'vr' : S.mode; },
       setQuality: setQuality, quality: function () { return qualityName; },
@@ -2960,7 +3154,7 @@
       stats: function () {
         var env = null;
         try { var px = new Uint8Array(4 * 4 * 4); renderer.readRenderTargetPixels(envRT, 0, 0, 4, 4, px, 2); var sum = 0; for (var i = 0; i < 64; i++) sum += px[i]; env = Math.round(sum / 64); } catch (e) { env = -1; }
-        return { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame, landmarks: S.landmarks.length, skyline: S.clusterTotal, avatars: S.avatarOrder.length, quality: qualityName, mode: S.xr ? 'vr' : S.mode, env: env };
+        return { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame, landmarks: S.landmarks.length, skyline: S.clusterTotal, solidos: S.catastro ? S.catastro.items.length : 0, avatars: S.avatarOrder.length, quality: qualityName, mode: S.xr ? 'vr' : S.mode, env: env };
       },
       latLonToCell: latLonToCell,
       cellLatLon: cellLatLon,
@@ -3013,7 +3207,7 @@
         try { renderer.forceContextLoss(); } catch (e2) {}
         if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
       },
-      _debug: { scene: scene, camera: camera, renderer: renderer, state: S, meshes: C, cam: cam, walk: walk, vrPlacement: function () { return vrPlacement(new THREE.Vector3()); }, keysDown: function () { return Object.keys(keys); } }
+      _debug: { scene: scene, camera: camera, renderer: renderer, state: S, meshes: C, cam: cam, walk: walk, vrPlacement: function () { return vrPlacement(new THREE.Vector3()); }, keysDown: function () { return Object.keys(keys); }, pick: pick, rayoSolido: rayoSolido, empujarFuera: empujarFuera }
     };
     return handle;
   }
