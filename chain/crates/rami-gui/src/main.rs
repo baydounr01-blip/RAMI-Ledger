@@ -49,6 +49,13 @@ const CITY3D_JS: &str = include_str!("city3d.js");
 /// artificiales dibujadas a mano; ver tools/geo/README.md). Mapa de alturas
 /// PNG de 16 bits + metadatos (hitos, barrios, carreteras, cuadrícula).
 const GEO_HGT: &[u8] = include_bytes!("geo/dubai.hgt.png");
+/// Materiales de la ciudad: cuatro texturas teselables de 512x512 RGBA (color en
+/// sRGB, altura en el alfa) fabricadas por `tools/textures/make_materials.py`.
+/// No son de nadie: las genera ese script, así que no arrastran licencia ajena.
+const TEX_ASFALTO: &[u8] = include_bytes!("tex/asfalto.png");
+const TEX_HORMIGON: &[u8] = include_bytes!("tex/hormigon.png");
+const TEX_ARENA: &[u8] = include_bytes!("tex/arena.png");
+const TEX_ACERA: &[u8] = include_bytes!("tex/acera.png");
 const GEO_META: &str = include_str!("geo/dubai.json");
 /// Icono del panel (pestaña del navegador): el logo del proyecto.
 const FAVICON_SVG: &str = include_str!("../../../../packaging/icon/rami.svg");
@@ -328,6 +335,10 @@ fn route(g: &Gui, req: Request) -> Response {
             body: CITY3D_JS.as_bytes().to_vec(),
         },
         ("GET", "/geo/dubai.hgt.png") => Response { status: 200, content_type: "image/png".into(), body: GEO_HGT.to_vec() },
+        ("GET", "/tex/asfalto.png") => Response { status: 200, content_type: "image/png".into(), body: TEX_ASFALTO.to_vec() },
+        ("GET", "/tex/hormigon.png") => Response { status: 200, content_type: "image/png".into(), body: TEX_HORMIGON.to_vec() },
+        ("GET", "/tex/arena.png") => Response { status: 200, content_type: "image/png".into(), body: TEX_ARENA.to_vec() },
+        ("GET", "/tex/acera.png") => Response { status: 200, content_type: "image/png".into(), body: TEX_ACERA.to_vec() },
         ("GET", "/geo/dubai.json") => Response {
             status: 200,
             content_type: "application/json; charset=utf-8".into(),

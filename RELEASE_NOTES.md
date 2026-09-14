@@ -1,3 +1,34 @@
+## Novedades de v0.10.5 — el suelo deja de ser color liso
+
+Entrega 3 del plan del metaverso (`docs/METAVERSO.md`). **No toca el consenso,
+la red ni el formato de los ficheros.**
+
+Hasta ahora todas las superficies eran un color plano con un poco de ruido
+encima: a dos metros del suelo, el asfalto y la acera eran el mismo gris con
+distinto brillo. Ahora hay **materiales de verdad**.
+
+- **Cuatro texturas teselables**, de 512×512 cada una: asfalto con árido, poros
+  y grietas; hormigón con poros y veladuras; arena con grano fino y rizos de
+  viento; y losas de acera de 60 cm con junta rehundida y **tono propio por
+  losa**, que es lo que delata un pavimento de verdad frente a una superficie
+  lisa. En cada fichero, el color va en el RGB y **la altura en el alfa**: un
+  solo PNG por material en vez de color más normal, la mitad de descarga.
+- **No son de nadie.** Las fabrica
+  `tools/textures/make_materials.py` con la biblioteca estándar de Python, de
+  forma determinista, y no arrastran licencia ajena. La descarga sube 1,6 MB.
+- **El color va codificado en sRGB**, como debe ser: el cliente tiene canal de
+  color físico desde la v0.10.0 y lo pasa a lineal antes de iluminar. Guardarlo
+  en crudo habría dejado el asfalto diez veces más oscuro.
+- **La arena tiene relieve.** La normal del terreno sale de derivar la altura de
+  la textura, así que los rizos del desierto se iluminan de verdad con el sol
+  rasante en vez de ser un dibujo plano.
+
+**Por qué generadas y no fotográficas:** el entorno donde se construye este
+proyecto no alcanza las fuentes de dominio público —la red las rechaza—, y meter
+arte con una licencia sin verificar no es una opción. Si algún día entra un
+juego fotográfico CC0, se sustituyen esos cuatro ficheros y ya está: el
+sombreador no cambia.
+
 ## Novedades de v0.10.4 — la calzada
 
 Entrega 2 del plan del metaverso (`docs/METAVERSO.md`). **No toca el consenso,
@@ -229,6 +260,37 @@ altura sin romperse.
   con los binarios de la v0.7.0 y la v0.7.3. Un binario v0.8.0 que abra un
   `chain.jsonl` escrito por la 0.9.0 con transacciones de mercado no lo lee
   (por red nunca las recibe): la salida es volver a la 0.9.0.
+
+## What's new in v0.10.5 — the ground stops being flat colour
+
+Delivery 3 of the metaverse plan (`docs/METAVERSO.md`). **It touches neither
+consensus, nor the network, nor the file format.**
+
+Until now every surface was a flat colour with a little noise on top: two metres
+from the ground, asphalt and pavement were the same grey at different
+brightness. Now there are **real materials**.
+
+- **Four tileable textures**, 512×512 each: asphalt with aggregate, pores and
+  cracks; concrete with pores and staining; sand with fine grain and wind
+  ripples; and 60 cm pavement slabs with a recessed joint and **a tone of their
+  own per slab**, which is what gives away real paving against a smooth surface.
+  In each file the colour is in the RGB and **the height in the alpha**: one PNG
+  per material instead of colour plus normal, half the download.
+- **They belong to nobody.** `tools/textures/make_materials.py` makes them with
+  the Python standard library, deterministically, and they carry no third-party
+  licence. The download grows by 1.6 MB.
+- **The colour is sRGB-encoded**, as it should be: the client has had a physical
+  colour channel since v0.10.0 and converts to linear before lighting. Storing
+  it raw would have left the asphalt ten times too dark.
+- **The sand has relief.** The terrain normal comes from differentiating the
+  texture's height, so the desert ripples really catch a low sun instead of
+  being a flat drawing.
+
+**Why generated and not photographic:** the environment this project is built in
+cannot reach the public-domain sources — the network refuses them — and putting
+art with an unverified licence into the repository is not an option. If a CC0
+photographic set ever arrives, those four files are replaced and that is all:
+the shader does not change.
 
 ## What's new in v0.10.4 — the roadway
 

@@ -736,6 +736,16 @@ La capa commit-reveal reproduce byte a byte [`reference/rami_ledger.py`](referen
 La teoría está en el artículo del Universo de Bloques Ramificados y su
 implementación de falsación (repo `universal-timeline`, paquete `bbu`).
 
+## Materiales de la ciudad
+
+Las cuatro texturas del suelo y las fachadas —asfalto, hormigón, arena y losas
+de acera— **no son de nadie**: las fabrica
+[`tools/textures/make_materials.py`](tools/textures/make_materials.py) con la
+biblioteca estándar de Python, de forma determinista, y su resultado se empotra
+en el binario (`chain/crates/rami-gui/src/tex/`). No arrastran licencia ajena ni
+piden red. Si algún día entra un juego fotográfico de dominio público, basta con
+sustituir esos cuatro PNG: el sombreador no cambia.
+
 ## Licencia
 
 MIT — ver [`LICENSE`](LICENSE) y [`NOTICE.md`](NOTICE.md).
