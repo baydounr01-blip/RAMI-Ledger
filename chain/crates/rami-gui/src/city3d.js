@@ -1115,7 +1115,7 @@
     '#include <fog_pars_vertex>',
     '#include <logdepthbuf_pars_vertex>',
     '#include <shadowmap_pars_vertex>',
-    'attribute float hc; attribute vec3 via;',       // via = (u transversal, s longitudinal, clase)
+    'attribute float hc; attribute vec3 via;',       // via = (u transversal, s longitudinal, clase 0..3)
     'uniform float uLod;',
     'varying vec3 vVia; varying vec3 vWorld;',
     'void main(){',
@@ -1150,7 +1150,10 @@
     '  vec4 tA = texture2D(uAsfalto, vWorld.xz / 6.0);',
     '  vec4 tH = texture2D(uHormigon, vWorld.xz / 3.0);',
     '  vec4 tC = texture2D(uAcera, vWorld.xz / 4.8);',          // 8 losas de 60 cm
-    '  vec4 tex = clase < 0.5 ? tA : (clase < 1.5 ? tH : tC);',
+        // Clases: 0 asfalto con marcas, 1 hormigón del bordillo, 2 losa de acera,
+    // 3 asfalto sin marcas —la glorieta, que no lleva eje ni carriles pintados—.
+    '  vec4 tex = clase < 0.5 ? tA : (clase < 1.5 ? tH : (clase < 2.5 ? tC : tA));',
+    '  float esAsfalto = clamp(step(clase, 0.5) + step(2.5, clase), 0.0, 1.0);',
     '  vec3 base = aLineal(tex.rgb);',
     '  float manchas = texture2D(uNoise, vWorld.xz / 220.0).r;',
     '  base *= mix(0.88, 1.12, manchas);',                      // veladuras de escala grande
@@ -1158,7 +1161,7 @@
     // GLSL no deja elegir un sampler con un ternario, y muestrear los tres en dos
     // desplazamientos costaría seis lecturas más por fragmento. En bordillo y
     // acera el color de las juntas ya insinúa el relieve.
-    '  float relieve = (1.0 - smoothstep(3.0, 45.0, dist)) * step(clase, 0.5);',
+    '  float relieve = (1.0 - smoothstep(3.0, 45.0, dist)) * esAsfalto;',
     '  float hx = texture2D(uAsfalto, (vWorld.xz + vec2(0.06, 0.0)) / 6.0).a;',
     '  float hz = texture2D(uAsfalto, (vWorld.xz + vec2(0.0, 0.06)) / 6.0).a;',
     // Marcas: eje doble continuo, carriles discontinuos cada 3,5 m de ancho.
@@ -1777,7 +1780,7 @@
       gridCenter: new THREE.Vector3(), counts: null, inflatePath: null,
       sel: null, hover: null, frame: 0, fps: 0, fpsN: 0, fpsT: 0, lastT: 0, raf: 0,
       mode: 'orbit', hour: null, night: 0, landmarks: [], lmIndex: {}, clusterTotal: 0,
-      avatars: {}, avatarOrder: [], traffic: null, gridShown: false, catastro: null, tramas: []
+      avatars: {}, avatarOrder: [], traffic: null, gridShown: false, catastro: null, tramas: [], glorietas: [], nCruces: 0
     };
     var gridGroup = new THREE.Group(); scene.add(gridGroup);
     var pending = null, pendingFlight = null;
@@ -3037,10 +3040,10 @@
         // Familia paralela al giro, y la perpendicular.
         lineas.push({ pts: [{ x: w.x + cs * -semi - sn * d, z: w.z + sn * -semi + cs * d },
                             { x: w.x + cs * semi - sn * d, z: w.z + sn * semi + cs * d }],
-                      calzada: t.calzada, acera: t.acera });
+                      calzada: t.calzada, acera: t.acera, familia: 0 });
         lineas.push({ pts: [{ x: w.x + cs * d - sn * -semi, z: w.z + sn * d + cs * -semi },
                             { x: w.x + cs * d - sn * semi, z: w.z + sn * d + cs * semi }],
-                      calzada: t.calzada, acera: t.acera });
+                      calzada: t.calzada, acera: t.acera, familia: 1 });
       }
       return lineas;
     }
@@ -3057,17 +3060,187 @@
         d2 = Math.abs(lz - Math.round(lz / t.paso) * t.paso);
         if (Math.min(d1, d2) < t.medio + (margen || 0)) return true;
       }
+      for (i = 0; i < S.glorietas.length; i++) {
+        t = S.glorietas[i]; dx = wx - t.x; dz = wz - t.z;
+        d1 = t.R + (margen || 0);
+        if (dx * dx + dz * dz < d1 * d1) return true;
+      }
+      return false;
+    }
+
+    // --- Los cruces (v0.10.7) ------------------------------------------------------
+    // Hasta aquí cada vía se dibujaba entera y por su cuenta. Donde dos se cruzaban
+    // —y con la trama de barrio eso pasa cada ciento cincuenta metros— las dos
+    // calzadas quedaban una encima de la otra: dos bordillos de dieciocho
+    // centímetros atravesando el asfalto de la otra, y la acera cortándole el paso
+    // a los coches. Un cruce de verdad tiene tres cosas, y ninguna estaba:
+    //
+    //   PRIORIDAD: una de las dos manda. El rango lo decide sin ambigüedad —las
+    //     vías del mapa por encima de cualquier calle deducida, y entre iguales la
+    //     más ancha; a igualdad exacta, la de menor índice, que es un orden fijo—,
+    //     así que la misma pareja se resuelve igual en todas las máquinas.
+    //   HUECO: la calle que cede desaparece dentro del ancho de la que manda, en
+    //     vez de dibujarse por debajo.
+    //   REBAJE: el bordillo de la que manda baja a la calzada en la boca de la
+    //     otra, en metro y medio, que es lo que hace un vado de verdad.
+    //
+    // Y donde se cruzan dos arterias del mapa del mismo orden no manda ninguna:
+    // ahí va una GLORIETA, con su anillo y su isla central.
+
+    /** Longitud de arco acumulada de una polilínea ya muestreada. */
+    function acumulaArco(m) {
+      var s = new Float64Array(m.length), i, dx, dz;
+      for (i = 1; i < m.length; i++) {
+        dx = m[i].x - m[i - 1].x; dz = m[i].z - m[i - 1].z;
+        s[i] = s[i - 1] + Math.sqrt(dx * dx + dz * dz);
+      }
+      return s;
+    }
+    /** El punto de la polilínea que está a distancia `d` del origen. */
+    function puntoArco(m, s, d) {
+      var lo = 0, hi = m.length - 1, mid;
+      if (hi < 1) return { x: m[0].x, z: m[0].z };
+      if (d <= 0) return { x: m[0].x, z: m[0].z };
+      if (d >= s[hi]) return { x: m[hi].x, z: m[hi].z };
+      while (lo + 1 < hi) { mid = (lo + hi) >> 1; if (s[mid] <= d) lo = mid; else hi = mid; }
+      var t = (d - s[lo]) / Math.max(1e-6, s[lo + 1] - s[lo]);
+      return { x: m[lo].x + (m[lo + 1].x - m[lo].x) * t, z: m[lo].z + (m[lo + 1].z - m[lo].z) * t };
+    }
+    /** Por debajo de este seno dos vías van casi paralelas: no es un cruce. */
+    var CRUCE_SENO = 0.26;                        // unos 15 grados
+    /** Corte de dos segmentos en planta. Devuelve null si no se cruzan. */
+    function cortaSegmentos(pa, pb, qa, qb) {
+      var rx = pb.x - pa.x, rz = pb.z - pa.z, sx = qb.x - qa.x, sz = qb.z - qa.z;
+      var lr = Math.sqrt(rx * rx + rz * rz), ls = Math.sqrt(sx * sx + sz * sz);
+      if (lr < 1e-3 || ls < 1e-3) return null;
+      var den = rx * sz - rz * sx, sen = den / (lr * ls);
+      if (Math.abs(sen) < CRUCE_SENO) return null;
+      var dx = qa.x - pa.x, dz = qa.z - pa.z;
+      var t = (dx * sz - dz * sx) / den, u = (dx * rz - dz * rx) / den;
+      if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+      return { x: pa.x + rx * t, z: pa.z + rz * t, t: t, u: u, sen: Math.abs(sen) };
+    }
+    /** Funde una lista de tramos [a,b] en otra ordenada y sin solapes. */
+    function fundeTramos(t) {
+      if (t.length < 2) return t;
+      t.sort(function (p, q) { return p[0] - q[0]; });
+      var out = [t[0]], i, u;
+      for (i = 1; i < t.length; i++) {
+        u = out[out.length - 1];
+        if (t[i][0] <= u[1]) u[1] = Math.max(u[1], t[i][1]); else out.push(t[i]);
+      }
+      return out;
+    }
+    /** Media anchura de una vía contando bordillo y acera. */
+    function anchoTotal(v) { return v.calzada * 0.5 + 0.45 + v.acera; }
+    /**
+     * Resuelve todos los cruces y deja en cada vía sus tramos de CAJA (donde manda,
+     * y el bordillo se rebaja) y sus tramos de CORTE (donde cede el paso y
+     * desaparece), más la lista de glorietas.
+     *
+     * Las parejas se buscan con una rejilla uniforme de trescientos metros: a pelo
+     * serían cien millones de parejas de segmentos y el arranque se iría a minutos.
+     * Cada pareja se resuelve en la casilla DONDE CAE EL CORTE, así que aunque dos
+     * segmentos compartan varias casillas el cruce se cuenta una sola vez y no hace
+     * falta llevar memoria de lo ya visto.
+     */
+    function resuelveCruces(lineas) {
+      var CAJA = 300, celdas = {}, i, j, cx, cz, key, m, lista;
+      for (i = 0; i < lineas.length; i++) {
+        lineas[i].arco = acumulaArco(lineas[i].muestras);
+        lineas[i].cajas = []; lineas[i].cortes = [];
+        m = lineas[i].muestras;
+        for (j = 0; j + 1 < m.length; j++) {
+          var ax = Math.min(m[j].x, m[j + 1].x), bx = Math.max(m[j].x, m[j + 1].x);
+          var az = Math.min(m[j].z, m[j + 1].z), bz = Math.max(m[j].z, m[j + 1].z);
+          for (cx = Math.floor(ax / CAJA); cx <= Math.floor(bx / CAJA); cx++) {
+            for (cz = Math.floor(az / CAJA); cz <= Math.floor(bz / CAJA); cz++) {
+              key = cx + ':' + cz;
+              lista = celdas[key] || (celdas[key] = []);
+              lista.push(i, j);
+            }
+          }
+        }
+      }
+      var glorietas = [], n = 0, a, b;
+      for (key in celdas) {
+        if (!Object.prototype.hasOwnProperty.call(celdas, key)) continue;
+        lista = celdas[key];
+        var p = key.indexOf(':'), kx = parseInt(key.slice(0, p), 10), kz = parseInt(key.slice(p + 1), 10);
+        for (a = 0; a + 2 < lista.length; a += 2) {
+          for (b = a + 2; b < lista.length; b += 2) {
+            var ia = lista[a], ja = lista[a + 1], ib = lista[b], jb = lista[b + 1];
+            if (ia === ib) continue;                 // una vía no se cruza consigo misma
+            var A = lineas[ia], B = lineas[ib];
+            var c = cortaSegmentos(A.muestras[ja], A.muestras[ja + 1], B.muestras[jb], B.muestras[jb + 1]);
+            if (!c) continue;
+            if (Math.floor(c.x / CAJA) !== kx || Math.floor(c.z / CAJA) !== kz) continue;
+            var sa = A.arco[ja] + (A.arco[ja + 1] - A.arco[ja]) * c.t;
+            var sb = B.arco[jb] + (B.arco[jb + 1] - B.arco[jb]) * c.u;
+            var acA = anchoTotal(A), acB = anchoTotal(B);
+            n++;
+            if (A.rango >= 1000 && B.rango >= 1000 && Math.max(A.calzada, B.calzada) <= 26) {
+              // Dos arterias del mapa del mismo orden: glorieta. Las dos se cortan
+              // en la cuerda cuyos extremos caen justo sobre la circunferencia, así
+              // que el anillo tapa lo que falta sin dejar mordiscos en las esquinas.
+              var anc = Math.max(A.calzada, B.calzada);
+              // El anillo es la calzada de un solo sentido: entre siete y catorce
+              // metros. El radio exterior sale de ahí más el ancho de la vía que
+              // llega, para que las bocas encajen sin morderse.
+              var anillo = clamp(anc * 0.5, 7, 14);
+              var Rg = Math.max(acA, acB) + anillo + 4;
+              var dA = Math.sqrt(Math.max(1, Rg * Rg - acA * acA));
+              var dB = Math.sqrt(Math.max(1, Rg * Rg - acB * acB));
+              var rep = false, q;
+              for (q = 0; q < glorietas.length; q++) {
+                var ddx = glorietas[q].x - c.x, ddz = glorietas[q].z - c.z;
+                if (ddx * ddx + ddz * ddz < Rg * Rg) { rep = true; break; }
+              }
+              // Tres vías que concurren en un punto dan tres parejas: el anillo se
+              // levanta una sola vez, pero las tres se cortan.
+              if (!rep) glorietas.push({ x: c.x, z: c.z, R: Rg, anillo: anillo });
+              A.cortes.push([sa - dA, sa + dA]);
+              B.cortes.push([sb - dB, sb + dB]);
+              continue;
+            }
+            var mayor = A, menor = B, sMay = sa, sMen = sb, acMay = acA;
+            if (B.rango > A.rango || (B.rango === A.rango && ib < ia)) {
+              mayor = B; menor = A; sMay = sb; sMen = sa; acMay = acB;
+            }
+            // La boca de la menor, medida a lo largo de la mayor, y el ancho de la
+            // mayor medido a lo largo de la menor: los dos se estiran con el seno.
+            mayor.cajas.push([sMay - menor.calzada * 0.5 / c.sen, sMay + menor.calzada * 0.5 / c.sen]);
+            menor.cortes.push([sMen - acMay / c.sen, sMen + acMay / c.sen]);
+          }
+        }
+      }
+      for (i = 0; i < lineas.length; i++) {
+        lineas[i].cajas = fundeTramos(lineas[i].cajas);
+        lineas[i].cortes = fundeTramos(lineas[i].cortes);
+      }
+      return { n: n, glorietas: glorietas };
+    }
+    /** ¿Está `s` dentro de alguno de los tramos? La lista viene ordenada. */
+    function enTramo(tramos, s) {
+      var i;
+      for (i = 0; i < tramos.length; i++) {
+        if (s < tramos[i][0]) return false;
+        if (s <= tramos[i][1]) return true;
+      }
       return false;
     }
 
     /**
      * Construye TODAS las calzadas —las 21 vías del mapa y la trama deducida de
      * los 34 barrios— en una sola malla: cinta con perfil transversal de ocho
-     * puntos, remuestreada para seguir el relieve y nivelada por tramos.
+     * puntos, remuestreada para seguir el relieve, nivelada por tramos y con los
+     * cruces resueltos por prioridad.
      */
     function buildRoads(roads, geo) {
       var pos = [], hcs = [], vias = [], idx = [], base = 0, r, i, k;
       var ALTO = 0.18;                            // altura del bordillo
+      var RAMPA = 1.5;                            // lo que tarda el bordillo en bajar
+      var MIRA = 45;                              // con cuánto se mira la tangente
       // 1) Las vías del mapa abierto, con su ancho sacado de su longitud.
       var lineas = [];
       for (r = 0; r < roads.length; r++) {
@@ -3080,7 +3253,8 @@
           largoKm += Math.sqrt(Math.pow(m0[i + 1].x - m0[i].x, 2) + Math.pow(m0[i + 1].z - m0[i].z, 2));
         }
         var an = anchoVia(largoKm / 1000);
-        lineas.push({ muestras: m0, calzada: an.calzada, acera: an.acera });
+        // Rango: cualquier vía del mapa manda sobre cualquier calle deducida.
+        lineas.push({ muestras: m0, calzada: an.calzada, acera: an.acera, rango: 1000 + an.calzada });
       }
       // 2) La trama deducida de cada barrio.
       S.tramas = [];
@@ -3088,26 +3262,61 @@
       for (r = 0; r < cl.length; r++) {
         var tl = tramaBarrio(cl[r], geo);
         for (i = 0; i < tl.length; i++) {
-          lineas.push({ muestras: remuestreaMundo(tl[i].pts, VIA_PASO), calzada: tl[i].calzada, acera: tl[i].acera });
+          lineas.push({
+            muestras: remuestreaMundo(tl[i].pts, VIA_PASO), calzada: tl[i].calzada, acera: tl[i].acera,
+            // Dentro del barrio manda siempre la familia paralela al giro: así el
+            // barrio entero tiene un sentido, en vez de alternar cruce a cruce.
+            rango: tl[i].calzada * 2 - tl[i].familia
+          });
         }
       }
-      // 3) Una sola malla con todo.
+      // 3) Quién manda en cada cruce.
+      var cru = resuelveCruces(lineas);
+      S.glorietas = cru.glorietas;
+      S.nCruces = cru.n;
+      // 4) Una sola malla con todo.
       for (r = 0; r < lineas.length; r++) {
-        var muestras = lineas[r].muestras;
+        var muestras = lineas[r].muestras, arco = lineas[r].arco;
         if (!muestras || muestras.length < 2) continue;
+        var total = arco[arco.length - 1];
         var c = lineas[r].calzada * 0.5, kb = c + 0.45, ac = kb + lineas[r].acera;
-        var perfil = [[-ac, ALTO, 2], [-kb, ALTO, 2], [-kb, 0, 1], [-c, 0, 0], [c, 0, 0], [kb, 0, 1], [kb, ALTO, 2], [ac, ALTO, 2]];
-        var sAcum = 0, fila = 0;
-        for (i = 0; i < muestras.length; i++) {
-          var p0 = muestras[i];
+        var perfilN = [[-ac, ALTO, 2], [-kb, ALTO, 2], [-kb, 0, 1], [-c, 0, 0], [c, 0, 0], [kb, 0, 1], [kb, ALTO, 2], [ac, ALTO, 2]];
+        // Dentro de la caja del cruce no hay bordillo ni acera: todo es calzada al
+        // mismo nivel. Las marcas siguen pintándose, que es lo que hace la vía
+        // preferente de verdad: su eje cruza entero.
+        var perfilL = [[-ac, 0, 0], [-kb, 0, 0], [-kb, 0, 0], [-c, 0, 0], [c, 0, 0], [kb, 0, 0], [kb, 0, 0], [ac, 0, 0]];
+        // Las paradas son las muestras del remuestreo MÁS las fronteras de cada
+        // tramo, para que el corte caiga exactamente donde toca y el rebaje del
+        // bordillo tenga metro y medio y no cien.
+        var paradas = [], cajas = lineas[r].cajas, cortes = lineas[r].cortes;
+        for (i = 0; i < arco.length; i++) paradas.push(arco[i]);
+        for (i = 0; i < cajas.length; i++) {
+          paradas.push(cajas[i][0] - RAMPA, cajas[i][0], cajas[i][1], cajas[i][1] + RAMPA);
+        }
+        // La frontera del corte va ocho centímetros POR FUERA: justo encima, la
+        // parada caería dentro del tramo cortado y la cinta terminaría en la
+        // muestra anterior, que puede estar cien metros atrás. Eso dejaba la calle
+        // menor flotando a media manzana de la mayor.
+        for (i = 0; i < cortes.length; i++) paradas.push(cortes[i][0] - 0.08, cortes[i][1] + 0.08);
+        paradas.sort(function (p, q) { return p - q; });
+        var fila = 0, sUlt = -1e9;
+        for (i = 0; i < paradas.length; i++) {
+          var sp = paradas[i];
+          if (sp < -1e-6 || sp > total + 1e-6) continue;
+          if (sp - sUlt < 0.03) continue;                            // dos paradas pegadas
+          if (enTramo(cortes, sp)) { base = pos.length / 3; fila = 0; continue; }
+          var p0 = puntoArco(muestras, arco, sp);
           var dentro = p0.x >= ac && p0.z >= ac && p0.x <= geo.worldW - ac && p0.z <= geo.worldH - ac
             && Math.max(surfaceH(p0.x, p0.z), 0) > 0.6;      // ni fuera del mapa ni en el agua
           if (!dentro) { base = pos.length / 3; fila = 0; continue; }   // se corta la cinta, no se cose el hueco
-          var ant = muestras[i > 0 ? i - 1 : i], sig = muestras[i + 1 < muestras.length ? i + 1 : i];
-          var tx = sig.x - ant.x, tz = sig.z - ant.z, tl2 = Math.sqrt(tx * tx + tz * tz) || 1;
+          // La tangente se mira a cuarenta y cinco metros por banda: a un metro
+          // cada codo del dataset saldría en pico, y las paradas del cruce van a
+          // metro y medio unas de otras.
+          var pAnt = puntoArco(muestras, arco, Math.max(0, sp - MIRA));
+          var pSig = puntoArco(muestras, arco, Math.min(total, sp + MIRA));
+          var tx = pSig.x - pAnt.x, tz = pSig.z - pAnt.z, tl2 = Math.sqrt(tx * tx + tz * tz) || 1;
           tx /= tl2; tz /= tl2;
           var nx = -tz, nz = tx;
-          if (i > 0) sAcum += Math.sqrt(Math.pow(p0.x - muestras[i - 1].x, 2) + Math.pow(p0.z - muestras[i - 1].z, 2));
           // Una sección de carretera es HORIZONTAL de lado a lado, y entre dos
           // secciones va recta. Si cada punto se pegara a su propia cota, la
           // cuerda se hundiría bajo cualquier bulto intermedio y el terreno
@@ -3119,25 +3328,31 @@
             qz = p0.z + tz * VIA_PASO * dt + nz * ac * du2;
             hF = Math.max(hF, surfaceH(qx, qz)); hC = Math.max(hC, coarseH(qx, qz));
           }
+          var perfil = enTramo(cajas, sp) ? perfilL : perfilN;
           for (k = 0; k < perfil.length; k++) {
             var u = perfil[k][0], dy = perfil[k][1], cla = perfil[k][2];
             var wx = p0.x + nx * u, wz = p0.z + nz * u;
             pos.push(wx, hF + 0.22 + dy, wz);
             hcs.push(hC + 0.22 + dy);
-            vias.push(u, sAcum, cla);
+            vias.push(u, sp, cla);
           }
+          sUlt = sp;
           if (fila > 0) {
-            var a0 = base + (fila - 1) * perfil.length, b0 = base + fila * perfil.length;
+            var a0 = base + (fila - 1) * perfilN.length, b0 = base + fila * perfilN.length;
             // El devanado importa: cosidas al revés, las caras miran al suelo y la
             // GPU las descarta. Con este orden la normal geométrica es +Y en la
             // calzada y apunta hacia el eje en las dos caras del bordillo.
-            for (k = 0; k + 1 < perfil.length; k++) {
+            for (k = 0; k + 1 < perfilN.length; k++) {
               idx.push(a0 + k, a0 + k + 1, b0 + k, a0 + k + 1, b0 + k + 1, b0 + k);
             }
           }
           fila++;
         }
         base = pos.length / 3;
+      }
+      // 5) Las glorietas: anillo de asfalto sin marcas, bordillo e isla central.
+      for (r = 0; r < cru.glorietas.length; r++) {
+        base = glorieta(cru.glorietas[r], pos, hcs, vias, idx, ALTO);
       }
       if (!idx.length) return null;
       var g = new THREE.BufferGeometry();
@@ -3149,6 +3364,43 @@
       var m = new THREE.Mesh(g, makeRoadMaterial(shared, lodUniform, noiseTex, mats));
       m.frustumCulled = false; m.renderOrder = 1; m.receiveShadow = true;
       return m;
+    }
+    /**
+     * Una glorieta: corona circular de asfalto, cara de bordillo y disco de acera.
+     * Va un centímetro y medio por encima de las vías que llegan —como una junta de
+     * asfalto de verdad— y se nivela por la cota máxima de un disco más ancho que
+     * la cruz de nueve puntos de cualquier sección que la toque, así que ninguna
+     * calzada le asoma por debajo.
+     */
+    function glorieta(gl, pos, hcs, vias, idx, ALTO) {
+      var N = 36, hF = 0, hC = 0, ra, aa, rr, an, qx, qz, i, cs, sn;
+      for (ra = 0; ra <= 4; ra++) {
+        for (aa = 0; aa < 12; aa++) {
+          rr = (gl.R + VIA_PASO) * ra / 4; an = aa * Math.PI / 6;
+          qx = gl.x + Math.cos(an) * rr; qz = gl.z + Math.sin(an) * rr;
+          hF = Math.max(hF, surfaceH(qx, qz)); hC = Math.max(hC, coarseH(qx, qz));
+        }
+      }
+      var y = hF + 0.235, yc = hC + 0.235, Ri = Math.max(4, gl.R - gl.anillo), b0 = pos.length / 3;
+      for (i = 0; i <= N; i++) {
+        an = i * 2 * Math.PI / N; cs = Math.cos(an); sn = Math.sin(an);
+        // Cuatro aros por radio: exterior del anillo, pie del bordillo, coronación
+        // e isla. La clase 3 es asfalto sin marcas: una glorieta no lleva eje.
+        pos.push(gl.x + cs * gl.R, y, gl.z + sn * gl.R); hcs.push(yc); vias.push(0, 0, 3);
+        pos.push(gl.x + cs * Ri, y, gl.z + sn * Ri); hcs.push(yc); vias.push(0, 0, 3);
+        pos.push(gl.x + cs * Ri, y + ALTO, gl.z + sn * Ri); hcs.push(yc + ALTO); vias.push(0, 0, 1);
+        pos.push(gl.x + cs * Ri * 0.6, y + ALTO, gl.z + sn * Ri * 0.6); hcs.push(yc + ALTO); vias.push(0, 0, 2);
+      }
+      pos.push(gl.x, y + ALTO, gl.z); hcs.push(yc + ALTO); vias.push(0, 0, 2);
+      var centro = pos.length / 3 - 1;
+      for (i = 0; i < N; i++) {
+        var a = b0 + i * 4, b = b0 + (i + 1) * 4;
+        idx.push(a, a + 1, b, a + 1, b + 1, b);               // calzada del anillo
+        idx.push(a + 1, a + 2, b + 1, a + 2, b + 2, b + 1);   // cara del bordillo
+        idx.push(a + 2, a + 3, b + 2, a + 3, b + 3, b + 2);   // corona de la isla
+        idx.push(a + 3, centro, b + 3);                       // abanico hasta el centro
+      }
+      return pos.length / 3;
     }
     function normalizeMeta(meta, img) {
       meta = meta || {};
