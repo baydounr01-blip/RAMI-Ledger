@@ -160,18 +160,28 @@ lo toca a 830 m de altura y uno lateral a 825 m de distancia; en pleno desierto
 no hay nada. Queda fuera de esta entrega **la colisión con los coches y con
 otros avatares**, que son objetos que se mueven y necesitan otra estructura.
 
-### Entrega 2 — el suelo · 6–8 sesiones
+### Entrega 2 — el suelo · **la calzada, hecha en la v0.10.4; las aceras de barrio, pendientes**
 
 Cierra el defecto que el propio
 proyecto arrastra desde la 0.9.0 como pendiente número uno: *a pie el suelo sigue siendo
 arena lisa*.
 
 Calzada con bordillo, aceras, marcas viales y aparcamientos, generados del grafo
-viario (21 polilíneas, 145 vértices, 629,5 km ya en el dataset) y texturados con
-el atlas. Aquí se paga además el experimento que decide el presupuesto de todo
-lo demás: **quitar el buffer de profundidad logarítmico**, que hoy obliga a
-todos los sombreadores a escribir profundidad y anula el descarte temprano de
-píxeles en la escena entera. Es el número más grande que nadie ha medido.
+viario (21 polilíneas, 145 vértices, 602 km ya en el dataset) y texturados con
+el atlas.
+
+**Hecho en la v0.10.4:** las 21 vías son ya cinta con perfil de ocho puntos
+—acera, bordillo de cara vertical, calzada— remuestreada cada 100 m y nivelada
+por la cota máxima de su entorno, con marcas viales analíticas sacadas de las
+coordenadas transversal y longitudinal de cada vértice. 65.268 triángulos y
+ninguna llamada de dibujo más.
+
+**Pendiente de esta entrega:** el mapa abierto solo trae las vías principales,
+así que dentro de los barrios sigue sin haber calles y el centro se cruza por
+arena. Y queda el experimento que decide el presupuesto de todo lo demás:
+**quitar el buffer de profundidad logarítmico**, que hoy obliga a todos los
+sombreadores a escribir profundidad y anula el descarte temprano de píxeles en
+la escena entera. Es el número más grande que nadie ha medido.
 
 ### Entrega 3 — el atlas CC0 · 3–4 sesiones
 
