@@ -1,3 +1,33 @@
+## Novedades de v0.10.6 — las calles de barrio, y las manzanas
+
+Entrega 4 del plan del metaverso (`docs/METAVERSO.md`). **No toca el consenso,
+la red ni el formato de los ficheros.**
+
+Hasta ahora Dubái tenía 21 autopistas y, dentro de los barrios, arena: las
+torres estaban repartidas al azar sobre el desierto. Ahora hay **trama urbana**.
+
+- **Cada barrio tiene su retícula de calles**, con su giro y su paso propios. No
+  vienen de ningún fichero: se **deducen** con la misma aritmética entera que el
+  resto de la ciudad, a partir de la celda donde está el barrio. Eso significa
+  que son idénticas en todas las máquinas y que no cambian nunca. 34 barrios,
+  cada uno con su trama, y el paso y el ancho dependen de qué se construye allí:
+  165 m entre calles de 16 m en los de torres, 120 m entre calles de 10 m en los
+  de villas, 210 m entre calles de 18 m en los polígonos.
+- **Las manzanas salen solas.** Un edificio ya no se planta en mitad de la
+  calle: si la posición que le tocaba pisa la trama, busca otra. Así los
+  edificios se agrupan en los huecos que deja la retícula, que es exactamente
+  como crece una ciudad. De 3.124 torres, solo 18 no encontraron sitio.
+- **La cinta se corta donde debe.** Una calle que llega al agua o al borde del
+  mapa deja de dibujarse en vez de coser el hueco de un salto.
+
+**Lo que falta, y por qué.** El plan elegido era mezclar calles reales de
+OpenStreetMap con las deducidas. La red del entorno donde se construye este
+proyecto **no alcanza OpenStreetMap**: rechaza Overpass, Nominatim, Geofabrik y
+los teselados. Así que esta versión trae la mitad deducida —que hacía falta en
+cualquier caso— y la mitad real queda enchufable: en cuanto haya un extracto de
+Dubái en el repositorio, sus vías con nombre se añaden a la misma lista y mandan
+donde existan.
+
 ## Novedades de v0.10.5 — el suelo deja de ser color liso
 
 Entrega 3 del plan del metaverso (`docs/METAVERSO.md`). **No toca el consenso,
@@ -260,6 +290,35 @@ altura sin romperse.
   con los binarios de la v0.7.0 y la v0.7.3. Un binario v0.8.0 que abra un
   `chain.jsonl` escrito por la 0.9.0 con transacciones de mercado no lo lee
   (por red nunca las recibe): la salida es volver a la 0.9.0.
+
+## What's new in v0.10.6 — neighbourhood streets, and city blocks
+
+Delivery 4 of the metaverse plan (`docs/METAVERSO.md`). **It touches neither
+consensus, nor the network, nor the file format.**
+
+Until now Dubai had 21 motorways and, inside the districts, sand: the towers
+were scattered at random over the desert. Now there is **urban fabric**.
+
+- **Every district has its own street grid**, with its own rotation and spacing.
+  It comes from no file: it is **deduced** with the same integer arithmetic as
+  the rest of the city, from the cell the district sits in. That means it is
+  identical on every machine and never changes. 34 districts, each with its
+  grid, and the spacing and width depend on what is built there: 165 m between
+  16 m streets in tower districts, 120 m between 10 m streets among the villas,
+  210 m between 18 m streets in the industrial estates.
+- **The blocks emerge on their own.** A building is no longer planted in the
+  middle of the street: if the spot it drew falls on the grid, it looks for
+  another. So buildings gather in the gaps the grid leaves, which is exactly how
+  a city grows. Of 3,124 towers, only 18 found nowhere to go.
+- **The ribbon is cut where it should be.** A street that reaches water or the
+  edge of the map stops being drawn instead of stitching across the gap.
+
+**What is missing, and why.** The chosen plan was to mix real OpenStreetMap
+streets with deduced ones. The network of the environment this project is built
+in **cannot reach OpenStreetMap**: it refuses Overpass, Nominatim, Geofabrik and
+the tile servers. So this version brings the deduced half — which was needed
+either way — and the real half stays pluggable: as soon as a Dubai extract is in
+the repository, its named roads join the same list and win where they exist.
 
 ## What's new in v0.10.5 — the ground stops being flat colour
 

@@ -558,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "rami-core"
-version = "0.10.5"
+version = "0.10.6"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -570,7 +570,7 @@ dependencies = [
 
 [[package]]
 name = "rami-gui"
-version = "0.10.5"
+version = "0.10.6"
 dependencies = [
  "hex",
  "rami-core",
@@ -582,7 +582,7 @@ dependencies = [
 
 [[package]]
 name = "rami-net"
-version = "0.10.5"
+version = "0.10.6"
 dependencies = [
  "chacha20poly1305",
  "curve25519-dalek",
@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "rami-node"
-version = "0.10.5"
+version = "0.10.6"
 dependencies = [
  "hex",
  "rami-core",
@@ -613,7 +613,7 @@ dependencies = [
 
 [[package]]
 name = "rami-wallet"
-version = "0.10.5"
+version = "0.10.6"
 dependencies = [
  "chacha20poly1305",
  "hex",
@@ -659,9 +659,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.43"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "log",
  "once_cell",
