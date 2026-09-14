@@ -57,16 +57,25 @@ de formato.
    deja elegir un sampler con un ternario). Se resuelve con textura en array.
 7. **Colisión con lo que se mueve.** Coches y avatares se siguen atravesando.
 
-## Un test que se cae bajo carga (no es de esta rama)
+## Un test que se caía bajo carga, y que tumbó un release
 
-`rami-net::tests::oversized_frame_disconnects_peer` falló 2 de 4 ejecuciones de
-`cargo test --workspace --release --locked` en un contenedor de 2 vCPU, y pasó
-siempre aislado y siempre en CI. La causa no es del producto: el test lee
-`peer_count()` —un `AtomicUsize` que se actualiza en `refresh(&peers)`, después
-de mandar el evento— en el instante en que recibe `Disconnected`, y hay una
-ventana en la que todavía dice 1. La tabla de pares sí es correcta. El arreglo
-es esperar al contador en vez de leerlo una vez, y toca `rami-net`, que esta
-rama no abre; queda apuntado para hacerlo aparte.
+`rami-net::tests::oversized_frame_disconnects_peer` fallaba de vez en cuando —2
+de 4 ejecuciones de `cargo test --workspace --release --locked` en un contenedor
+de 2 vCPU— y siempre pasaba aislado. El 14 de septiembre de 2026 **tumbó el
+release de la v0.10.7**: `lib.rs:746`, `left: 1, right: 0`.
+
+La causa no es del producto: `peer_count()` es una instantánea que se refresca en
+`refresh(&peers)`, y ese refresco corre DESPUÉS de mandar `Connected` o
+`Disconnected` por el canal. El test leía el contador una sola vez, en el
+instante en que recibía el evento, y con la máquina cargada caía dentro de esa
+ventana. La tabla de pares siempre fue correcta; lo que no es instantáneo es el
+número.
+
+Arreglado en esta rama con un ayudante de test, `espera_pares`, que espera a que
+el contador llegue al valor esperado (hasta dos segundos) en vez de leerlo una
+vez. Se aplica a los seis asserts que van justo detrás de un evento. Los que
+comprueban que **nada** se registró se quedan como estaban: ahí no hay evento al
+que seguirle los pasos. Ningún cambio fuera de los tests.
 
 ## Deudas que este plan reconoce y no resuelve
 

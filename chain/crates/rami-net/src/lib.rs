@@ -643,6 +643,25 @@ mod tests {
         None
     }
 
+    /// Espera a que el contador de pares llegue a `n`, y devuelve lo último que
+    /// leyó. `peer_count()` es una INSTANTÁNEA: se refresca en `refresh(&peers)`,
+    /// que corre después de mandar `Connected`/`Disconnected` por el canal. Entre
+    /// recibir el evento y ver el número nuevo hay una ventana de microsegundos, y
+    /// con la máquina cargada esa ventana se abre lo bastante como para tumbar un
+    /// assert que lea el contador una sola vez. La tabla de pares es correcta; lo
+    /// que no es instantáneo es el número.
+    fn espera_pares(net: &Network, n: usize) -> usize {
+        let mut v = net.peer_count();
+        for _ in 0..200 {
+            if v == n {
+                return v;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+            v = net.peer_count();
+        }
+        v
+    }
+
     #[test]
     fn two_nodes_handshake_and_exchange() {
         let net = [7u8; 32];
@@ -657,8 +676,8 @@ mod tests {
 
         let a_peer = wait_connected(&a_rx).expect("A no vio la conexión");
         let _b_peer = wait_connected(&b_rx).expect("B no vio la conexión");
-        assert_eq!(a.peer_count(), 1);
-        assert_eq!(b.peer_count(), 1);
+        assert_eq!(espera_pares(&a, 1), 1);
+        assert_eq!(espera_pares(&b, 1), 1);
         // Cada uno ve la identidad AUTENTICADA del otro.
         let pa = a.peers();
         assert_eq!(pa.len(), 1);
@@ -719,7 +738,7 @@ mod tests {
         // con la versión correcta sí conecta
         let _ok = raw_client(a.listen_port, net, PROTO_VERSION).expect("conexión TCP");
         assert!(wait_connected(&a_rx).is_some(), "no conectó con la versión correcta");
-        assert_eq!(a.peer_count(), 1);
+        assert_eq!(espera_pares(&a, 1), 1);
     }
 
     #[test]
@@ -728,7 +747,7 @@ mod tests {
         let (a, a_rx) = Network::start(cfg(0, Some(0), vec![], net));
         let s = raw_client(a.listen_port, net, PROTO_VERSION).expect("conexión TCP");
         assert!(wait_connected(&a_rx).is_some());
-        assert_eq!(a.peer_count(), 1);
+        assert_eq!(espera_pares(&a, 1), 1);
         // Un frame que anuncia más de MAX_FRAME bytes: el lector corta antes
         // de reservar memoria para él (no hace falta ni enviar el cuerpo).
         let mut w = s.writer.get_ref();
@@ -743,7 +762,7 @@ mod tests {
             }
         }
         assert!(gone, "el par con frame gigante no fue expulsado");
-        assert_eq!(a.peer_count(), 0);
+        assert_eq!(espera_pares(&a, 0), 0, "el par expulsado sigue contando");
     }
 
     #[test]
@@ -778,7 +797,7 @@ mod tests {
             }
         }
         assert!(gone, "el par con frame manipulado no fue expulsado");
-        assert_eq!(a.peer_count(), 0);
+        assert_eq!(espera_pares(&a, 0), 0, "el par expulsado sigue contando");
     }
 
     #[test]
@@ -810,7 +829,7 @@ mod tests {
         }
         drop(s);
         assert!(gone, "el par que no lee no fue expulsado");
-        assert_eq!(a.peer_count(), 0);
+        assert_eq!(espera_pares(&a, 0), 0, "el par expulsado sigue contando");
     }
 
     #[test]

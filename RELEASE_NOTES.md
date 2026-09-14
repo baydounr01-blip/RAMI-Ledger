@@ -44,6 +44,14 @@ menos que los 480.000 triángulos que se ahorran a pie.
 escena— siguen en dos mallas instanciadas que tampoco se descartan. Esa es la
 siguiente.
 
+**Y un test que tumbó un release.** El de la v0.10.7 falló al primer intento por
+`rami-net::tests::oversized_frame_disconnects_peer`, que leía el contador de
+pares en el instante exacto en que recibía el evento de desconexión. Ese contador
+es una instantánea que se refresca un paso después, así que con la máquina
+cargada el test caía dentro de la ventana. No era un fallo del producto: la tabla
+de pares siempre fue correcta. Ahora los asserts que van detrás de un evento
+esperan al contador en vez de leerlo una vez. Solo cambian los tests.
+
 ## Novedades de v0.10.7 — los cruces
 
 Entrega 5 del plan del metaverso (`docs/METAVERSO.md`). **No toca el consenso,
@@ -422,6 +430,14 @@ extra calls of the worst case cost less than the 480,000 triangles saved on foot
 
 **What is still missing:** the palms — 44 % of the scene's triangles — are still
 two instanced meshes that are not culled either. That one is next.
+
+**And a test that brought down a release.** The v0.10.7 release failed on its
+first attempt because of `rami-net::tests::oversized_frame_disconnects_peer`,
+which read the peer counter at the exact moment it received the disconnection
+event. That counter is a snapshot refreshed one step later, so under load the
+test fell inside the window. It was not a product bug: the peer table was always
+correct. The assertions that follow an event now wait for the counter instead of
+reading it once. Only the tests change.
 
 ## What's new in v0.10.7 — the junctions
 
