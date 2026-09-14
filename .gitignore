@@ -16,3 +16,7 @@ dist/
 web/descargas/
 # caché de teselas de elevación / GeoJSON del builder de terreno (tools/geo)
 tools/geo/cache/
+
+# caché de Python de las herramientas
+__pycache__/
+*.pyc
