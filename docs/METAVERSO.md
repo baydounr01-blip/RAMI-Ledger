@@ -189,10 +189,18 @@ real queda **enchufable**: en cuanto haya un extracto de Dubái en el
 repositorio, sus vías con nombre entran en la misma lista de ejes y mandan donde
 existan. Nada del código que hay que escribir para eso cambia lo ya hecho.
 
-**Pendiente de esta entrega:** los cruces entre la trama de barrio y las vías
-principales se solapan sin resolverse (las dos calzadas se dibujan, no hay
-glorieta ni prioridad). Y queda el experimento que decide el presupuesto de todo
-lo demás:
+**Hecho en la v0.10.7:** los cruces. 4.505 en toda la ciudad, resueltos por
+prioridad —las vías del mapa por encima de las deducidas, y entre iguales la más
+ancha; a igualdad exacta, la de menor índice, que es un orden fijo y por tanto
+la misma decisión en todas las máquinas—. La que cede desaparece dentro del
+ancho de la que manda, y a la que manda se le rebaja el bordillo en la boca de
+la otra, en metro y medio. Donde se cruzan dos arterias del mismo orden va una
+glorieta: anillo de asfalto sin marcas, bordillo e isla central, con las dos
+vías cortadas en la cuerda que encaja con la circunferencia. Siete glorietas.
+
+**Pendiente de esta entrega:** las esquinas de los cruces no tienen radio de
+giro y no hay líneas de detención ni ceda el paso pintados. Y queda el
+experimento que decide el presupuesto de todo lo demás:
 **quitar el buffer de profundidad logarítmico**, que hoy obliga a todos los
 sombreadores a escribir profundidad y anula el descarte temprano de píxeles en
 la escena entera. Es el número más grande que nadie ha medido.

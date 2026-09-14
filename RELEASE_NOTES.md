@@ -1,3 +1,45 @@
+## Novedades de v0.10.7 — los cruces
+
+Entrega 5 del plan del metaverso (`docs/METAVERSO.md`). **No toca el consenso,
+la red ni el formato de los ficheros.**
+
+La v0.10.6 puso calles en los barrios, pero cada calle se dibujaba entera y por
+su cuenta. Donde dos se cruzaban —y con la trama de barrio eso pasa cada ciento
+cincuenta metros— las dos calzadas quedaban una encima de la otra: dos bordillos
+de dieciocho centímetros atravesando el asfalto de la otra, y la acera
+cortándole el paso a los coches. Eso ya no pasa: **4.505 cruces resueltos** en
+toda la ciudad, y siete glorietas.
+
+- **Prioridad.** En cada cruce manda una de las dos. El rango lo decide sin
+  ambigüedad: las vías del mapa abierto por encima de cualquier calle deducida,
+  y entre iguales la más ancha; a igualdad exacta, la de menor índice, que es un
+  orden fijo. La misma pareja se resuelve igual en todas las máquinas.
+- **Hueco.** La calle que cede desaparece dentro del ancho de la que manda, en
+  vez de dibujarse por debajo. La cinta termina justo en el borde exterior de la
+  otra, no un remuestreo antes.
+- **Rebaje.** El bordillo de la vía preferente baja a la calzada en la boca de
+  la otra, en metro y medio, que es lo que hace un vado de verdad. Su eje y sus
+  carriles siguen pintados a través del cruce; los de la que cede, no.
+- **Glorietas.** Donde se cruzan dos arterias del mapa del mismo orden no manda
+  ninguna: va un anillo de asfalto sin marcas —de siete a catorce metros, la
+  calzada de un solo sentido— con su bordillo y su isla central de acera. Las
+  dos vías se cortan en la cuerda cuyos extremos caen sobre la circunferencia,
+  así que las bocas encajan sin morder ni solaparse. El anillo va centímetro y
+  medio por encima, como una junta de asfalto de verdad, y se nivela por un
+  disco más ancho que la nivelación de cualquier sección que lo toque: ninguna
+  calzada le asoma por debajo.
+- **Y los edificios lo saben.** Una glorieta ocupa terreno: ningún edificio se
+  planta dentro, igual que ya pasaba con las calles.
+
+**Lo que cuesta.** Los cruces suben la escena de 1.063.212 a 1.367.614
+triángulos con calidad media, en las mismas 17 llamadas de dibujo. Toda esa
+geometría está en la malla de calzada, que no proyecta sombra —solo la recibe—,
+así que se dibuja una vez por cuadro y no dos.
+
+**Lo que sigue faltando:** las esquinas no tienen radio de giro, no hay líneas
+de detención ni ceda el paso pintados, y la mitad real de las calles sigue
+esperando un extracto de OpenStreetMap en el repositorio.
+
 ## Novedades de v0.10.6 — las calles de barrio, y las manzanas
 
 Entrega 4 del plan del metaverso (`docs/METAVERSO.md`). **No toca el consenso,
@@ -290,6 +332,48 @@ altura sin romperse.
   con los binarios de la v0.7.0 y la v0.7.3. Un binario v0.8.0 que abra un
   `chain.jsonl` escrito por la 0.9.0 con transacciones de mercado no lo lee
   (por red nunca las recibe): la salida es volver a la 0.9.0.
+
+## What's new in v0.10.7 — the junctions
+
+Delivery 5 of the metaverse plan (`docs/METAVERSO.md`). **It does not touch
+consensus, the network or the file formats.**
+
+v0.10.6 put streets inside the neighbourhoods, but every street was drawn whole
+and on its own. Where two of them crossed — and with a neighbourhood grid that
+happens every hundred and fifty metres — the two roadways sat one on top of the
+other: two eighteen-centimetre kerbs cutting across each other's asphalt, and
+the pavement blocking the cars. That is over: **4,505 junctions resolved** across
+the city, and seven roundabouts.
+
+- **Priority.** One of the two is in charge at every junction. Rank decides it
+  with no ambiguity: open-map roads outrank any deduced street, and among equals
+  the wider one wins; on an exact tie, the lower index, which is a fixed order.
+  The same pair is resolved the same way on every machine.
+- **The gap.** The street that gives way disappears inside the width of the one
+  in charge, instead of being drawn underneath it. The ribbon ends right at the
+  other's outer edge, not one resampling step earlier.
+- **The dropped kerb.** The kerb of the priority road comes down to the roadway
+  at the mouth of the other one, over a metre and a half, which is what a real
+  dropped kerb does. Its centre line and lane markings stay painted through the
+  junction; those of the street that gives way do not.
+- **Roundabouts.** Where two open-map arteries of the same order cross, neither
+  is in charge: there goes a ring of unmarked asphalt — seven to fourteen metres,
+  the roadway of a single direction — with its kerb and its pavement island. The
+  two roads are cut on the chord whose ends fall on the circle, so the mouths fit
+  without biting or overlapping. The ring sits a centimetre and a half higher,
+  like a real asphalt joint, and is levelled over a disc wider than the levelling
+  of any section that touches it: no roadway pokes out from under it.
+- **And the buildings know.** A roundabout takes up ground: nothing is built
+  inside one, just as was already true of the streets.
+
+**What it costs.** The junctions take the scene from 1,063,212 to 1,367,614
+triangles at medium quality, in the same 17 draw calls. All of that geometry is
+in the roadway mesh, which does not cast shadows — it only receives them — so it
+is drawn once per frame, not twice.
+
+**What is still missing:** the corners have no turning radius, there are no stop
+or give-way lines painted, and the real half of the streets is still waiting for
+an OpenStreetMap extract in the repository.
 
 ## What's new in v0.10.6 — neighbourhood streets, and city blocks
 
