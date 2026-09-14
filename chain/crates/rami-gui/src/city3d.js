@@ -1095,6 +1095,11 @@
     return new THREE.ShaderMaterial({ uniforms: u, vertexShader: BUILD_VS, fragmentShader: BUILD_FS, vertexColors: true, fog: true, lights: true });
   }
 
+  /** sRGB -> lineal exacto, para las texturas de material. */
+  var GLSL_LINEAL = [
+    'vec3 aLineal(vec3 c){',
+    '  return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));',
+    '}'].join('\n');
   // ---- Calzada (v0.10.4): asfalto, bordillo y acera con marcas viales ----------
   // Las 21 polilíneas del dataset se dibujaban como LineSegments de un píxel a
   // tres metros del suelo: de cerca no eran una carretera, eran un alambre
@@ -1133,17 +1138,29 @@
     '#include <shadowmap_pars_fragment>',
     '#include <shadowmask_pars_fragment>',
     'uniform vec3 uSun, uSunColor, uSkyColor, uGroundColor; uniform float uNight; uniform sampler2D uNoise;',
+    'uniform sampler2D uAsfalto, uHormigon, uAcera;',
     'varying vec3 vVia; varying vec3 vWorld;',
+    GLSL_LINEAL,
     'void main(){',
     '  #include <logdepthbuf_fragment>',
     '  float u = vVia.x, sl = vVia.y, clase = vVia.z;',
     '  float dist = length(cameraPosition - vWorld);',
     '  float cerca = 1.0 - smoothstep(120.0, 2600.0, dist);',   // las marcas se apagan de lejos: aliasing
-    '  float grano = texture2D(uNoise, vWorld.xz / 14.0).r, manchas = texture2D(uNoise, vWorld.xz / 220.0).r;',
-    '  vec3 asfalto = vec3(0.085, 0.086, 0.092) * (0.82 + 0.34 * grano) * (0.88 + 0.24 * manchas);',
-    '  vec3 acera = vec3(0.52, 0.50, 0.47) * (0.88 + 0.20 * grano);',
-    '  vec3 bordillo = vec3(0.68, 0.66, 0.62) * (0.9 + 0.16 * grano);',
-    '  vec3 base = clase < 0.5 ? asfalto : (clase < 1.5 ? bordillo : acera);',
+    // Cada material con su periodo de teselado, en metros de mundo.
+    '  vec4 tA = texture2D(uAsfalto, vWorld.xz / 6.0);',
+    '  vec4 tH = texture2D(uHormigon, vWorld.xz / 3.0);',
+    '  vec4 tC = texture2D(uAcera, vWorld.xz / 4.8);',          // 8 losas de 60 cm
+    '  vec4 tex = clase < 0.5 ? tA : (clase < 1.5 ? tH : tC);',
+    '  vec3 base = aLineal(tex.rgb);',
+    '  float manchas = texture2D(uNoise, vWorld.xz / 220.0).r;',
+    '  base *= mix(0.88, 1.12, manchas);',                      // veladuras de escala grande
+    // El relieve por texel se saca de la altura del ALFA, pero solo del asfalto:
+    // GLSL no deja elegir un sampler con un ternario, y muestrear los tres en dos
+    // desplazamientos costaría seis lecturas más por fragmento. En bordillo y
+    // acera el color de las juntas ya insinúa el relieve.
+    '  float relieve = (1.0 - smoothstep(3.0, 45.0, dist)) * step(clase, 0.5);',
+    '  float hx = texture2D(uAsfalto, (vWorld.xz + vec2(0.06, 0.0)) / 6.0).a;',
+    '  float hz = texture2D(uAsfalto, (vWorld.xz + vec2(0.0, 0.06)) / 6.0).a;',
     // Marcas: eje doble continuo, carriles discontinuos cada 3,5 m de ancho.
     '  if (clase < 0.5) {',
     '    float eje = 1.0 - smoothstep(0.10, 0.34, abs(abs(u) - 0.42));',
@@ -1154,7 +1171,7 @@
     '    base = mix(base, vec3(0.72, 0.70, 0.64), pintura * 0.92);',
     '  }',
     '  float shadow = getShadowMask();',
-    '  vec3 n = vec3(0.0, 1.0, 0.0);',
+    '  vec3 n = normalize(vec3((tA.a - hx) * 9.0 * relieve, 1.0, (tA.a - hz) * 9.0 * relieve));',
     '  float ndl = max(dot(n, uSun), 0.0) * shadow;',
     '  vec3 amb = mix(uGroundColor, uSkyColor, 0.9);',
     '  vec3 col = base * (amb * 0.9 + uSunColor * ndl * 1.15);',
@@ -1164,11 +1181,12 @@
     '  #include <encodings_fragment>',
     '  #include <fog_fragment>',
     '}'].join('\n');
-  function makeRoadMaterial(shared, lodUniform, noise) {
+  function makeRoadMaterial(shared, lodUniform, noise, mats) {
     var u = THREE.UniformsUtils.merge([THREE.UniformsLib.lights, THREE.UniformsLib.fog]);
     u.uSun = shared.uSun; u.uSunColor = shared.uSunColor; u.uSkyColor = shared.uSkyColor;
     u.uGroundColor = shared.uGroundColor; u.uNight = shared.uNight;
     u.uLod = lodUniform; u.uNoise = { value: noise };
+    u.uAsfalto = { value: mats.asfalto }; u.uHormigon = { value: mats.hormigon }; u.uAcera = { value: mats.acera };
     return new THREE.ShaderMaterial({ uniforms: u, vertexShader: ROAD_VS, fragmentShader: ROAD_FS, fog: true, lights: true });
   }
 
@@ -1201,20 +1219,26 @@
     '#include <lights_pars_begin>',
     '#include <shadowmap_pars_fragment>',
     '#include <shadowmask_pars_fragment>',
-    'uniform vec3 uSun, uSunColor, uSkyColor, uGroundColor; uniform float uNight; uniform sampler2D uNoise;',
+    'uniform vec3 uSun, uSunColor, uSkyColor, uGroundColor; uniform float uNight; uniform sampler2D uNoise, uArena;',
     'varying vec3 vNormalW; varying vec3 vWorld;',
+    GLSL_LINEAL,
     'void main(){',
     '  #include <logdepthbuf_fragment>',
     '  vec3 base = vec3(0.6);',
     '  #ifdef USE_COLOR', '  base = vColor.rgb;', '  #endif',
     '  float shadow = getShadowMask();',
     '  float dist = length(cameraPosition - vWorld);',
-    '  float n1 = texture2D(uNoise, vWorld.xz / 90.0).r, n2 = texture2D(uNoise, vWorld.xz / 760.0 + 0.37).r, n3 = texture2D(uNoise, vWorld.xz / 7.0).r;',
+    '  float n2 = texture2D(uNoise, vWorld.xz / 760.0 + 0.37).r;',
     '  float near = 1.0 - smoothstep(60.0, 900.0, dist);',
-    '  float detail = 0.84 + 0.20 * n1 + 0.12 * (n2 - 0.5) + 0.08 * (n3 - 0.5) * near;',
+    // El grano y los rizos de la arena salen de la textura, no de ruido de valor:
+    // es lo que da escala al suelo cuando lo tienes a dos metros.
+    '  vec4 tS = texture2D(uArena, vWorld.xz / 9.0);',
+    '  float ar = dot(aLineal(tS.rgb), vec3(0.2126, 0.7152, 0.0722));',
+    '  float detail = 0.78 + 1.05 * ar + 0.12 * (n2 - 0.5);',
     '  vec3 n = normalize(vNormalW);',
-    '  float ex = texture2D(uNoise, (vWorld.xz + vec2(2.0, 0.0)) / 90.0).r - n1, ez = texture2D(uNoise, (vWorld.xz + vec2(0.0, 2.0)) / 90.0).r - n1;',
-    '  n = normalize(n + vec3(-ex, 0.0, -ez) * 3.0 * (1.0 - smoothstep(400.0, 4000.0, dist)));',
+    '  float ex = texture2D(uArena, (vWorld.xz + vec2(0.35, 0.0)) / 9.0).a - tS.a;',
+    '  float ez = texture2D(uArena, (vWorld.xz + vec2(0.0, 0.35)) / 9.0).a - tS.a;',
+    '  n = normalize(n + vec3(-ex, 0.0, -ez) * 6.0 * (1.0 - smoothstep(120.0, 1400.0, dist)));',
     '  float ndl = max(dot(n, uSun), 0.0) * shadow;',
     '  vec3 amb = mix(uGroundColor, uSkyColor, 0.5 + 0.5 * n.y);',
     '  vec3 col = base * detail * (amb * 0.9 + uSunColor * ndl * 1.2);',
@@ -1224,13 +1248,31 @@
     '  #include <encodings_fragment>',
     '  #include <fog_fragment>',
     '}'].join('\n');
-  function makeTerrainMaterial(shared, noise) {
+  function makeTerrainMaterial(shared, noise, arena) {
     var u = THREE.UniformsUtils.merge([THREE.UniformsLib.lights, THREE.UniformsLib.fog]);
     u.uSun = shared.uSun; u.uSunColor = shared.uSunColor; u.uSkyColor = shared.uSkyColor; u.uGroundColor = shared.uGroundColor; u.uNight = shared.uNight;
-    u.uNoise = { value: noise };
+    u.uNoise = { value: noise }; u.uArena = { value: arena };
     return new THREE.ShaderMaterial({ uniforms: u, vertexShader: TERR_VS, fragmentShader: TERR_FS, vertexColors: true, fog: true, lights: true });
   }
   /** Ruido de valor con 4 octavas, 256×256, repetible: relieve de la arena y variación del suelo. */
+  /**
+   * Carga una textura de material (RGBA: color en sRGB, altura en el alfa).
+   * La conversión sRGB -> lineal se hace a mano en el sombreador: `texture2D()`
+   * dentro de un material propio NO pasa por la conversión que three inyecta en
+   * sus materiales de serie, así que marcar `encoding` aquí no haría nada.
+   * Devuelve la textura ya usable; la imagen llega después y se refresca sola.
+   */
+  function cargaMaterial(url) {
+    var tex = new THREE.Texture();
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true; tex.anisotropy = 4;
+    var img = new Image();
+    img.onload = function () { tex.image = img; tex.needsUpdate = true; };
+    img.onerror = function () { console.warn('city3d: no se pudo cargar la textura ' + url); };
+    img.src = url;
+    return tex;
+  }
   function makeNoiseTexture(size, seed) {
     var data = new Uint8Array(size * size * 4), i, j, o;
     function vnoise(x, y, freq) {
@@ -1711,6 +1753,12 @@
     var skyMat = makeSkyMaterial(), skyScene = new THREE.Scene();
     skyScene.add(makeSky(1000, skyMat));
     var noiseTex = makeNoiseTexture(256, 11);
+    // Los cuatro materiales de la ciudad, empotrados en el binario. Llegan
+    // asíncronos: el material ya los tiene como uniforme y se refrescan solos.
+    var mats = {
+      asfalto: cargaMaterial('/tex/asfalto.png'), hormigon: cargaMaterial('/tex/hormigon.png'),
+      arena: cargaMaterial('/tex/arena.png'), acera: cargaMaterial('/tex/acera.png')
+    };
     // Uniformes compartidos por edificios, terreno y mar (sol, cielo, noche, entorno).
     var shared = {
       uSun: { value: sunDir.clone() }, uSunColor: { value: new THREE.Color(0xfff1d6) },
@@ -1718,7 +1766,7 @@
       uEnv: { value: envRT.texture }
     };
     var buildMat = makeBuildingMaterial(shared, true), plainMat = makeBuildingMaterial(shared, false);
-    var terrainMat = makeTerrainMaterial(shared, noiseTex);
+    var terrainMat = makeTerrainMaterial(shared, noiseTex, mats.arena);
 
     // Estado global del visor
     var S = {
@@ -3006,7 +3054,7 @@
       g.setAttribute('via', new THREE.BufferAttribute(new Float32Array(vias), 3));
       g.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
       g.computeBoundingSphere();
-      var m = new THREE.Mesh(g, makeRoadMaterial(shared, lodUniform, noiseTex));
+      var m = new THREE.Mesh(g, makeRoadMaterial(shared, lodUniform, noiseTex, mats));
       m.frustumCulled = false; m.renderOrder = 1; m.receiveShadow = true;
       return m;
     }

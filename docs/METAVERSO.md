@@ -183,12 +183,19 @@ arena. Y queda el experimento que decide el presupuesto de todo lo demás:
 sombreadores a escribir profundidad y anula el descarte temprano de píxeles en
 la escena entera. Es el número más grande que nadie ha medido.
 
-### Entrega 3 — el atlas CC0 · 3–4 sesiones
+### Entrega 3 — los materiales · **hecha en la v0.10.5**
 
-3–4 MB de texturas de dominio público (asfalto, hormigón, cristal sucio, arena,
-vegetación) empotradas con su licencia y su atribución en `NOTICE.md` y en la
-pantalla de créditos. Es lo que separa «color plano a dos metros» de una
-superficie creíble. La descarga pasa de ~6,5 MB a ~10 MB.
+Es lo que separa «color plano a dos metros» de una superficie creíble.
+
+**Cambio sobre el plan:** el entorno donde se construye el proyecto **no alcanza
+las fuentes de dominio público** —la red rechaza ambientCG y Poly Haven con un
+403 en la pasarela—, y meter arte con una licencia sin verificar en el
+repositorio no es una opción. Así que los materiales se **fabrican**:
+`tools/textures/make_materials.py` genera cuatro texturas teselables de 512×512
+(asfalto, hormigón, arena, losas de acera) con la biblioteca estándar de Python,
+de forma determinista, con el color en sRGB y la altura en el alfa. No arrastran
+licencia de nadie y la descarga sube 1,6 MB, no 3–4. Si algún día entra un juego
+fotográfico CC0, se sustituyen esos cuatro ficheros: el sombreador no cambia.
 
 ### Entrega 4 — TRAMA: la manzana y la fachada · 6–8 sesiones
 
