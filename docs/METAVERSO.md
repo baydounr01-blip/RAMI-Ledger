@@ -198,9 +198,18 @@ la otra, en metro y medio. Donde se cruzan dos arterias del mismo orden va una
 glorieta: anillo de asfalto sin marcas, bordillo e isla central, con las dos
 vías cortadas en la cuerda que encaja con la circunferencia. Siete glorietas.
 
+**Hecho en la v0.10.8:** la calzada deja de ir en una sola malla inmune al
+descarte. Va repartida en 43 teselas de ocho kilómetros, cada una con su esfera
+envolvente, y a ras de calle se envía un tercio menos de escena (881.408
+triángulos frente a 1.367.614) por una llamada de dibujo más. El tamaño salió de
+medir cuatro. El peor caso —toda la ciudad de golpe— paga 33 llamadas de más,
+que es justo cuando la calzada mide un píxel.
+
 **Pendiente de esta entrega:** las esquinas de los cruces no tienen radio de
-giro y no hay líneas de detención ni ceda el paso pintados. Y queda el
-experimento que decide el presupuesto de todo lo demás:
+giro y no hay líneas de detención ni ceda el paso pintados. Las palmeras, que
+son el 44 % de los triángulos, siguen sin descartarse: es la misma técnica de
+teselas y el siguiente recorte grande. Y queda el experimento que decide el
+presupuesto de todo lo demás:
 **quitar el buffer de profundidad logarítmico**, que hoy obliga a todos los
 sombreadores a escribir profundidad y anula el descarte temprano de píxeles en
 la escena entera. Es el número más grande que nadie ha medido.

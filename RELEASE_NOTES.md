@@ -1,3 +1,49 @@
+## Novedades de v0.10.8 — las calles dejan de enviarse enteras
+
+Sigue la entrega 5 del plan del metaverso (`docs/METAVERSO.md`). **No toca el
+consenso, la red ni el formato de los ficheros.**
+
+Los cruces de la v0.10.7 subieron la escena de 1.063.212 a 1.367.614 triángulos,
+y toda la calzada iba en **una** malla marcada como «no la descartes nunca»:
+medio millón de triángulos a la tarjeta cada cuadro, mires donde mires.
+Caminando por un barrio se ve menos del dos por ciento de la ciudad, así que el
+resto era trabajo tirado.
+
+Ahora la calzada va repartida en **43 teselas de ocho kilómetros**, cada una con
+su malla y su esfera envolvente, y la que no entra en el cono de visión no se
+envía:
+
+| Encuadre | Antes | Ahora |
+|---|---|---|
+| A pie en un cruce | 1.367.614 tri · 17 llamadas | **881.408** tri · 18 llamadas |
+| Barrio en oblicuo | 1.367.614 tri · 17 llamadas | **881.408** tri · 18 llamadas |
+| Glorieta de cerca | 1.367.614 tri · 17 llamadas | **949.966** tri · 18 llamadas |
+| Sobre una frontera de tesela | 1.367.614 tri · 17 llamadas | **894.806** tri · 18 llamadas |
+| Ciudad entera, cenital | 1.367.614 tri · 17 llamadas | 1.360.208 tri · **50** llamadas |
+
+A ras de calle se envía **un tercio menos de escena por una llamada de dibujo
+más**. El peor caso —toda la ciudad de golpe, que es justo cuando la calzada
+mide un píxel— paga 33 llamadas de más.
+
+**El tamaño de tesela no es un número a ojo: se midieron cuatro.** Con 4 km el
+peor caso eran 106 llamadas; con 6 km, 66; con 12 km se colaban 130.000
+triángulos de más a pie. Ocho es donde el ahorro a ras de calle ya está completo
+y el peor caso todavía es barato.
+
+**Sin costuras.** Una cinta que cruza de tesela repite su última fila en la
+nueva y cose allí la sección, así que no hay ni hueco ni sección dibujada dos
+veces. Comprobado con una captura tomada justo encima de una frontera.
+
+**Lo que no está medido, y hay que decirlo.** El ahorro está en triángulos
+enviados y llamadas de dibujo, **no en milisegundos**: en el entorno donde se
+construye este proyecto no hay tarjeta gráfica con la que cronometrarlo, así que
+nadie ha comprobado todavía que las 33 llamadas extra del peor caso cuesten
+menos que los 480.000 triángulos que se ahorran a pie.
+
+**Lo que sigue faltando:** las palmeras —el 44 % de los triángulos de la
+escena— siguen en dos mallas instanciadas que tampoco se descartan. Esa es la
+siguiente.
+
 ## Novedades de v0.10.7 — los cruces
 
 Entrega 5 del plan del metaverso (`docs/METAVERSO.md`). **No toca el consenso,
@@ -332,6 +378,50 @@ altura sin romperse.
   con los binarios de la v0.7.0 y la v0.7.3. Un binario v0.8.0 que abra un
   `chain.jsonl` escrito por la 0.9.0 con transacciones de mercado no lo lee
   (por red nunca las recibe): la salida es volver a la 0.9.0.
+
+## What's new in v0.10.8 — the streets stop being sent whole
+
+Continues delivery 5 of the metaverse plan (`docs/METAVERSO.md`). **It does not
+touch consensus, the network or the file formats.**
+
+The junctions in v0.10.7 took the scene from 1,063,212 to 1,367,614 triangles,
+and the entire roadway lived in **one** mesh marked "never cull this": half a
+million triangles going to the card every frame, wherever you look. Walking
+through a neighbourhood you see less than two per cent of the city, so the rest
+was wasted work.
+
+The roadway is now split across **43 tiles of eight kilometres**, each with its
+own mesh and bounding sphere, and whatever falls outside the view frustum is not
+sent:
+
+| View | Before | Now |
+|---|---|---|
+| On foot at a junction | 1,367,614 tri · 17 calls | **881,408** tri · 18 calls |
+| Neighbourhood, oblique | 1,367,614 tri · 17 calls | **881,408** tri · 18 calls |
+| Roundabout, close up | 1,367,614 tri · 17 calls | **949,966** tri · 18 calls |
+| On top of a tile boundary | 1,367,614 tri · 17 calls | **894,806** tri · 18 calls |
+| Whole city, top down | 1,367,614 tri · 17 calls | 1,360,208 tri · **50** calls |
+
+At street level **a third less scene is submitted for one extra draw call**. The
+worst case — the whole city at once, which is exactly when the roadway is a
+pixel wide — pays 33 extra calls.
+
+**The tile size is not a number picked by eye: four of them were measured.** At
+4 km the worst case was 106 calls; at 6 km, 66; at 12 km an extra 130,000
+triangles slipped through on foot. Eight is where the street-level saving is
+already complete and the worst case is still cheap.
+
+**No seams.** A ribbon crossing a tile boundary repeats its last row in the new
+tile and stitches the section there, so there is neither a gap nor a section
+drawn twice. Checked with a screenshot taken right on top of a boundary.
+
+**What is not measured, and must be said.** The saving is in submitted triangles
+and draw calls, **not in milliseconds**: the environment this project is built
+in has no graphics card to time it on, so nobody has yet checked that the 33
+extra calls of the worst case cost less than the 480,000 triangles saved on foot.
+
+**What is still missing:** the palms — 44 % of the scene's triangles — are still
+two instanced meshes that are not culled either. That one is next.
 
 ## What's new in v0.10.7 — the junctions
 

@@ -1780,7 +1780,7 @@
       gridCenter: new THREE.Vector3(), counts: null, inflatePath: null,
       sel: null, hover: null, frame: 0, fps: 0, fpsN: 0, fpsT: 0, lastT: 0, raf: 0,
       mode: 'orbit', hour: null, night: 0, landmarks: [], lmIndex: {}, clusterTotal: 0,
-      avatars: {}, avatarOrder: [], traffic: null, gridShown: false, catastro: null, tramas: [], glorietas: [], nCruces: 0
+      avatars: {}, avatarOrder: [], traffic: null, gridShown: false, catastro: null, tramas: [], glorietas: [], nCruces: 0, trozosVia: 0
     };
     var gridGroup = new THREE.Group(); scene.add(gridGroup);
     var pending = null, pendingFlight = null;
@@ -3230,17 +3230,60 @@
       return false;
     }
 
+    // --- Las calles dejan de enviarse enteras (v0.10.8) ----------------------------
+    // Toda la calzada de Dubái iba en UNA malla con `frustumCulled = false`: medio
+    // millón de triángulos enviados a la tarjeta cada cuadro, mires donde mires.
+    // Caminando por un barrio se ve menos del dos por ciento de la ciudad, así que
+    // el noventa y ocho restante era trabajo de vértice tirado.
+    //
+    // Ahora la calzada se reparte en teselas cuadradas y cada una es una malla con
+    // su esfera envolvente: la que no entra en el cono de visión no se envía. El
+    // precio son más llamadas de dibujo, y por eso la tesela es grande: con cuatro
+    // kilómetros la ciudad entera cabe en unas pocas decenas de mallas, y a pie
+    // solo entran dos o tres.
+    //
+    // Una cinta que cruza de tesela repite su última fila en la nueva y cose ahí la
+    // sección: no hay ni hueco ni sección dibujada dos veces.
+    var TESELA_VIA = 8000;
+
     /**
      * Construye TODAS las calzadas —las 21 vías del mapa y la trama deducida de
-     * los 34 barrios— en una sola malla: cinta con perfil transversal de ocho
+     * los 34 barrios— repartidas en teselas: cinta con perfil transversal de ocho
      * puntos, remuestreada para seguir el relieve, nivelada por tramos y con los
      * cruces resueltos por prioridad.
      */
     function buildRoads(roads, geo) {
-      var pos = [], hcs = [], vias = [], idx = [], base = 0, r, i, k;
+      var r, i, k;
       var ALTO = 0.18;                            // altura del bordillo
       var RAMPA = 1.5;                            // lo que tarda el bordillo en bajar
       var MIRA = 45;                              // con cuánto se mira la tangente
+      var PERFIL = 8;                             // puntos del perfil transversal
+      var trozos = {};
+      /** El trozo al que le toca un punto del mundo; se crea al vuelo. */
+      function trozoDe(wx, wz) {
+        var clave = Math.floor(wx / TESELA_VIA) + ':' + Math.floor(wz / TESELA_VIA);
+        return trozos[clave] || (trozos[clave] = { pos: [], hcs: [], vias: [], idx: [], cose: false });
+      }
+      /**
+       * Escribe una fila de ocho vértices y, si la anterior de este trozo pertenece
+       * a la misma cinta, cose las siete caras que las unen. El devanado importa:
+       * cosidas al revés, las caras miran al suelo y la GPU las descarta. Con este
+       * orden la normal geométrica es +Y en la calzada y apunta hacia el eje en las
+       * dos caras del bordillo.
+       */
+      function escribeFila(T, fila) {
+        var b0 = T.pos.length / 3, a0 = b0 - PERFIL, j;
+        for (j = 0; j < PERFIL; j++) {
+          var v = fila[j];
+          T.pos.push(v[0], v[1], v[2]); T.hcs.push(v[3]); T.vias.push(v[4], v[5], v[6]);
+        }
+        if (T.cose) {
+          for (j = 0; j + 1 < PERFIL; j++) {
+            T.idx.push(a0 + j, a0 + j + 1, b0 + j, a0 + j + 1, b0 + j + 1, b0 + j);
+          }
+        }
+        T.cose = true;
+      }
       // 1) Las vías del mapa abierto, con su ancho sacado de su longitud.
       var lineas = [];
       for (r = 0; r < roads.length; r++) {
@@ -3274,7 +3317,7 @@
       var cru = resuelveCruces(lineas);
       S.glorietas = cru.glorietas;
       S.nCruces = cru.n;
-      // 4) Una sola malla con todo.
+      // 4) La geometría, tesela a tesela.
       for (r = 0; r < lineas.length; r++) {
         var muestras = lineas[r].muestras, arco = lineas[r].arco;
         if (!muestras || muestras.length < 2) continue;
@@ -3299,16 +3342,16 @@
         // menor flotando a media manzana de la mayor.
         for (i = 0; i < cortes.length; i++) paradas.push(cortes[i][0] - 0.08, cortes[i][1] + 0.08);
         paradas.sort(function (p, q) { return p - q; });
-        var fila = 0, sUlt = -1e9;
+        var sUlt = -1e9, filaAnt = null;
         for (i = 0; i < paradas.length; i++) {
           var sp = paradas[i];
           if (sp < -1e-6 || sp > total + 1e-6) continue;
           if (sp - sUlt < 0.03) continue;                            // dos paradas pegadas
-          if (enTramo(cortes, sp)) { base = pos.length / 3; fila = 0; continue; }
+          if (enTramo(cortes, sp)) { filaAnt = null; continue; }
           var p0 = puntoArco(muestras, arco, sp);
           var dentro = p0.x >= ac && p0.z >= ac && p0.x <= geo.worldW - ac && p0.z <= geo.worldH - ac
             && Math.max(surfaceH(p0.x, p0.z), 0) > 0.6;      // ni fuera del mapa ni en el agua
-          if (!dentro) { base = pos.length / 3; fila = 0; continue; }   // se corta la cinta, no se cose el hueco
+          if (!dentro) { filaAnt = null; continue; }          // se corta la cinta, no se cose el hueco
           // La tangente se mira a cuarenta y cinco metros por banda: a un metro
           // cada codo del dataset saldría en pico, y las paradas del cruce van a
           // metro y medio unas de otras.
@@ -3329,51 +3372,60 @@
             hF = Math.max(hF, surfaceH(qx, qz)); hC = Math.max(hC, coarseH(qx, qz));
           }
           var perfil = enTramo(cajas, sp) ? perfilL : perfilN;
-          for (k = 0; k < perfil.length; k++) {
+          var fila = [];
+          for (k = 0; k < PERFIL; k++) {
             var u = perfil[k][0], dy = perfil[k][1], cla = perfil[k][2];
-            var wx = p0.x + nx * u, wz = p0.z + nz * u;
-            pos.push(wx, hF + 0.22 + dy, wz);
-            hcs.push(hC + 0.22 + dy);
-            vias.push(u, sp, cla);
+            fila.push([p0.x + nx * u, hF + 0.22 + dy, p0.z + nz * u, hC + 0.22 + dy, u, sp, cla]);
           }
+          var T = trozoDe(p0.x, p0.z);
+          if (!filaAnt) { T.cose = false; }
+          else if (filaAnt.T !== T) {
+            // La cinta cruza de tesela: la fila anterior se repite aquí y la
+            // sección que las une se cose en la tesela nueva, no en la vieja.
+            T.cose = false; escribeFila(T, filaAnt.fila);
+          }
+          escribeFila(T, fila);
+          filaAnt = { T: T, fila: fila };
           sUlt = sp;
-          if (fila > 0) {
-            var a0 = base + (fila - 1) * perfilN.length, b0 = base + fila * perfilN.length;
-            // El devanado importa: cosidas al revés, las caras miran al suelo y la
-            // GPU las descarta. Con este orden la normal geométrica es +Y en la
-            // calzada y apunta hacia el eje en las dos caras del bordillo.
-            for (k = 0; k + 1 < perfilN.length; k++) {
-              idx.push(a0 + k, a0 + k + 1, b0 + k, a0 + k + 1, b0 + k + 1, b0 + k);
-            }
-          }
-          fila++;
         }
-        base = pos.length / 3;
       }
       // 5) Las glorietas: anillo de asfalto sin marcas, bordillo e isla central.
       for (r = 0; r < cru.glorietas.length; r++) {
-        base = glorieta(cru.glorietas[r], pos, hcs, vias, idx, ALTO);
+        glorieta(cru.glorietas[r], trozoDe(cru.glorietas[r].x, cru.glorietas[r].z), ALTO);
       }
-      if (!idx.length) return null;
-      var g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
-      g.setAttribute('hc', new THREE.BufferAttribute(new Float32Array(hcs), 1));
-      g.setAttribute('via', new THREE.BufferAttribute(new Float32Array(vias), 3));
-      g.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
-      g.computeBoundingSphere();
-      var m = new THREE.Mesh(g, makeRoadMaterial(shared, lodUniform, noiseTex, mats));
-      m.frustumCulled = false; m.renderOrder = 1; m.receiveShadow = true;
-      return m;
+      // 6) Una malla por tesela, cada una con su esfera envolvente.
+      var grupo = new THREE.Group(), material = makeRoadMaterial(shared, lodUniform, noiseTex, mats), clave, n = 0;
+      for (clave in trozos) {
+        if (!Object.prototype.hasOwnProperty.call(trozos, clave)) continue;
+        var T2 = trozos[clave];
+        if (!T2.idx.length) continue;
+        var g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(T2.pos), 3));
+        g.setAttribute('hc', new THREE.BufferAttribute(new Float32Array(T2.hcs), 1));
+        g.setAttribute('via', new THREE.BufferAttribute(new Float32Array(T2.vias), 3));
+        g.setIndex(new THREE.BufferAttribute(new Uint32Array(T2.idx), 1));
+        g.computeBoundingSphere();
+        // La esfera se calcula sobre la cota fina; con el relevo al terreno basto
+        // (uLod) los vértices se mueven unos metros en vertical, así que se le da
+        // holgura para que una tesela no se descarte por un palmo.
+        g.boundingSphere.radius += 40;
+        var m = new THREE.Mesh(g, material);
+        m.renderOrder = 1; m.receiveShadow = true;
+        grupo.add(m); n++;
+      }
+      S.trozosVia = n;
+      return n ? grupo : null;
     }
     /**
-     * Una glorieta: corona circular de asfalto, cara de bordillo y disco de acera.
-     * Va un centímetro y medio por encima de las vías que llegan —como una junta de
-     * asfalto de verdad— y se nivela por la cota máxima de un disco más ancho que
-     * la cruz de nueve puntos de cualquier sección que la toque, así que ninguna
-     * calzada le asoma por debajo.
+     * Una glorieta: corona circular de asfalto, cara de bordillo y disco de acera,
+     * escrita en el trozo que le toca. Va un centímetro y medio por encima de las
+     * vías que llegan —como una junta de asfalto de verdad— y se nivela por la cota
+     * máxima de un disco más ancho que la cruz de nueve puntos de cualquier sección
+     * que la toque, así que ninguna calzada le asoma por debajo.
      */
-    function glorieta(gl, pos, hcs, vias, idx, ALTO) {
+    function glorieta(gl, T, ALTO) {
       var N = 36, hF = 0, hC = 0, ra, aa, rr, an, qx, qz, i, cs, sn;
+      var pos = T.pos, hcs = T.hcs, vias = T.vias, idx = T.idx;
       for (ra = 0; ra <= 4; ra++) {
         for (aa = 0; aa < 12; aa++) {
           rr = (gl.R + VIA_PASO) * ra / 4; an = aa * Math.PI / 6;
@@ -3400,7 +3452,7 @@
         idx.push(a + 2, a + 3, b + 2, a + 3, b + 3, b + 2);   // corona de la isla
         idx.push(a + 3, centro, b + 3);                       // abanico hasta el centro
       }
-      return pos.length / 3;
+      T.cose = false;                              // el anillo no se cose con nada
     }
     function normalizeMeta(meta, img) {
       meta = meta || {};
