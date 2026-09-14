@@ -14,6 +14,13 @@ deducida y las manzanas. Sin cambios de consenso, de red ni de formato.
 - Presupuesto medido: 1.063.212 triángulos con calidad media (908.238 antes de
   la trama), 17 llamadas de dibujo, descarga sin cambios.
 
+## Aviso de seguridad atendido en esta rama
+
+`RUSTSEC-2026-0285` (publicado el 2026-09-14): `rustls` aceptaba mensajes de
+handshake de TLS 1.3 cruzando fronteras de nivel de cifrado. Severidad media
+(5.3). Llega por `ureq`, que es lo que usa el comprobador de actualizaciones
+para hablar con GitHub por HTTPS. Subido de 0.23.43 a 0.23.45 en `Cargo.lock`.
+
 ## Queda por hacer
 
 1. **La mitad real de las calles.** El plan elegido era OSM filtrado más
