@@ -1,3 +1,46 @@
+## Novedades de v0.10.9 — el radio de giro de las esquinas
+
+Cierra la entrega 5 del plan del metaverso (`docs/METAVERSO.md`). **No toca el
+consenso, la red ni el formato de los ficheros.**
+
+La v0.10.7 resolvió los cruces: prioridad, hueco y rebaje de bordillo. Pero la
+calle que cede llegaba a la preferente **en ángulo recto**, y la acera de la
+preferente se cortaba en escuadra sobre la boca. Por un cruce así no gira un
+coche: es una escuadra, no una esquina.
+
+Ahora los **4.505 cruces** tienen radio de giro de verdad, de cuatro a nueve
+metros según el ancho de la calle más estrecha de las dos.
+
+- **El bordillo describe un cuarto de circunferencia** tangente al bordillo de
+  la otra calle. No es un chaflán ni un redondeo aproximado: es el arco exacto
+  que separa las dos calzadas, y **las dos calles usan la misma fórmula**, así
+  que sus bordes recorren el mismo arco y se encuentran en él en vez de
+  cruzarse. Los cuatro rincones de cada cruce quedan iguales.
+- **La medida natural del arco no es la distancia al corte, sino la distancia
+  perpendicular al eje de la otra vía**: el arco vale el radio entero en el
+  borde de su calzada y se muere R metros más afuera. Partir de donde termina la
+  cinta —que fue el primer intento— abría las bocas ocho metros en vez de uno y
+  medio, y dejaba picos donde los dos ensanches se cruzaban.
+- **El arco se parte por ángulo, no por longitud.** Cuatro cortes en el 0, el
+  29, el 60 y el 100 por ciento del recorrido dejan la flecha del arco por
+  debajo de diez centímetros. Repartidos por longitud pasaba del metro y la
+  esquina volvía a leerse como un chaflán, con las mismas filas.
+- **Y los edificios lo saben:** la boca ensanchada también ocupa terreno, así
+  que nadie construye dentro de ella, igual que ya pasaba con las calles y con
+  las glorietas.
+
+**Lo que cuesta, y dónde.** La malla de calzada sube de 524.860 a 964.208
+triángulos. Pero desde la v0.10.8 esa malla va repartida en teselas que se
+descartan solas, así que **a pie el gasto sube un 3,7 %** —de 881.408 a 914.196
+triángulos enviados, en las mismas 18 llamadas de dibujo—, que es justo donde se
+ve la esquina. El peor caso, la ciudad entera de golpe, pasa de 1.360.208 a
+1.799.556 en las mismas 50 llamadas; ahí una esquina mide medio píxel. Ese es
+exactamente el presupuesto que liberó la v0.10.8.
+
+**Lo que sigue faltando:** no hay líneas de detención ni ceda el paso pintados, y
+las palmeras —el 44 % de los triángulos de la escena— siguen en dos mallas
+instanciadas enteras, sin descarte por frustum.
+
 ## Novedades de v0.10.8 — las calles dejan de enviarse enteras
 
 Sigue la entrega 5 del plan del metaverso (`docs/METAVERSO.md`). **No toca el
@@ -386,6 +429,48 @@ altura sin romperse.
   con los binarios de la v0.7.0 y la v0.7.3. Un binario v0.8.0 que abra un
   `chain.jsonl` escrito por la 0.9.0 con transacciones de mercado no lo lee
   (por red nunca las recibe): la salida es volver a la 0.9.0.
+
+## What's new in v0.10.9 — the turning radius of the corners
+
+Closes delivery 5 of the metaverse plan (`docs/METAVERSO.md`). **It does not
+touch consensus, the network or the file formats.**
+
+v0.10.7 resolved the junctions: priority, gap and dropped kerb. But the street
+that gives way met the priority road **at a right angle**, and the priority
+road's pavement was cut square across the mouth. No car turns through a junction
+like that: it is a set square, not a corner.
+
+Now all **4,505 junctions** have a real turning radius, four to nine metres
+depending on the width of the narrower of the two streets.
+
+- **The kerb describes a quarter circle** tangent to the other street's kerb.
+  Not a chamfer, not an approximate rounding: the exact arc that separates the
+  two roadways, and **both streets use the same formula**, so their edges travel
+  the same arc and meet on it instead of crossing. All four corners of every
+  junction come out alike.
+- **The arc's natural measure is not the distance to the cut but the
+  perpendicular distance to the other road's axis**: it is worth the full radius
+  at the edge of that road's carriageway and dies R metres further out. Starting
+  from where the ribbon ends — the first attempt — opened the mouths by eight
+  metres instead of one and a half, and left spikes where the two flares crossed.
+- **The arc is divided by angle, not by length.** Four cuts at 0, 29, 60 and
+  100 per cent of the run keep the arc's sagitta under ten centimetres. Divided
+  by length it was over a metre and the corner read as a chamfer again, with the
+  same number of rows.
+- **And the buildings know:** the widened mouth takes up ground too, so nobody
+  builds inside it, just as was already true of the streets and the roundabouts.
+
+**What it costs, and where.** The roadway mesh goes from 524,860 to 964,208
+triangles. But since v0.10.8 that mesh is split across tiles that cull
+themselves, so **on foot the cost rises by 3.7 %** — from 881,408 to 914,196
+submitted triangles, in the same 18 draw calls — which is exactly where the
+corner is seen. The worst case, the whole city at once, goes from 1,360,208 to
+1,799,556 in the same 50 calls; there a corner is half a pixel wide. That is
+precisely the budget v0.10.8 freed up.
+
+**What is still missing:** there are no stop or give-way lines painted, and the
+palms — 44 % of the scene's triangles — are still two instanced meshes that are
+not culled.
 
 ## What's new in v0.10.8 — the streets stop being sent whole
 

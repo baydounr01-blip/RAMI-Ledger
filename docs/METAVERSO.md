@@ -205,11 +205,16 @@ triángulos frente a 1.367.614) por una llamada de dibujo más. El tamaño sali�
 medir cuatro. El peor caso —toda la ciudad de golpe— paga 33 llamadas de más,
 que es justo cuando la calzada mide un píxel.
 
-**Pendiente de esta entrega:** las esquinas de los cruces no tienen radio de
-giro y no hay líneas de detención ni ceda el paso pintados. Las palmeras, que
-son el 44 % de los triángulos, siguen sin descartarse: es la misma técnica de
-teselas y el siguiente recorte grande. Y queda el experimento que decide el
-presupuesto de todo lo demás:
+**Hecho en la v0.10.9:** el radio de giro de las esquinas. Los 4.505 cruces
+llevan un cuarto de circunferencia de cuatro a nueve metros tangente al bordillo
+de la otra calle, con las dos vías usando la misma fórmula, así que sus bordes se
+encuentran sobre el arco. A pie cuesta un 3,7 % más de escena enviada, que es
+justo el presupuesto que liberó la v0.10.8.
+
+**Pendiente de esta entrega:** no hay líneas de detención ni ceda el paso
+pintados. Las palmeras, que son el 44 % de los triángulos, siguen sin repartirse
+en teselas: es la misma técnica y el siguiente recorte grande. Y queda el
+experimento que decide el presupuesto de todo lo demás:
 **quitar el buffer de profundidad logarítmico**, que hoy obliga a todos los
 sombreadores a escribir profundidad y anula el descarte temprano de píxeles en
 la escena entera. Es el número más grande que nadie ha medido.

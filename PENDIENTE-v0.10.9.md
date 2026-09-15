@@ -1,8 +1,7 @@
-# PENDIENTE v0.10.8 (estado de la rama; borrar al publicar el release)
+# PENDIENTE v0.10.9 (estado de la rama; borrar al publicar el release)
 
-Sigue la entrega 5 del plan del metaverso (`docs/METAVERSO.md`): la calzada deja
-de ir en una sola malla inmune al descarte. Sin cambios de consenso, de red ni
-de formato.
+Cierra la entrega 5 del plan del metaverso (`docs/METAVERSO.md`): el radio de
+giro de las esquinas. Sin cambios de consenso, de red ni de formato.
 
 ## Verificado en esta rama (Linux, Rust estable)
 
@@ -13,49 +12,62 @@ de formato.
   errores de sombreador, y capturas cenital, oblicua y de detalle donde se ve la
   calle menor terminando en el borde de la mayor, el rebaje del bordillo en la
   boca y la glorieta con su isla.
-- Presupuesto medido, con la calzada repartida en 43 teselas de 8 km:
+- Presupuesto medido, con las esquinas redondeadas y la calzada en 43 teselas:
 
-  | Encuadre | Triángulos enviados | Llamadas |
-  |---|---|---|
-  | A pie en un cruce | 881.408 | 18 |
-  | Barrio en oblicuo | 881.408 | 18 |
-  | Glorieta de cerca | 949.966 | 18 |
-  | Sobre una frontera de tesela | 894.806 | 18 |
-  | Ciudad entera, cenital (peor caso) | 1.360.208 | 50 |
+  | Encuadre | v0.10.8 | v0.10.9 | Llamadas |
+  |---|---|---|---|
+  | A pie en un cruce | 881.408 | **914.196** | 18 |
+  | Barrio en oblicuo | 881.408 | **914.196** | 18 |
+  | Glorieta de cerca | 949.966 | 1.052.124 | 18 |
+  | Sobre una frontera de tesela | 894.806 | 950.358 | 18 |
+  | Ciudad entera, cenital (peor caso) | 1.360.208 | 1.799.556 | 50 |
 
-  En la v0.10.7, sin repartir, eran 1.367.614 triángulos y 17 llamadas en
-  cualquier encuadre. El tamaño de tesela salió de medir cuatro (4, 6, 8 y
-  12 km). La malla de calzada —524.860 triángulos en total— no proyecta sombra,
-  solo la recibe: se dibuja una vez por cuadro.
-- Capturas: cenital, oblicua, detalle de cruce, glorieta, ciudad entera y una
-  **justo encima de una frontera de tesela**, donde las calles cruzan sin
-  costura.
+  La malla de calzada entera sube de 524.860 a 964.208 triángulos, pero como va
+  repartida en teselas que se descartan solas, **a pie eso son 33.000 triángulos
+  más: un 3,7 %**. No proyecta sombra, solo la recibe: se dibuja una vez por
+  cuadro.
+- Capturas: cenital y oblicua de un cruce con las cuatro esquinas redondeadas,
+  detalle, glorieta, ciudad entera y una **justo encima de una frontera de
+  tesela**, donde las calles cruzan sin costura.
 
 ## Queda por hacer
 
-1. **Las esquinas de los cruces no tienen radio de giro.** Hoy la calle menor
-   termina en ángulo recto contra la mayor. Falta el cuarto de círculo de acera
-   y bordillo que hace la esquina de verdad.
-2. **No hay líneas de detención ni ceda el paso.** La calle que cede llega al
+1. **No hay líneas de detención ni ceda el paso.** La calle que cede llega al
    cruce con sus marcas de carril y se acaba. Pintarlas pide un cuarto valor en
    el atributo `via` o cuatro vértices sueltos por boca.
-3. **La mitad real de las calles.** El plan elegido era OSM filtrado más
+2. **La mitad real de las calles.** El plan elegido era OSM filtrado más
    deducción. La red de este entorno rechaza Overpass, Nominatim, Geofabrik y
    los teselados de OpenStreetMap, así que la mitad real no se puede traer desde
    aquí. Para desbloquearla basta con dejar un extracto de Dubái en el
    repositorio: sus vías con nombre entran en la misma lista de ejes y mandan
    donde existan, porque el rango ya está escrito para eso.
-4. **El experimento de la profundidad.** Quitar `logarithmicDepthBuffer`. No se
+3. **El experimento de la profundidad.** Quitar `logarithmicDepthBuffer`. No se
    puede medir aquí: hace falta una tarjeta gráfica de verdad.
-5. **Las palmeras no se descartan.** La calzada ya va por teselas, pero las
+4. **Las palmeras no se reparten.** La calzada ya va por teselas, pero las
    palmeras —el 44 % de los triángulos de la escena— siguen en dos mallas
    instanciadas enteras. Repartirlas por teselas es la misma técnica y el
    siguiente recorte grande. Y el ahorro de la calzada está medido en triángulos
    enviados y llamadas de dibujo, **no en milisegundos**: aquí no hay tarjeta
    gráfica con la que cronometrarlo.
-6. **Relieve por texel en bordillo y acera** (hoy solo en el asfalto: GLSL no
+5. **Relieve por texel en bordillo y acera** (hoy solo en el asfalto: GLSL no
    deja elegir un sampler con un ternario). Se resuelve con textura en array.
-7. **Colisión con lo que se mueve.** Coches y avatares se siguen atravesando.
+6. **Colisión con lo que se mueve.** Coches y avatares se siguen atravesando.
+
+## El arco de la esquina, para quien lo toque después
+
+Dos cosas que costaron una vuelta cada una y conviene no volver a descubrir:
+
+1. **El arco se mide desde el eje de la otra calle, no desde donde termina la
+   cinta.** La cinta de la que cede se corta en el borde exterior de la
+   preferente, que ya está bien dentro del arco. Partir de ahí abría las bocas
+   ocho metros en vez de uno y medio.
+2. **Las dos calles tienen que usar la misma fórmula.** Con dos ensanches
+   distintos —uno medido desde el corte y otro desde la caja— los dos bordes se
+   cruzan y dejan un pico en cada rincón. Con la misma, se encuentran sobre el
+   arco.
+
+Y una tercera de reparto: el cuarto de circunferencia se corta **por ángulo**.
+Por longitud, con las mismas filas, la flecha pasa del metro.
 
 ## Un test que se caía bajo carga, y que tumbó un release
 
