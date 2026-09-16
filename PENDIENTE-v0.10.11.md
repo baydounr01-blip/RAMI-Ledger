@@ -1,64 +1,63 @@
-# PENDIENTE v0.10.10 (estado de la rama; borrar al publicar el release)
+# PENDIENTE v0.10.11 (estado de la rama; borrar al publicar el release)
 
-Sigue la entrega 5 del plan del metaverso (`docs/METAVERSO.md`): las palmeras
-dejan de enviarse enteras. Sin cambios de consenso, de red ni de formato.
+Sigue la entrega 5 del plan del metaverso (`docs/METAVERSO.md`): las líneas de
+detención y el ceda el paso. Sin cambios de consenso, de red ni de formato.
 
 ## Verificado en esta rama (Linux, Rust estable)
 
 - `cargo test --workspace --release --locked` en verde.
 - `tools/panel/check.py`, `tools/panel/lexico.py`, `gen_i18n.py` sin faltantes,
   `tools/security/inventory.sh --check`, `tools/compat/roundtrip.sh v0.7.0`.
-- Panel real en Chromium sin pantalla: 916 palmeras en 17 teselas de ocho
-  kilómetros, cero errores de sombreador, y capturas de una palmera de cerca, de
-  una celda de costa con varias, andando entre ellas y de la ciudad entera.
-- Presupuesto medido, con los mismos encuadres que la v0.10.9:
+- Panel real en Chromium sin pantalla: 7.899 marcas —7.876 líneas de detención
+  en los 4.505 cruces y 23 ceda el paso en las siete glorietas—, cero errores de
+  sombreador, y capturas cenital, oblicua y a pie de una línea de detención y de
+  un ceda el paso a la entrada de una glorieta. En la cenital de la glorieta se
+  ve que los trazos caen en la mitad derecha del que entra, que es la prueba del
+  convenio de lados que usan también las de detención.
+- Presupuesto medido, con los mismos encuadres que la v0.10.10:
 
-  | Encuadre | v0.10.9 | v0.10.10 | Llamadas |
+  | Encuadre | v0.10.10 | v0.10.11 | Llamadas |
   |---|---|---|---|
-  | A pie en un cruce | 914.196 | **740.308** (−19 %) | 18 → 17 |
-  | Barrio en oblicuo | 914.196 | **756.740** (−17 %) | 18 |
-  | Glorieta de cerca | 1.052.124 | 904.444 (−14 %) | 18 |
-  | Palmeras de cerca | 1.142.494 | 1.014.574 (−11 %) | 19 → 21 |
-  | Andando por el cruce | 989.866 | 824.714 (−17 %) | 24 → 25 |
-  | Andando entre palmeras | 1.129.404 | 977.980 (−13 %) | 34 → 35 |
-  | Sobre una frontera de tesela | 950.358 | 797.270 (−16 %) | 18 |
-  | Ciudad entera, cenital (peor caso) | 1.799.556 | 1.797.684 | 50 → 65 |
+  | A pie en un cruce | 740.308 | 741.322 (+0,14 %) | 17 |
+  | Ciudad entera, cenital (peor caso) | 1.797.684 | 1.816.716 (+1,1 %) | 65 |
 
-- La barrida de tamaños, medida con el mismo arnés y los mismos encuadres:
+  La malla de calzada pasa de 964.208 a 983.240 triángulos: 15.798 de los 7.899
+  cuadriláteros y 3.234 de las 231 filas que hubo que añadir donde la marca no
+  coincidía con una parada existente.
 
-  | Tesela | Teselas | Triángulos de palmeras a pie en el cruce | Llamadas, ciudad entera |
-  |---|---|---|---|
-  | 2 km | 138 | 12.480 | 186 |
-  | 4 km | 46 | 18.512 | 94 |
-  | 6 km | 26 | 30.160 | 74 |
-  | **8 km** | 17 | 18.512 | **65** |
+## Cómo están hechas, para quien las toque después
 
-  La diferencia en triángulos es de un 2 % de la escena; la de llamadas, de tres
-  veces. Se queda la de ocho, la misma que la calzada.
-
-- Cómo se midió: `renderer.info.render`, que cuenta todas las pasadas del cuadro.
-  Ocultando las palmeras la escena se queda en 721.796 triángulos, que es
-  exactamente 914.196 menos 925 × 208; apagando la pasada de sombra no cambia ni
-  un triángulo en estos encuadres. Las cifras son, por tanto, de la pasada de
-  cámara, y la nota de la v0.10.9 que daba a las palmeras el 44 % contaba una
-  pasada de sombra que no las dibuja: eran el 21 %.
+- **Dónde se pone la línea de detención**: a `max(R, 0,45 + acera de la mayor + 1)`
+  metros del borde de la calzada preferente, medido en perpendicular a su eje. A
+  esa distancia el arco de la esquina ya vale cero, así que la calzada tiene su
+  ancho nominal y la banda va de `u = 0,7` (fuera del eje doble) a `u = c − 0,1`.
+- **El lado**: `u > 0` es la derecha del sentido +s (la normal es `(−tz, tx)`).
+  La boca de `s` menor la alcanza quien va en +s, así que su mitad de llegada es
+  `u > 0`; la de `s` mayor, `u < 0`. La glorieta usa el mismo convenio.
+- **Por qué no son filas de la cinta**: `escribeFila` cose cada fila con los
+  ocho vértices anteriores del trozo; cuatro vértices metidos entre dos filas
+  romperían el cosido. Los cuadriláteros se apuntan durante el recorrido y se
+  escriben al final, con `T.cose = false`, igual que el anillo de la glorieta.
+- **Las 23 de 28 entradas de glorieta**: las cinco que faltan caen dentro del
+  corte de otro cruce o fuera del mapa, y su fila no se emite.
 
 ## Queda por hacer
 
-1. **No hay líneas de detención ni ceda el paso.** La calle que cede llega al
-   cruce con sus marcas de carril y se acaba. Pintarlas pide un cuarto valor en
-   el atributo `via` o cuatro vértices sueltos por boca.
-2. **La mitad real de las calles.** El plan elegido era OSM filtrado más
+1. **La mitad real de las calles.** El plan elegido era OSM filtrado más
    deducción. La red de este entorno rechaza Overpass, Nominatim, Geofabrik y
    los teselados de OpenStreetMap, así que la mitad real no se puede traer desde
    aquí. Para desbloquearla basta con dejar un extracto de Dubái en el
    repositorio: sus vías con nombre entran en la misma lista de ejes y mandan
    donde existan, porque el rango ya está escrito para eso.
-3. **El experimento de la profundidad.** Quitar `logarithmicDepthBuffer`. No se
+2. **El experimento de la profundidad.** Quitar `logarithmicDepthBuffer`. No se
    puede medir aquí: hace falta una tarjeta gráfica de verdad.
-4. **Relieve por texel en bordillo y acera** (hoy solo en el asfalto: GLSL no
+3. **Relieve por texel en bordillo y acera** (hoy solo en el asfalto: GLSL no
    deja elegir un sampler con un ternario). Se resuelve con textura en array.
-5. **Colisión con lo que se mueve.** Coches y avatares se siguen atravesando.
+4. **Colisión con lo que se mueve.** Coches y avatares se siguen atravesando.
+   Es lo siguiente.
+5. **Pasos de peatones.** Las bocas llevan línea de detención pero nadie ha
+   pintado por dónde cruza la gente. Misma técnica que las marcas: cuadriláteros
+   con una clase de pintura a rayas por la coordenada longitudinal.
 6. **La pasada de sombra, en una tarjeta de verdad.** Aquí no dibuja nada, así
    que su coste está sin medir. Cuando dibuje, su caja mide 350 m a pie y hasta
    3,5 km en órbita, y con teselas de ocho kilómetros toca de una a cuatro.

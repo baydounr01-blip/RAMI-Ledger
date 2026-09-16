@@ -1150,8 +1150,10 @@
     '  vec4 tA = texture2D(uAsfalto, vWorld.xz / 6.0);',
     '  vec4 tH = texture2D(uHormigon, vWorld.xz / 3.0);',
     '  vec4 tC = texture2D(uAcera, vWorld.xz / 4.8);',          // 8 losas de 60 cm
-        // Clases: 0 asfalto con marcas, 1 hormigón del bordillo, 2 losa de acera,
-    // 3 asfalto sin marcas —la glorieta, que no lleva eje ni carriles pintados—.
+    // Clases: 0 asfalto con marcas, 1 hormigón del bordillo, 2 losa de acera,
+    // 3 asfalto sin marcas —la glorieta, que no lleva eje ni carriles pintados—,
+    // 4 pintura continua (línea de detención) y 5 pintura discontinua (ceda el
+    // paso), las dos sobre asfalto.
     '  vec4 tex = clase < 0.5 ? tA : (clase < 1.5 ? tH : (clase < 2.5 ? tC : tA));',
     '  float esAsfalto = clamp(step(clase, 0.5) + step(2.5, clase), 0.0, 1.0);',
     '  vec3 base = aLineal(tex.rgb);',
@@ -1172,6 +1174,12 @@
     '    float trazo = step(0.42, fract(sl / 12.0));',   // 5 m pintados, 7 m de hueco
     '    float pintura = clamp(eje + linea * trazo, 0.0, 1.0) * cerca;',
     '    base = mix(base, vec3(0.72, 0.70, 0.64), pintura * 0.92);',
+    '  }',
+    // Las transversales de las bocas: continua la de detención; el ceda el paso,
+    // 60 cm pintados y 30 de hueco a lo ancho.
+    '  if (clase > 3.5) {',
+    '    float raya = clase > 4.5 ? step(0.34, fract(u / 0.9)) : 1.0;',
+    '    base = mix(base, vec3(0.72, 0.70, 0.64), raya * 0.92 * cerca);',
     '  }',
     '  float shadow = getShadowMask();',
     '  vec3 n = normalize(vec3((tA.a - hx) * 9.0 * relieve, 1.0, (tA.a - hz) * 9.0 * relieve));',
@@ -3231,7 +3239,7 @@
       var CAJA = 300, celdas = {}, i, j, cx, cz, key, m, lista;
       for (i = 0; i < lineas.length; i++) {
         lineas[i].arco = acumulaArco(lineas[i].muestras);
-        lineas[i].cajas = []; lineas[i].cortes = []; lineas[i].bocas = [];
+        lineas[i].cajas = []; lineas[i].cortes = []; lineas[i].bocas = []; lineas[i].marcas = [];
         m = lineas[i].muestras;
         for (j = 0; j + 1 < m.length; j++) {
           var ax = Math.min(m[j].x, m[j + 1].x), bx = Math.max(m[j].x, m[j + 1].x);
@@ -3284,6 +3292,11 @@
               if (!rep) glorietas.push({ x: c.x, z: c.z, R: Rg, anillo: anillo });
               A.cortes.push([sa - dA, sa + dA]);
               B.cortes.push([sb - dB, sb + dB]);
+              // Ceda el paso en las cuatro entradas, metro y pico antes del anillo.
+              // Se circula por la derecha: la mitad que llega desde s menor va
+              // en +s y su derecha es u positiva; la otra, al revés.
+              A.marcas.push({ s: sa - dA - 1.2, lado: 1, tipo: 5 }, { s: sa + dA + 1.2, lado: -1, tipo: 5 });
+              B.marcas.push({ s: sb - dB - 1.2, lado: 1, tipo: 5 }, { s: sb + dB + 1.2, lado: -1, tipo: 5 });
               continue;
             }
             var mayor = A, menor = B, sMay = sa, sMen = sb, acMay = acA;
@@ -3308,6 +3321,12 @@
             var rad = radioEsquina(Math.min(mayor.calzada, menor.calzada));
             mayor.bocas.push({ s: sMay, sen: c.sen, co: menor.calzada * 0.5, R: rad });
             menor.bocas.push({ s: sMen, sen: c.sen, co: mayor.calzada * 0.5, R: rad });
+            // La línea de detención de la que cede, en sus dos bocas: donde el arco
+            // ya ha terminado y como poco un metro por detrás de la acera de la
+            // preferente, que es por donde cruza la gente. Solo en la mitad que
+            // llega al cruce, que es la derecha de su sentido de marcha.
+            var dLin = Math.max(rad, 0.45 + mayor.acera + 1.0), sLin = (mayor.calzada * 0.5 + dLin) / c.sen;
+            menor.marcas.push({ s: sMen - sLin, lado: 1, tipo: 4 }, { s: sMen + sLin, lado: -1, tipo: 4 });
           }
         }
       }
@@ -3355,7 +3374,7 @@
       var RAMPA = 1.5;                            // lo que tarda el bordillo en bajar
       var MIRA = 45;                              // con cuánto se mira la tangente
       var PERFIL = 8;                             // puntos del perfil transversal
-      var trozos = {};
+      var trozos = {}, decales = [];
       /** El trozo al que le toca un punto del mundo; se crea al vuelo. */
       function trozoDe(wx, wz) {
         var clave = Math.floor(wx / TESELA_VIA) + ':' + Math.floor(wz / TESELA_VIA);
@@ -3414,6 +3433,7 @@
       var cru = resuelveCruces(lineas);
       S.glorietas = cru.glorietas;
       S.nCruces = cru.n;
+      S.marcas = [];
       // 4) La geometría, tesela a tesela.
       for (r = 0; r < lineas.length; r++) {
         var muestras = lineas[r].muestras, arco = lineas[r].arco;
@@ -3452,6 +3472,9 @@
             paradas.push(bq.s - paso0 - fr, bq.s + paso0 + fr);
           }
         }
+        // Y una parada por cada marca transversal, para que su fila exista.
+        var marcas = lineas[r].marcas;
+        for (i = 0; i < marcas.length; i++) paradas.push(marcas[i].s);
         paradas.sort(function (p, q) { return p - q; });
         var sUlt = -1e9, filaAnt = null;
         for (i = 0; i < paradas.length; i++) {
@@ -3502,13 +3525,43 @@
           escribeFila(T, fila);
           filaAnt = { T: T, fila: fila };
           sUlt = sp;
+          // La marca transversal que caiga en esta fila: un cuadrilátero suelto,
+          // de la línea de eje al bordillo de su mitad, 40 cm a lo largo y centímetro
+          // y medio por encima del asfalto, como la junta de la glorieta. Se escribe
+          // al final, aparte de la cinta: metido entre dos filas rompería el cosido
+          // de ocho vértices.
+          for (k = 0; k < marcas.length; k++) {
+            if (Math.abs(marcas[k].s - sp) > 0.05) continue;
+            var u0 = 0.7 * marcas[k].lado, u1 = (c - 0.1) * marcas[k].lado, ys = hF + 0.235, yc2 = hC + 0.235;
+            if (Math.abs(u1) <= Math.abs(u0)) continue;
+            decales.push({ T: T, tipo: marcas[k].tipo, s: sp, v: [
+              [p0.x + nx * u0 - tx * 0.2, ys, p0.z + nz * u0 - tz * 0.2, yc2, u0],
+              [p0.x + nx * u1 - tx * 0.2, ys, p0.z + nz * u1 - tz * 0.2, yc2, u1],
+              [p0.x + nx * u0 + tx * 0.2, ys, p0.z + nz * u0 + tz * 0.2, yc2, u0],
+              [p0.x + nx * u1 + tx * 0.2, ys, p0.z + nz * u1 + tz * 0.2, yc2, u1]] });
+          }
         }
       }
-      // 5) Las glorietas: anillo de asfalto sin marcas, bordillo e isla central.
+      // 5) Las marcas transversales de las bocas, una vez cerradas todas las cintas.
+      for (r = 0; r < decales.length; r++) {
+        var D = decales[r], TD = D.T, d0 = TD.pos.length / 3;
+        for (k = 0; k < 4; k++) {
+          var dv = D.v[k];
+          TD.pos.push(dv[0], dv[1], dv[2]); TD.hcs.push(dv[3]); TD.vias.push(dv[4], D.s, D.tipo);
+        }
+        // Mismo devanado que las filas: u creciente dentro de la fila, s creciente
+        // entre filas, y la mitad de la izquierda lo invierte para seguir mirando
+        // hacia arriba.
+        if (D.v[1][4] > D.v[0][4]) TD.idx.push(d0, d0 + 1, d0 + 2, d0 + 1, d0 + 3, d0 + 2);
+        else TD.idx.push(d0 + 1, d0, d0 + 3, d0, d0 + 2, d0 + 3);
+        TD.cose = false;
+        S.marcas.push({ x: (D.v[0][0] + D.v[3][0]) * 0.5, z: (D.v[0][2] + D.v[3][2]) * 0.5, tipo: D.tipo });
+      }
+      // 6) Las glorietas: anillo de asfalto sin marcas, bordillo e isla central.
       for (r = 0; r < cru.glorietas.length; r++) {
         glorieta(cru.glorietas[r], trozoDe(cru.glorietas[r].x, cru.glorietas[r].z), ALTO);
       }
-      // 6) Una malla por tesela, cada una con su esfera envolvente.
+      // 7) Una malla por tesela, cada una con su esfera envolvente.
       var grupo = new THREE.Group(), material = makeRoadMaterial(shared, lodUniform, noiseTex, mats), clave, n = 0;
       for (clave in trozos) {
         if (!Object.prototype.hasOwnProperty.call(trozos, clave)) continue;
