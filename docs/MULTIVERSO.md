@@ -127,7 +127,7 @@ Hecho, lo que hace el código de `city3d.js`:
 Juicio: es más realista que la 0.9.0 en cada uno de esos puntos, y sigue
 lejos de un motor comercial (sin oclusión ambiental de pantalla, sin
 reflejos de la propia ciudad, sin texturas fotográficas). Lo siguiente en la
-lista está en `PENDIENTE-v0.10.9.md`.
+lista está en `PENDIENTE-v0.10.10.md`.
 
 ## 5. Cómo se ha comprobado (hecho)
 

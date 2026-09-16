@@ -1,3 +1,60 @@
+## Novedades de v0.10.10 — las palmeras dejan de enviarse enteras
+
+Sigue la entrega 5 del plan del metaverso (`docs/METAVERSO.md`). **No toca el
+consenso, la red ni el formato de los ficheros.**
+
+Las palmeras eran el último bulto de la escena que se enviaba entero: 925
+palmeras en dos mallas instanciadas marcadas «no las descartes nunca», 192.400
+triángulos a la tarjeta cada cuadro estuvieras donde estuvieras, el 21 % de lo
+que se ve a pie en un cruce. Ahora van repartidas en **17 teselas de ocho
+kilómetros** —la misma tesela que la calzada desde la v0.10.8—, cada una con su
+malla instanciada y su esfera envolvente, y la que no entra en el cono de visión
+no se envía:
+
+| Encuadre | v0.10.9 | v0.10.10 | Llamadas |
+|---|---|---|---|
+| A pie en un cruce | 914.196 | **740.308** (−19 %) | 18 → 17 |
+| Barrio en oblicuo | 914.196 | **756.740** (−17 %) | 18 |
+| Glorieta de cerca | 1.052.124 | 904.444 (−14 %) | 18 |
+| Palmeras de cerca | 1.142.494 | 1.014.574 (−11 %) | 19 → 21 |
+| Andando por el cruce | 989.866 | 824.714 (−17 %) | 24 → 25 |
+| Andando entre palmeras | 1.129.404 | 977.980 (−13 %) | 34 → 35 |
+| Sobre una frontera de tesela | 950.358 | 797.270 (−16 %) | 18 |
+| Ciudad entera, cenital (peor caso) | 1.799.556 | 1.797.684 | 50 → 65 |
+
+- **Una sola geometría.** Había dos palmeras distintas —tronco inclinado tres o
+  seis grados— en dos mallas, y la inclinación era de la geometría: el tronco se
+  inclinaba y la copa se quedaba en su sitio, hasta 75 cm separada de él. Ahora
+  la geometría es una, recta, y la inclinación —de uno a siete grados, distinta
+  en cada palmera y hacia un lado distinto— va en la matriz de la instancia,
+  con la escala y el giro. La palmera entera se inclina con su copa, y hay una
+  malla por tesela en vez de dos.
+- **La esfera se le da hecha.** Three r150 no sabe calcular la esfera
+  envolvente de una malla instanciada: la haría sobre la palmera suelta, en el
+  origen, y descartaría la tesela entera en cuanto ese punto saliera de
+  pantalla. Cada tesela lleva una copia de la geometría con su esfera —centro y
+  radio de los pies, más trece metros de palmera—, porque la esfera es de la
+  geometría y no de la malla.
+- **El tamaño salió de medir cuatro.** Con dos kilómetros son 138 teselas y 186
+  llamadas de dibujo en el peor caso; con cuatro, 46 y 94; con seis, 26 y 74;
+  con ocho, 17 y 65. La diferencia en triángulos entre tamaños es de un 2 % de
+  la escena; la de llamadas, de tres veces. Ocho: la misma que la calzada.
+
+**Lo que cuesta.** El peor caso —la ciudad entera de golpe— paga 15 llamadas de
+dibujo más, de 50 a 65, cuando una palmera mide menos de un píxel. Y hay nueve
+palmeras menos, 916 en vez de 925: al sortear una inclinación por palmera cambia
+la secuencia y nueve caen donde no crecen.
+
+**Una cifra corregida.** Las notas de la v0.10.9 decían que las palmeras eran el
+44 % de los triángulos. Ese número daba por hecho que la pasada de sombra las
+dibujaba otra vez; medido apagándola, en los encuadres de la tabla esa pasada no
+dibuja nada. Ocultando las palmeras la escena se queda en 721.796 triángulos,
+que es exactamente 914.196 menos 925 × 208: eran el 21 %.
+
+**Lo que sigue faltando:** no hay líneas de detención ni ceda el paso pintados, y
+sigue sin haber ni una cifra de fluidez medida en una tarjeta gráfica de verdad:
+aquí todo se mide en triángulos enviados y llamadas de dibujo.
+
 ## Novedades de v0.10.9 — el radio de giro de las esquinas
 
 Cierra la entrega 5 del plan del metaverso (`docs/METAVERSO.md`). **No toca el
@@ -429,6 +486,63 @@ altura sin romperse.
   con los binarios de la v0.7.0 y la v0.7.3. Un binario v0.8.0 que abra un
   `chain.jsonl` escrito por la 0.9.0 con transacciones de mercado no lo lee
   (por red nunca las recibe): la salida es volver a la 0.9.0.
+
+## What's new in v0.10.10 — the palms stop being sent whole
+
+Continues delivery 5 of the metaverse plan (`docs/METAVERSO.md`). **It does not
+touch consensus, the network or the file formats.**
+
+The palms were the last lump of the scene still sent whole: 925 palms in two
+instanced meshes marked "never cull", 192,400 triangles to the card every frame
+wherever you stood, 21 % of what is seen on foot at a junction. They now go in
+**17 tiles of eight kilometres** — the same tile as the roadway since v0.10.8 —
+each with its own instanced mesh and bounding sphere, and the one that does not
+enter the view frustum is not sent:
+
+| Framing | v0.10.9 | v0.10.10 | Draw calls |
+|---|---|---|---|
+| On foot at a junction | 914,196 | **740,308** (−19 %) | 18 → 17 |
+| Neighbourhood, oblique | 914,196 | **756,740** (−17 %) | 18 |
+| Roundabout, close | 1,052,124 | 904,444 (−14 %) | 18 |
+| Palms, close | 1,142,494 | 1,014,574 (−11 %) | 19 → 21 |
+| Walking through the junction | 989,866 | 824,714 (−17 %) | 24 → 25 |
+| Walking among palms | 1,129,404 | 977,980 (−13 %) | 34 → 35 |
+| Over a tile border | 950,358 | 797,270 (−16 %) | 18 |
+| Whole city, top-down (worst case) | 1,799,556 | 1,797,684 | 50 → 65 |
+
+- **One geometry.** There were two different palms — trunk leaning three or six
+  degrees — in two meshes, and the lean belonged to the geometry: the trunk
+  leaned and the crown stayed put, up to 75 cm away from it. Now there is one
+  upright geometry, and the lean — one to seven degrees, different for every
+  palm and in a different direction — goes in the instance matrix, with the
+  scale and the yaw. The whole palm leans with its crown, and there is one mesh
+  per tile instead of two.
+- **The sphere is handed over ready-made.** Three r150 cannot compute the
+  bounding sphere of an instanced mesh: it would compute it on the lone palm at
+  the origin, and cull the whole tile the moment that point left the screen.
+  Every tile carries a copy of the geometry with its sphere — centre and radius
+  of the palm feet, plus thirteen metres of palm — because the sphere belongs to
+  the geometry, not to the mesh.
+- **The size came from measuring four.** Two kilometres give 138 tiles and 186
+  draw calls in the worst case; four give 46 and 94; six give 26 and 74; eight
+  give 17 and 65. The difference in triangles between sizes is 2 % of the
+  scene; the difference in draw calls is threefold. Eight: the same as the
+  roadway.
+
+**What it costs.** The worst case — the whole city at once — pays 15 more draw
+calls, 50 to 65, when a palm is under a pixel wide. And there are nine fewer
+palms, 916 instead of 925: drawing a lean per palm shifts the sequence and nine
+land where they do not grow.
+
+**A corrected figure.** The v0.10.9 notes said the palms were 44 % of the
+triangles. That number assumed the shadow pass drew them a second time; measured
+by switching it off, in the framings of the table that pass draws nothing.
+Hiding the palms leaves the scene at 721,796 triangles, which is exactly 914,196
+minus 925 × 208: they were 21 %.
+
+**What is still missing:** there are no stop or give-way lines painted, and there
+is still not one frame-rate figure measured on real graphics hardware: here
+everything is measured in submitted triangles and draw calls.
 
 ## What's new in v0.10.9 — the turning radius of the corners
 
