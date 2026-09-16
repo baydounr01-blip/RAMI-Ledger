@@ -98,7 +98,7 @@ como cualquiera — no hay excepción a la cota de emisión.
 ## Lo más fácil: el monedero de escritorio
 
 **Sin terminal (para cualquier persona).** Descarga el instalador de tu sistema
-en [quantbot.army](https://quantbot.army/#descargas) (o en las
+en  (
 [releases](https://github.com/baydounr01-blip/RAMI-Ledger/releases/latest)):
 
 - **macOS:** abre el `.dmg` y haz doble clic en RAMI-Chain. La app **se instala
