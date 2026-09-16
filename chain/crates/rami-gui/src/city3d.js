@@ -3031,7 +3031,8 @@
       var sem = semillaMorfologia(Math.round(w.x / CELL), Math.round(w.z / CELL), 9);
       var ang = real01(sem) * Math.PI;            // el giro de la retícula
       var R = (c.radius_m || 600) * 0.94;
-      S.tramas.push({ x: w.x, z: w.z, R: R, ang: ang, paso: t.paso, medio: t.calzada * 0.5 + t.acera });
+      S.tramas.push({ x: w.x, z: w.z, R: R, ang: ang, paso: t.paso,
+                      medio: t.calzada * 0.5 + t.acera, radio: radioEsquina(t.calzada) });
       var cs = Math.cos(ang), sn = Math.sin(ang), lineas = [], n = Math.floor(R / t.paso), i, d, semi;
       for (i = -n; i <= n; i++) {
         d = i * t.paso;
@@ -3058,7 +3059,11 @@
         lx = dx * cs - dz * sn; lz = dx * sn + dz * cs;
         d1 = Math.abs(lx - Math.round(lx / t.paso) * t.paso);
         d2 = Math.abs(lz - Math.round(lz / t.paso) * t.paso);
-        if (Math.min(d1, d2) < t.medio + (margen || 0)) return true;
+        var m = t.medio + (margen || 0);
+        if (Math.min(d1, d2) < m) return true;
+        // En el cruce la boca se abre con el radio de giro: ahí tampoco se
+        // construye, o el edificio se comería la esquina.
+        if (d1 < m + t.radio && d2 < m + t.radio) return true;
       }
       for (i = 0; i < S.glorietas.length; i++) {
         t = S.glorietas[i]; dx = wx - t.x; dz = wz - t.z;
@@ -3134,6 +3139,36 @@
     /** Media anchura de una vía contando bordillo y acera. */
     function anchoTotal(v) { return v.calzada * 0.5 + 0.45 + v.acera; }
     /**
+     * El radio de giro de la esquina, en metros. Una calle de barrio de diez
+     * metros lleva cuatro; una troncal, nueve. Es lo que separa una boca por la
+     * que cabe un coche girando de un ángulo recto por el que no cabe nadie.
+     */
+    function radioEsquina(calzada) { return clamp(calzada * 0.45, 4, 9); }
+    /**
+     * El ensanche de la boca a `d` metros del corte: un cuarto de circunferencia
+     * de radio R que vale R justo en la boca y se muere a los R metros. Es la
+     * curva exacta del bordillo de una esquina de verdad, no una aproximación.
+     */
+    function ensancheBoca(d, R) {
+      if (!(d < R)) return 0;
+      var t = R - clamp(d, 0, R);
+      return R - Math.sqrt(Math.max(0, R * R - t * t));
+    }
+    /**
+     * Cuánto se separa del eje el perfil en `s` por culpa de las esquinas. Manda
+     * la boca que más abra. La medida es la distancia PERPENDICULAR al eje de la
+     * otra vía menos su media calzada: en el borde de su calzada vale el radio
+     * entero, y a R metros más afuera ya es cero.
+     */
+    function ensancheEnBocas(bocas, s) {
+      var i, mejor = 0, b;
+      for (i = 0; i < bocas.length; i++) {
+        b = bocas[i];
+        mejor = Math.max(mejor, ensancheBoca(Math.max(0, Math.abs(s - b.s) * b.sen - b.co), b.R));
+      }
+      return mejor;
+    }
+    /**
      * Resuelve todos los cruces y deja en cada vía sus tramos de CAJA (donde manda,
      * y el bordillo se rebaja) y sus tramos de CORTE (donde cede el paso y
      * desaparece), más la lista de glorietas.
@@ -3148,7 +3183,7 @@
       var CAJA = 300, celdas = {}, i, j, cx, cz, key, m, lista;
       for (i = 0; i < lineas.length; i++) {
         lineas[i].arco = acumulaArco(lineas[i].muestras);
-        lineas[i].cajas = []; lineas[i].cortes = [];
+        lineas[i].cajas = []; lineas[i].cortes = []; lineas[i].bocas = [];
         m = lineas[i].muestras;
         for (j = 0; j + 1 < m.length; j++) {
           var ax = Math.min(m[j].x, m[j + 1].x), bx = Math.max(m[j].x, m[j + 1].x);
@@ -3209,8 +3244,22 @@
             }
             // La boca de la menor, medida a lo largo de la mayor, y el ancho de la
             // mayor medido a lo largo de la menor: los dos se estiran con el seno.
+            // La caja cubre la boca ENSANCHADA de la menor, no solo su calzada:
+            // si no, el bordillo curvado de la esquina acabaría montándose sobre
+            // la acera de la preferente en vez de morir contra ella.
+            // La caja es exactamente la calzada de la menor: el bordillo de la
+            // mayor no desaparece en toda la esquina, sino que se abre con ella.
             mayor.cajas.push([sMay - menor.calzada * 0.5 / c.sen, sMay + menor.calzada * 0.5 / c.sen]);
             menor.cortes.push([sMen - acMay / c.sen, sMen + acMay / c.sen]);
+            // La esquina, apuntada en LAS DOS vías. El arco es tangente al
+            // bordillo de la otra, así que su medida natural es la distancia
+            // PERPENDICULAR al eje ajeno menos la media calzada de esa otra:
+            // vale el radio entero ahí y se muere R metros más afuera. Las dos
+            // calles usan la misma fórmula, así que sus bordes recorren el mismo
+            // arco y se encuentran en él en vez de cruzarse.
+            var rad = radioEsquina(Math.min(mayor.calzada, menor.calzada));
+            mayor.bocas.push({ s: sMay, sen: c.sen, co: menor.calzada * 0.5, R: rad });
+            menor.bocas.push({ s: sMen, sen: c.sen, co: mayor.calzada * 0.5, R: rad });
           }
         }
       }
@@ -3341,6 +3390,20 @@
         // muestra anterior, que puede estar cien metros atrás. Eso dejaba la calle
         // menor flotando a media manzana de la mayor.
         for (i = 0; i < cortes.length; i++) paradas.push(cortes[i][0] - 0.08, cortes[i][1] + 0.08);
+        // Y las paradas del ARCO DE LA ESQUINA (v0.10.9). El cuarto de
+        // circunferencia se parte por ÁNGULO, no por longitud: donde la curva se
+        // cierra hacen falta filas y donde va casi recta, no. Con los cortes en
+        // 0, 29 %, 60 % y 100 % del recorrido la flecha del arco no llega a diez
+        // centímetros; repartidos por longitud pasaba del metro y la esquina se
+        // leía como un chaflán.
+        var bocas = lineas[r].bocas;
+        for (i = 0; i < bocas.length; i++) {
+          var bq = bocas[i], paso0 = bq.co / bq.sen, pasoR = bq.R / bq.sen;
+          for (k = 0; k < 4; k++) {
+            var fr = [0, 0.293, 0.6, 1][k] * pasoR;
+            paradas.push(bq.s - paso0 - fr, bq.s + paso0 + fr);
+          }
+        }
         paradas.sort(function (p, q) { return p - q; });
         var sUlt = -1e9, filaAnt = null;
         for (i = 0; i < paradas.length; i++) {
@@ -3365,16 +3428,20 @@
           // cuerda se hundiría bajo cualquier bulto intermedio y el terreno
           // mordería la calzada a trozos. Se nivela por la cota máxima de una
           // cruz de nueve puntos: es lo que hace un desmonte.
-          var hF = 0, hC = 0, dt, du2, qx, qz;
+          var hF = 0, hC = 0, dt, du2, qx, qz, anchoAqui = ac + 9;
           for (dt = -0.5; dt <= 0.51; dt += 0.5) for (du2 = -1; du2 <= 1; du2++) {
-            qx = p0.x + tx * VIA_PASO * dt + nx * ac * du2;
-            qz = p0.z + tz * VIA_PASO * dt + nz * ac * du2;
+            qx = p0.x + tx * VIA_PASO * dt + nx * anchoAqui * du2;
+            qz = p0.z + tz * VIA_PASO * dt + nz * anchoAqui * du2;
             hF = Math.max(hF, surfaceH(qx, qz)); hC = Math.max(hC, coarseH(qx, qz));
           }
           var perfil = enTramo(cajas, sp) ? perfilL : perfilN;
+          // El bordillo se abre en cuarto de circunferencia al llegar a la boca:
+          // todo el perfil se separa del eje lo mismo, así que la acera y la
+          // calzada conservan su ancho y lo que se curva es la esquina.
+          var abre = ensancheEnBocas(bocas, sp);
           var fila = [];
           for (k = 0; k < PERFIL; k++) {
-            var u = perfil[k][0], dy = perfil[k][1], cla = perfil[k][2];
+            var u = perfil[k][0] + (perfil[k][0] < 0 ? -abre : abre), dy = perfil[k][1], cla = perfil[k][2];
             fila.push([p0.x + nx * u, hF + 0.22 + dy, p0.z + nz * u, hC + 0.22 + dy, u, sp, cla]);
           }
           var T = trozoDe(p0.x, p0.z);
