@@ -966,7 +966,7 @@
       case 'sphere': g = new THREE.SphereGeometry(0.5, 20, 12); break;
       // Esfera de lejos: 80 triángulos en vez de 440. Para bultos que nunca se
       // miran de cerca (racimos de dátiles, cabinas de noria). Un racimo a 20
-      // metros de altura no distingue 440 caras de 80, pero 925 palmeras sí
+      // metros de altura no distingue 440 caras de 80, pero 916 palmeras sí
       // distinguen medio millón de triángulos de ciento noventa mil.
       case 'ball': g = new THREE.IcosahedronGeometry(0.5, 1); break;
       case 'hemi': g = new THREE.SphereGeometry(0.5, 24, 10, 0, Math.PI * 2, 0, Math.PI / 2); break;
@@ -1620,11 +1620,17 @@
     else pushParts(out, [{ g: 'cyl', a: 8, sx: 0.14, sy: 0.72, sz: 0.14, y: -0.72, c: [0.2, 0.22, 0.3] }, { sx: 0.16, sy: 0.08, sz: 0.28, y: -0.76, z: -0.04, c: [0.1, 0.1, 0.1] }]);
     return accGeometry(out);
   }
-  /** Palmera datilera (metros): tronco ligeramente inclinado y ocho hojas caídas; color por instancia para el verde. */
-  function palmGeometry(seed) {
-    var out = newAcc(), parts = [{ g: 'tcyl', a: 8, sx: 0.36, sy: 7.5, sz: 0.36, rz: 0.05 + 0.05 * seed, c: [0.36, 0.28, 0.2] }], k;
+  /**
+   * Palmera datilera (metros): tronco recto y ocho hojas caídas; color por
+   * instancia para el verde. Una sola geometría: la escala, el giro y la
+   * inclinación —que antes era de la geometría y separaba las palmeras en dos
+   * mallas— van en la matriz de cada instancia, así que la palmera entera se
+   * inclina con su copa, y cada una lo hace distinto.
+   */
+  function palmGeometry() {
+    var out = newAcc(), parts = [{ g: 'tcyl', a: 8, sx: 0.36, sy: 7.5, sz: 0.36, c: [0.36, 0.28, 0.2] }], k;
     for (k = 0; k < 8; k++) {
-      var a = k * Math.PI / 4 + seed * 0.7;
+      var a = k * Math.PI / 4;
       parts.push({ g: 'slab', sx: 0.5, sy: 0.08, sz: 3.2, x: Math.sin(a) * 1.4, y: 7.6, z: Math.cos(a) * 1.4, ry: a, rx: 0.62, c: [1, 1, 1] });
     }
     parts.push({ g: 'ball', sx: 0.5, sy: 0.4, sz: 0.5, y: 7.5, c: [0.55, 0.42, 0.18] });
@@ -1963,7 +1969,7 @@
       C[name] = inst(geometry, material, cap, name, shadow);
       return C[name];
     }
-    var ARCH_GEO = {};
+    var ARCH_GEO = {}, PALMA_GEO = null;
     var ghostTime = { value: 0 }, ghostMat = makeGhostMaterial(ghostTime);
     function buildCityMeshes() {
       var k;
@@ -1985,7 +1991,7 @@
       var st;
       for (st = 0; st < 4; st++) { C['avBody' + st] = inst(avatarBodyGeometry(st), plainMat, 16, 'avBody' + st, true); C['avArm' + st] = inst(avatarLimbGeometry('arm', st), plainMat, 32, 'avArm' + st, true); }
       C.avLeg = inst(avatarLimbGeometry('leg', 0), plainMat, 32, 'avLeg', true);
-      C.palms0 = inst(palmGeometry(0), plainMat, 64, 'palms0', true); C.palms1 = inst(palmGeometry(1), plainMat, 64, 'palms1', true);
+      PALMA_GEO = palmGeometry();
       var gk;
       for (gk = 0; gk < ARCH_KEYS.length; gk++) C['ghost_' + ARCH_KEYS[gk]] = inst(ARCH_GEO[ARCH_KEYS[gk]], ghostMat, 8, 'ghost_' + ARCH_KEYS[gk]);
       C.ghostLabels = new LabelSet(viewportUniform, false); scene.add(C.ghostLabels.mesh);
@@ -2314,14 +2320,36 @@
     function applyClusterFraction(f) { for (var k in CLUSTER_GEO) { var m = CLUSTER_GEO[k]; m.count = Math.round(m.userData.total * f); } }
 
     // --- Tráfico ambiente por las vías -------------------------------------------
+    // --- Las palmeras dejan de enviarse enteras (v0.10.10) -------------------------
+    // Las palmeras iban en dos mallas instanciadas marcadas «no las descartes
+    // nunca»: 192.400 triángulos a la tarjeta cada cuadro, estuvieras donde
+    // estuvieras, el 21 % de lo que se ve a pie. Ahora van por teselas, como la
+    // calzada: cada tesela es una malla instanciada con su esfera envolvente, y la
+    // que no entra en el cono de visión no se envía. En la pasada de sombra pasa lo
+    // mismo con la caja del sol, que mide 700 m de lado a pie y hasta 7 km en
+    // órbita lejana (updateShadowFrame).
+    //
+    // Three r150 no sabe calcular la esfera de una malla instanciada: la haría
+    // sobre la palmera suelta, en el origen, y descartaría la tesela entera en
+    // cuanto ese punto saliera de pantalla. Así que se le da hecha —centro y radio
+    // de los pies de la tesela, más lo que sobresale la palmera más alta— sobre una
+    // copia de la geometría, porque la esfera es de la geometría y no de la malla.
+    var TESELA_PALMA = 8000;
+    var PALMA_ALCANCE = 13;                     // hasta dónde llega una palmera desde su pie: 8,5 m de alto por 1,3 de escala, y la inclinación
     /**
      * Palmeras: en las celdas de costa (tierra con mar al lado) y, con menos
      * densidad, por la ciudad baja. Fijas: no dependen de la cadena.
      */
     function buildPalms() {
-      var lists = [[], []], rnd = lcg(77), x, y, k, cap = Q.palms || 0;
-      if (!cap) { finish(C.palms0, 0); finish(C.palms1, 0); return; }
-      for (y = 0; y < N && lists[0].length + lists[1].length < cap; y++) for (x = 0; x < N; x++) {
+      var rnd = lcg(77), x, y, k, i, cap = Q.palms || 0, teselas = {}, total = 0, clave;
+      if (S.palmeras) {
+        gridGroup.remove(S.palmeras);
+        for (i = 0; i < S.palmeras.children.length; i++) { S.palmeras.children[i].geometry.dispose(); S.palmeras.children[i].dispose(); }
+      }
+      S.palmeras = new THREE.Group(); S.palmeras.name = 'palmeras'; S.trozosPalma = 0; S.nPalmeras = 0;
+      gridGroup.add(S.palmeras);
+      if (!cap) return;
+      for (y = 0; y < N && total < cap; y++) for (x = 0; x < N; x++) {
         var ci = y * N + x; if (S.cellSea[ci]) continue;
         var coast = (x > 0 && S.cellSea[ci - 1]) || (x < N - 1 && S.cellSea[ci + 1]) || (y > 0 && S.cellSea[ci - N]) || (y < N - 1 && S.cellSea[ci + N]);
         var n = coast ? 7 : (S.cellH[ci] < 25 && rnd() < 0.35 ? 2 : 0);
@@ -2329,14 +2357,34 @@
           var l = { x: (x + 0.08 + rnd() * 0.84) * CELL, z: (y + 0.08 + rnd() * 0.84) * CELL };
           var w = localToWorld(l.x, l.z), h = surfaceH(w.x, w.z);
           if (h < 0.4 || h > 60) continue;
-          lists[k % 2].push({ x: w.x, y: h + 0.1, z: w.z, s: 0.8 + rnd() * 0.5, yaw: rnd() * Math.PI * 2, g: 0.28 + rnd() * 0.16 });
+          clave = Math.floor(w.x / TESELA_PALMA) + ':' + Math.floor(w.z / TESELA_PALMA);
+          (teselas[clave] || (teselas[clave] = [])).push({ x: w.x, y: h + 0.1, z: w.z, s: 0.8 + rnd() * 0.5, yaw: rnd() * Math.PI * 2, g: 0.28 + rnd() * 0.16, lean: 0.02 + rnd() * 0.1 });
+          total++;
         }
       }
-      var i, j;
-      for (j = 0; j < 2; j++) {
-        var m = ensureCap('palms' + j, C['palms' + j].geometry, C['palms' + j].material, Math.max(lists[j].length, 1), true);
-        for (i = 0; i < lists[j].length; i++) { var p = lists[j][i]; tmpColor.setRGB(0.12 + p.g * 0.3, p.g + 0.12, 0.08 + p.g * 0.25); place(m, i, p.x, p.y, p.z, p.s, p.s, p.s, tmpColor, p.yaw); }
-        finish(m, lists[j].length);
+      for (clave in teselas) {
+        if (!Object.prototype.hasOwnProperty.call(teselas, clave)) continue;
+        var lista = teselas[clave], m = new THREE.InstancedMesh(PALMA_GEO.clone(), plainMat, lista.length);
+        var lo = new THREE.Vector3(Infinity, Infinity, Infinity), hi = new THREE.Vector3(-Infinity, -Infinity, -Infinity), c = new THREE.Vector3(), r = 0;
+        for (i = 0; i < lista.length; i++) {
+          var p = lista[i];
+          // Orden XYZ explícito (el `dummy` es compartido y los avatares lo dejan
+          // en YXZ): primero la inclinación sobre Z y luego el giro, así que cada
+          // palmera se inclina hacia un lado distinto.
+          dummy.position.set(p.x, p.y, p.z); dummy.rotation.set(0, p.yaw, p.lean, 'XYZ'); dummy.scale.set(p.s, p.s, p.s);
+          dummy.updateMatrix(); m.setMatrixAt(i, dummy.matrix);
+          m.setColorAt(i, tmpColor.setRGB(0.12 + p.g * 0.3, p.g + 0.12, 0.08 + p.g * 0.25));
+          lo.min(dummy.position); hi.max(dummy.position);
+        }
+        c.addVectors(lo, hi).multiplyScalar(0.5);
+        for (i = 0; i < lista.length; i++) r = Math.max(r, c.distanceTo(dummy.position.set(lista[i].x, lista[i].y, lista[i].z)));
+        m.geometry.boundingSphere = new THREE.Sphere(c, r + PALMA_ALCANCE);
+        m.frustumCulled = true;
+        // receiveShadow por lo mismo que en inst(): sin él three no compila
+        // USE_SHADOWMAP para el objeto y las hojas no se sombrean entre sí.
+        m.castShadow = true; m.receiveShadow = true; m.name = 'palmeras ' + clave;
+        m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true;
+        S.palmeras.add(m); S.trozosPalma++; S.nPalmeras += lista.length;
       }
     }
     function buildTrafficPaths(meta) {

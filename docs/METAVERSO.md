@@ -211,10 +211,16 @@ de la otra calle, con las dos vías usando la misma fórmula, así que sus borde
 encuentran sobre el arco. A pie cuesta un 3,7 % más de escena enviada, que es
 justo el presupuesto que liberó la v0.10.8.
 
+**Hecho en la v0.10.10:** las palmeras dejan de enviarse enteras. Las 916
+palmeras van en 17 teselas de ocho kilómetros —la misma tesela que la calzada—,
+cada una con su malla instanciada y su esfera envolvente dada a mano, porque
+three r150 no sabe calcularla. A pie se envía un 19 % menos de escena (740.308
+triángulos frente a 914.196) por una llamada de dibujo menos; el peor caso paga
+15 llamadas más. Las palmeras eran el 21 % de la escena, no el 44 % que decía la
+nota anterior: ese número contaba una pasada de sombra que no las dibuja.
+
 **Pendiente de esta entrega:** no hay líneas de detención ni ceda el paso
-pintados. Las palmeras, que son el 44 % de los triángulos, siguen sin repartirse
-en teselas: es la misma técnica y el siguiente recorte grande. Y queda el
-experimento que decide el presupuesto de todo lo demás:
+pintados. Y queda el experimento que decide el presupuesto de todo lo demás:
 **quitar el buffer de profundidad logarítmico**, que hoy obliga a todos los
 sombreadores a escribir profundidad y anula el descarte temprano de píxeles en
 la escena entera. Es el número más grande que nadie ha medido.

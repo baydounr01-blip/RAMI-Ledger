@@ -1,34 +1,47 @@
-# PENDIENTE v0.10.9 (estado de la rama; borrar al publicar el release)
+# PENDIENTE v0.10.10 (estado de la rama; borrar al publicar el release)
 
-Cierra la entrega 5 del plan del metaverso (`docs/METAVERSO.md`): el radio de
-giro de las esquinas. Sin cambios de consenso, de red ni de formato.
+Sigue la entrega 5 del plan del metaverso (`docs/METAVERSO.md`): las palmeras
+dejan de enviarse enteras. Sin cambios de consenso, de red ni de formato.
 
 ## Verificado en esta rama (Linux, Rust estable)
 
 - `cargo test --workspace --release --locked` en verde.
 - `tools/panel/check.py`, `tools/panel/lexico.py`, `gen_i18n.py` sin faltantes,
   `tools/security/inventory.sh --check`, `tools/compat/roundtrip.sh v0.7.0`.
-- Panel real en Chromium sin pantalla: 4.505 cruces resueltos, 7 glorietas, cero
-  errores de sombreador, y capturas cenital, oblicua y de detalle donde se ve la
-  calle menor terminando en el borde de la mayor, el rebaje del bordillo en la
-  boca y la glorieta con su isla.
-- Presupuesto medido, con las esquinas redondeadas y la calzada en 43 teselas:
+- Panel real en Chromium sin pantalla: 916 palmeras en 17 teselas de ocho
+  kilómetros, cero errores de sombreador, y capturas de una palmera de cerca, de
+  una celda de costa con varias, andando entre ellas y de la ciudad entera.
+- Presupuesto medido, con los mismos encuadres que la v0.10.9:
 
-  | Encuadre | v0.10.8 | v0.10.9 | Llamadas |
+  | Encuadre | v0.10.9 | v0.10.10 | Llamadas |
   |---|---|---|---|
-  | A pie en un cruce | 881.408 | **914.196** | 18 |
-  | Barrio en oblicuo | 881.408 | **914.196** | 18 |
-  | Glorieta de cerca | 949.966 | 1.052.124 | 18 |
-  | Sobre una frontera de tesela | 894.806 | 950.358 | 18 |
-  | Ciudad entera, cenital (peor caso) | 1.360.208 | 1.799.556 | 50 |
+  | A pie en un cruce | 914.196 | **740.308** (−19 %) | 18 → 17 |
+  | Barrio en oblicuo | 914.196 | **756.740** (−17 %) | 18 |
+  | Glorieta de cerca | 1.052.124 | 904.444 (−14 %) | 18 |
+  | Palmeras de cerca | 1.142.494 | 1.014.574 (−11 %) | 19 → 21 |
+  | Andando por el cruce | 989.866 | 824.714 (−17 %) | 24 → 25 |
+  | Andando entre palmeras | 1.129.404 | 977.980 (−13 %) | 34 → 35 |
+  | Sobre una frontera de tesela | 950.358 | 797.270 (−16 %) | 18 |
+  | Ciudad entera, cenital (peor caso) | 1.799.556 | 1.797.684 | 50 → 65 |
 
-  La malla de calzada entera sube de 524.860 a 964.208 triángulos, pero como va
-  repartida en teselas que se descartan solas, **a pie eso son 33.000 triángulos
-  más: un 3,7 %**. No proyecta sombra, solo la recibe: se dibuja una vez por
-  cuadro.
-- Capturas: cenital y oblicua de un cruce con las cuatro esquinas redondeadas,
-  detalle, glorieta, ciudad entera y una **justo encima de una frontera de
-  tesela**, donde las calles cruzan sin costura.
+- La barrida de tamaños, medida con el mismo arnés y los mismos encuadres:
+
+  | Tesela | Teselas | Triángulos de palmeras a pie en el cruce | Llamadas, ciudad entera |
+  |---|---|---|---|
+  | 2 km | 138 | 12.480 | 186 |
+  | 4 km | 46 | 18.512 | 94 |
+  | 6 km | 26 | 30.160 | 74 |
+  | **8 km** | 17 | 18.512 | **65** |
+
+  La diferencia en triángulos es de un 2 % de la escena; la de llamadas, de tres
+  veces. Se queda la de ocho, la misma que la calzada.
+
+- Cómo se midió: `renderer.info.render`, que cuenta todas las pasadas del cuadro.
+  Ocultando las palmeras la escena se queda en 721.796 triángulos, que es
+  exactamente 914.196 menos 925 × 208; apagando la pasada de sombra no cambia ni
+  un triángulo en estos encuadres. Las cifras son, por tanto, de la pasada de
+  cámara, y la nota de la v0.10.9 que daba a las palmeras el 44 % contaba una
+  pasada de sombra que no las dibuja: eran el 21 %.
 
 ## Queda por hacer
 
@@ -43,15 +56,12 @@ giro de las esquinas. Sin cambios de consenso, de red ni de formato.
    donde existan, porque el rango ya está escrito para eso.
 3. **El experimento de la profundidad.** Quitar `logarithmicDepthBuffer`. No se
    puede medir aquí: hace falta una tarjeta gráfica de verdad.
-4. **Las palmeras no se reparten.** La calzada ya va por teselas, pero las
-   palmeras —el 44 % de los triángulos de la escena— siguen en dos mallas
-   instanciadas enteras. Repartirlas por teselas es la misma técnica y el
-   siguiente recorte grande. Y el ahorro de la calzada está medido en triángulos
-   enviados y llamadas de dibujo, **no en milisegundos**: aquí no hay tarjeta
-   gráfica con la que cronometrarlo.
-5. **Relieve por texel en bordillo y acera** (hoy solo en el asfalto: GLSL no
+4. **Relieve por texel en bordillo y acera** (hoy solo en el asfalto: GLSL no
    deja elegir un sampler con un ternario). Se resuelve con textura en array.
-6. **Colisión con lo que se mueve.** Coches y avatares se siguen atravesando.
+5. **Colisión con lo que se mueve.** Coches y avatares se siguen atravesando.
+6. **La pasada de sombra, en una tarjeta de verdad.** Aquí no dibuja nada, así
+   que su coste está sin medir. Cuando dibuje, su caja mide 350 m a pie y hasta
+   3,5 km en órbita, y con teselas de ocho kilómetros toca de una a cuatro.
 
 ## El arco de la esquina, para quien lo toque después
 
@@ -83,7 +93,7 @@ instante en que recibía el evento, y con la máquina cargada caía dentro de es
 ventana. La tabla de pares siempre fue correcta; lo que no es instantáneo es el
 número.
 
-Arreglado en esta rama con un ayudante de test, `espera_pares`, que espera a que
+Arreglado en la v0.10.8 con un ayudante de test, `espera_pares`, que espera a que
 el contador llegue al valor esperado (hasta dos segundos) en vez de leerlo una
 vez. Se aplica a los seis asserts que van justo detrás de un evento. Los que
 comprueban que **nada** se registró se quedan como estaban: ahí no hay evento al
