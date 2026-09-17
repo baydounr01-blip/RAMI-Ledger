@@ -624,12 +624,14 @@
               <option value="18">Atardecer</option>
               <option value="22">Noche</option>
             </select>
+            <button class="btn small ghost" id="cyBench" title="Mide la fluidez en este equipo: cuatro vistas fijas, unos veinte segundos">⏱ Fluidez</button>
             <button class="btn small" id="cyVR" style="display:none">🥽 Gafas VR</button>
             <span class="muted" id="cyLoad" style="font-size:12px"></span>
           </div>
           <div id="city3d"><div id="cyHint"><span>🖱️ Arrastra para girar y gira la rueda para acercarte. Haz clic en una parcela para abrir su ficha, «🚶 A pie» para caminar por la ciudad con WASD y «🥽 Gafas VR» para entrar con gafas.</span><button class="btn small" id="cyHintOk" style="margin-left:auto">Entendido</button></div></div>
           <canvas id="cityCanvas" width="960" height="560" class="hidden"></canvas>
           <div class="legend" id="cityLegend"></div>
+          <div class="note mono" id="cyBenchOut" style="display:none;margin-top:6px;font-size:12px"></div>
           <div class="legend">
             <span style="--c:#1d2a3a">Libre</span>
             <span style="--c:#7ef0c0">Tuya (borde claro)</span>
@@ -2057,6 +2059,24 @@
     if(c3d.handle) c3d.handle.setQuality(q);
   });
   document.getElementById("cyHour").addEventListener("change", function(){ var v = this.value; if(c3d.handle) c3d.handle.setTimeOfDay(v === "" ? null : Number(v)); });
+  // La medida de fluidez (v0.10.13): cuatro vistas fijas en el bucle normal de
+  // dibujo, y el resultado en una línea que se puede copiar tal cual. Es la
+  // única cifra de cuadros por segundo del proyecto medida en una tarjeta
+  // gráfica de verdad: la de quien pulsa el botón.
+  document.getElementById("cyBench").addEventListener("click", function(){
+    var btn = this, out = document.getElementById("cyBenchOut");
+    if(c3d.mode!=="3d") setCityMode("3d");
+    btn.disabled = true; out.style.display = ""; out.textContent = t("Midiendo la fluidez: cuatro vistas fijas, unos veinte segundos…");
+    ensureCity3D().then(function(h){ return h.ready.then(function(){ return h.bench(); }); }).then(function(r){
+      var nombres = { ciudad: t("ciudad entera"), centro: t("vista del centro"), cerca: t("un hito de cerca"), a_pie: t("a pie en un cruce") };
+      var partes = r.vistas.map(function(v){
+        return (nombres[v.vista] || v.vista) + ": " + v.fps + " fps (" + t("mín") + " " + v.fpsMin + ") · " + fmtNum(v.triangulos) + " " + t("triángulos") + " · " + v.llamadas + " " + t("llamadas");
+      });
+      out.textContent = "🖥 " + r.gpu + " · " + t("calidad") + " " + r.calidad + " · " + r.ancho + "×" + r.alto + " · " + partes.join(" · ");
+    }).catch(function(e){
+      out.textContent = t("No se pudo medir") + ": " + ((e && e.message) || e);
+    }).then(function(){ btn.disabled = false; });
+  });
   document.getElementById("cyVR").addEventListener("click", function(){
     var st = document.getElementById("cityStatus");
     ensureCity3D().then(function(h){ return h.enterVR(); }).then(function(){ st.textContent = ""; })

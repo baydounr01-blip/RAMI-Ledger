@@ -210,6 +210,55 @@ Además de las heredadas (`name`, `attribution`, `zoom`, `downsample`, `width`,
   tabla anterior). Sólo documentación: el relieve ya está en el PNG.
 * `roads`: los 12 tramos de Natural Earth seguidos de las 9 polilíneas a mano.
 
+## La mitad real de las calles: un extracto de OpenStreetMap (opcional, v0.10.13)
+
+El cliente 3D deduce una retícula por barrio y la mezcla con las vías del
+dataset. La **mitad real** de las calles queda **enchufable**: si `dubai.json`
+trae una clave `vias`, cada entrada `{nombre, clase, pts}` entra en la misma
+lista de ejes que las carreteras, con el ancho de su clase (`troncal` 42 m de
+calzada, `arteria` 26, `secundaria` 15, `barrio` 10) y por delante de las
+calles deducidas en cada cruce. **El repositorio no trae ninguna**: la red del
+entorno donde se construye el proyecto no alcanza OpenStreetMap, y sobre todo
+los datos de OSM van bajo la ODbL (ver más abajo).
+
+`tools/geo/osm_roads.py` convierte un extracto que aporte quien lo ejecute:
+
+```sh
+python3 tools/geo/osm_roads.py --selftest                 # prueba con un extracto sintético
+python3 tools/geo/osm_roads.py dubai_osm.json -o vias.json
+python3 tools/geo/osm_roads.py dubai_osm.json --merge chain/crates/rami-gui/src/geo/dubai.json
+```
+
+Lee JSON de Overpass (`out geom`, o `out body` con los nodos) y GeoJSON
+(LineString / MultiLineString con `highway` y `name`). Clasifica por `highway`
+(`motorway`/`trunk` → troncal, `primary` → arteria, `secondary`/`tertiary` →
+secundaria; `residential`/`unclassified`/`living_street` → barrio sólo con
+`--barrio`), recorta a la bbox, **encadena** los `way` consecutivos de la misma
+clase por los extremos donde no confluye ningún otro (OSM parte cada avenida en
+decenas de tramos; el tráfico ambiente sólo circula por vías de más de 2 km),
+simplifica con Douglas-Peucker a 5 m y descarta lo que mida menos de 200 m.
+Con `--merge` escribe la clave `vias` en el JSON y añade la atribución de OSM a
+`attribution`, que el panel muestra.
+
+La consulta de Overpass para Dubái (la bbox es la del dataset; en
+overpass-turbo, «Exportar → datos crudos» da el JSON que espera el script):
+
+```
+[out:json][timeout:180];
+(
+  way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link)$"]
+     (24.78,54.90,25.40,55.60);
+);
+out geom;
+```
+
+**Licencia.** Los datos de OpenStreetMap son © OpenStreetMap contributors bajo
+la **ODbL 1.0**: exigen atribución y, sobre una base de datos derivada que se
+distribuya, *share-alike*. Un `dubai.json` con `vias` de OSM es una base de
+datos derivada; quien lo redistribuya (por ejemplo, empaquetado en un binario)
+asume esas condiciones. Por eso el proyecto publica la herramienta y no los
+datos, y la nota de «Qué NO se usa» sigue en vigor para lo que se distribuye.
+
 ## Qué NO se usa
 
 **No se usa Google Maps ni Google Earth** (ni sus teselas de terreno, ni
@@ -218,10 +267,12 @@ Sus condiciones de servicio prohíben expresamente la extracción, el
 almacenamiento y la redistribución de sus datos ("scraping", copias en caché
 fuera de lo permitido, uso sin mostrar el mapa de Google, etc.), lo que es
 incompatible con un monedero de código abierto que empaqueta el terreno dentro
-del binario. Tampoco se usan datos de OpenStreetMap en esta versión (ni para
-las islas ni para el callejero) para no arrastrar la obligación ODbL de
-*share-alike* sobre la base de datos derivada; por eso las islas, los canales y
-las grandes vías están dibujados a mano.
+del binario. Tampoco se distribuyen datos de OpenStreetMap (ni para las islas
+ni para el callejero) para no arrastrar la obligación ODbL de *share-alike*
+sobre la base de datos derivada; por eso las islas, los canales y las grandes
+vías están dibujados a mano. Desde la v0.10.13 existe una herramienta para que
+cada cual añada las calles de OSM a su propia copia del dataset (sección
+anterior); el repositorio sigue sin traer ninguna.
 
 ## Cómo regenerar
 

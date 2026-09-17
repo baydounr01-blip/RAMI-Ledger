@@ -14,7 +14,8 @@
  *   setMode('orbit'|'walk') / mode() / setQuality('baja'|'media'|'alta'|'ultra') /
  *   setTimeOfDay(horas|null) / setPresence(lista) / myPose() /
  *   resize() / setVisible(bool) / dispose() / xrSupported() / enterVR() /
- *   stats() / latLonToCell(lat,lon) / cellLatLon(x,y) / cellWorld(x,y) /
+ *   stats() / bench(opts) [mide la fluidez en cuatro vistas fijas] / gpu() /
+ *   latLonToCell(lat,lon) / cellLatLon(x,y) / cellWorld(x,y) /
  *   cellInfo(x,y) / project(x,y) / heightAt(lat,lon) / ready (Promise)
  *
  * Arquitectura (de abajo arriba):
@@ -1788,7 +1789,7 @@
 
     // Estado global del visor
     var S = {
-      ready: false, disposed: false, visible: true, docHidden: !!document.hidden, xr: false, lod: 0,
+      ready: false, disposed: false, visible: true, docHidden: !!document.hidden, xr: false, lod: 0, bench: null,
       field: null, geo: null, meta: null, fine: null, coarse: null, L: 60000, center: new THREE.Vector3(),
       sea: null, seabed: null, sky: null, stars: null, roads: null, towns: null, townsTop: null, lmLabels: null,
       city: null, cityHash: null, cellH: null, cellTop: null, cellSea: null, cellState: null, parcelAt: null, districts: null,
@@ -2397,9 +2398,9 @@
       }
     }
     function buildTrafficPaths(meta) {
-      var roads = meta.roads || [], paths = [], r, i;
+      var roads = ejesDelMapa(meta), paths = [], r, i;
       for (r = 0; r < roads.length; r++) {
-        var line = roads[r]; if (!line || line.length < 2) continue;
+        var line = roads[r].pts; if (!line || line.length < 2) continue;
         var pts = [], cum = [0], len = 0, prev = null;
         for (i = 0; i < line.length; i++) {
           var w = S.geo.toWorld(line[i][1], line[i][0]);
@@ -2415,7 +2416,7 @@
         // quedarse a 1,2 m del bordillo.
         var m0 = remuestrea(line, S.geo, VIA_PASO), largo = 0, k;
         for (k = 0; k + 1 < m0.length; k++) largo += Math.sqrt(Math.pow(m0[k + 1].x - m0[k].x, 2) + Math.pow(m0[k + 1].z - m0[k].z, 2));
-        var an = anchoVia(largo / 1000);
+        var an = roads[r].calzada ? roads[r] : anchoVia(largo / 1000);
         paths.push({ pts: pts, cum: cum, len: len, id: paths.length, desvMin: 1.2 - COCHE_CARRIL, desvMax: an.calzada * 0.5 - 1.2 - COCHE_CARRIL });
       }
       return paths;
@@ -3106,7 +3107,8 @@
       scene.add(S.seabed);
       S.sky = makeSky(1000, skyMat); scene.add(S.sky);
       S.stars = makeStars(990, 1800, 99); scene.add(S.stars);
-      if (meta.roads && meta.roads.length) { S.roads = buildRoads(meta.roads, geo); if (S.roads) scene.add(S.roads); }
+      var ejes = ejesDelMapa(meta);
+      if (ejes.length) { S.roads = buildRoads(ejes, geo); if (S.roads) scene.add(S.roads); }
       var gc = localToWorld(N / 2 * CELL, N / 2 * CELL);
       S.gridCenter.set(gc.x, 0, gc.z);
       S.cellState = new Uint8Array(N * N);
@@ -3149,6 +3151,34 @@
     }
     /** Paso de remuestreo en metros: el dataset trae tramos rectos de kilómetros. */
     var VIA_PASO = 100;
+    /**
+     * El ancho por clase de las vías que SÍ traen jerarquía (v0.10.13): las de
+     * `meta.vias`, que salen de un extracto de OpenStreetMap pasado por
+     * tools/geo/osm_roads.py (el repositorio no trae ninguna; ver el README de
+     * tools/geo). Las mismas tres medidas que anchoVia más la calle de barrio.
+     */
+    var VIA_CLASE = {
+      troncal: { calzada: 42, acera: 5 },
+      arteria: { calzada: 26, acera: 4 },
+      secundaria: { calzada: 15, acera: 3 },
+      barrio: { calzada: 10, acera: 2.4 }
+    };
+    /**
+     * Todos los ejes que vienen del mapa, en un solo formato: `meta.roads` (las
+     * polilíneas de Natural Earth y las trazadas a mano, sin ancho: se deduce de
+     * la longitud) seguidas de `meta.vias` (con nombre y clase). Cada eje es
+     * { pts: [[lon, lat], ...], calzada, acera, nombre }; calzada 0 = por longitud.
+     */
+    function ejesDelMapa(meta) {
+      var out = [], i, r = (meta && meta.roads) || [], v = (meta && meta.vias) || [];
+      for (i = 0; i < r.length; i++) if (r[i] && r[i].length >= 2) out.push({ pts: r[i], calzada: 0, acera: 0, nombre: '' });
+      for (i = 0; i < v.length; i++) {
+        var e = v[i], cl = e && VIA_CLASE[e.clase];
+        if (!cl || !e.pts || e.pts.length < 2) continue;
+        out.push({ pts: e.pts, calzada: cl.calzada, acera: cl.acera, nombre: e.nombre || '' });
+      }
+      return out;
+    }
     /** El ancho sale de la longitud: el dataset no trae jerarquía ni carriles. */
     function anchoVia(km) {
       if (km > 40) return { calzada: 42, acera: 5 };   // troncal tipo Sheikh Zayed
@@ -3625,10 +3655,11 @@
       function enCinta(P, u) {
         return [P.x + P.dx * u, P.y, P.z + P.dz * u, P.hc, u];
       }
-      // 1) Las vías del mapa abierto, con su ancho sacado de su longitud.
+      // 1) Las vías del mapa abierto (ejesDelMapa): con su ancho sacado de su
+      //    longitud las que no traen clase, y con el de su clase las que sí.
       var lineas = [];
       for (r = 0; r < roads.length; r++) {
-        var line = roads[r];
+        var line = roads[r].pts;
         if (!line || line.length < 2) continue;
         var m0 = remuestrea(line, geo, VIA_PASO);
         if (m0.length < 2) continue;
@@ -3636,7 +3667,7 @@
         for (i = 0; i + 1 < m0.length; i++) {
           largoKm += Math.sqrt(Math.pow(m0[i + 1].x - m0[i].x, 2) + Math.pow(m0[i + 1].z - m0[i].z, 2));
         }
-        var an = anchoVia(largoKm / 1000);
+        var an = roads[r].calzada ? roads[r] : anchoVia(largoKm / 1000);
         // Rango: cualquier vía del mapa manda sobre cualquier calle deducida.
         lineas.push({ muestras: m0, calzada: an.calzada, acera: an.acera, rango: 1000 + an.calzada });
       }
@@ -3994,7 +4025,98 @@
       }
       renderer.render(scene, camera);
       S.frame++;
+      if (S.bench) benchFrame(now);
       syncLoop();
+    }
+    // --- Medida de fluidez (v0.10.13) ------------------------------------------------
+    // Ninguna cifra de fluidez de este proyecto estaba medida en una tarjeta
+    // gráfica de verdad: el entorno donde se construye dibuja por software a uno o
+    // dos cuadros por segundo. La medida se hace donde hay tarjeta: en el panel del
+    // usuario. Cuatro encuadres fijos —la ciudad entera, el centro, un hito de
+    // cerca y a pie en un cruce—, un segundo de calentamiento y unos segundos de
+    // cuenta cada uno; de cada vista se anota la media, el peor cuadro, los
+    // triángulos y las llamadas de dibujo del último cuadro, y el nombre de la
+    // tarjeta que da el navegador. Corre dentro del bucle normal de dibujo, así
+    // que mide lo mismo que ve el usuario, y al terminar devuelve la cámara donde
+    // estaba.
+    function gpuName() {
+      try {
+        var gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
+        return String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+      } catch (e) { return '?'; }
+    }
+    function ponVista(v) {
+      cam.flight = null;
+      cam.cur.theta = cam.goal.theta = v.theta; cam.cur.phi = cam.goal.phi = v.phi;
+      cam.cur.radius = cam.goal.radius = clamp(v.radius, cam.minR, cam.maxR);
+      cam.cur.target.copy(v.target); cam.goal.target.copy(v.target);
+    }
+    function copiaVista(v) { return { theta: v.theta, phi: v.phi, radius: v.radius, target: v.target.clone() }; }
+    /** Un cruce de la trama de barrio más grande, mirando a lo largo de la calle. */
+    function puntoAPie() {
+      var t = null, i;
+      for (i = 0; i < S.tramas.length; i++) if (!t || S.tramas[i].R > t.R) t = S.tramas[i];
+      if (!t) return { x: S.gridCenter.x, z: S.gridCenter.z, yaw: 0 };
+      var cs = Math.cos(t.ang), sn = Math.sin(t.ang), d = t.paso;
+      // El frente a pie es (−sin yaw, −cos yaw): para mirar por (cs, sn), yaw = atan2(−cs, −sn).
+      return { x: t.x + cs * d - sn * d + cs * 12, z: t.z + sn * d + cs * d + sn * 12, yaw: Math.atan2(-cs, -sn) };
+    }
+    function bench(opts) {
+      opts = opts || {};
+      if (!S.ready) return Promise.reject(new Error('la ciudad no está cargada'));
+      if (S.xr) return Promise.reject(new Error('no se mide en VR'));
+      if (S.bench) return S.bench.promise;
+      var seg = clamp(Number(opts.segundos) || 4, 1, 20);
+      var vistas = [
+        { id: 'ciudad', pon: function () { setMode('orbit'); ponVista(cityView()); } },
+        { id: 'centro', pon: function () { setMode('orbit'); ponVista(skylineView()); } },
+        { id: 'cerca', pon: function () {
+          setMode('orbit');
+          var l = S.lmIndex.burj_khalifa || tallestLandmark();
+          ponVista(l ? { theta: 2.6, phi: 1.05, radius: Math.max(l.h * 2.2, l.w * 3, 300), target: new THREE.Vector3(l.x, l.y, l.z) } : cityView());
+        } },
+        { id: 'a_pie', pon: function () {
+          var p = puntoAPie();
+          setMode('walk'); walk.pos.set(p.x, 0, p.z); walk.yaw = p.yaw; walk.pitch = 0.05; walk.fly = 0;
+        } }
+      ];
+      var b = {
+        vistas: vistas, i: -1, fase: 2, t0: 0, n: 0, peor: 0, ultimo: 0, res: [], seg: seg, inicio: performance.now(),
+        guardado: { mode: S.mode, cur: copiaVista(cam.cur), goal: copiaVista(cam.goal), flight: cam.flight, pos: walk.pos.clone(), yaw: walk.yaw, pitch: walk.pitch, fly: walk.fly }
+      };
+      b.promise = new Promise(function (resolve, reject) { b.resolve = resolve; b.reject = reject; });
+      S.bench = b;
+      syncLoop();
+      return b.promise;
+    }
+    /** Un cuadro de la medida: fase 0 calienta un segundo, fase 1 cuenta, fase 2 pasa a la vista siguiente. */
+    function benchFrame(now) {
+      var b = S.bench;
+      if (b.fase === 2) {
+        b.i++;
+        if (b.i >= b.vistas.length) { benchFin(); return; }
+        b.vistas[b.i].pon(); b.fase = 0; b.t0 = now;
+        return;
+      }
+      if (b.fase === 0) {
+        if (now - b.t0 >= 1000) { b.fase = 1; b.t0 = now; b.ultimo = now; b.n = 0; b.peor = 0; }
+        return;
+      }
+      var ms = now - b.ultimo; b.ultimo = now; b.n++;
+      if (ms > b.peor) b.peor = ms;
+      if (now - b.t0 >= b.seg * 1000) {
+        var el = (now - b.t0) / 1000;
+        b.res.push({ vista: b.vistas[b.i].id, fps: Math.round(b.n / el * 10) / 10, fpsMin: Math.round(1000 / Math.max(b.peor, 1) * 10) / 10, cuadros: b.n,
+                     triangulos: renderer.info.render.triangles, llamadas: renderer.info.render.calls });
+        b.fase = 2;
+      }
+    }
+    function benchFin() {
+      var b = S.bench, g = b.guardado; S.bench = null;
+      if (g.mode === 'walk') { setMode('walk'); walk.pos.copy(g.pos); walk.yaw = g.yaw; walk.pitch = g.pitch; walk.fly = g.fly; }
+      else { setMode('orbit'); ponVista(g.cur); cam.goal.theta = g.goal.theta; cam.goal.phi = g.goal.phi; cam.goal.radius = g.goal.radius; cam.goal.target.copy(g.goal.target); cam.flight = g.flight; }
+      b.resolve({ gpu: gpuName(), calidad: qualityName, ancho: renderer.domElement.width, alto: renderer.domElement.height, pixelRatio: renderer.getPixelRatio(),
+                  segundos: b.seg, duracion: Math.round((performance.now() - b.inicio) / 100) / 10, vistas: b.res });
     }
     function resize() {
       if (S.disposed) return;
@@ -4156,6 +4278,7 @@
         try { var px = new Uint8Array(4 * 4 * 4); renderer.readRenderTargetPixels(envRT, 0, 0, 4, 4, px, 2); var sum = 0; for (var i = 0; i < 64; i++) sum += px[i]; env = Math.round(sum / 64); } catch (e) { env = -1; }
         return { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame, landmarks: S.landmarks.length, skyline: S.clusterTotal, solidos: S.catastro ? S.catastro.items.length : 0, avatars: S.avatarOrder.length, quality: qualityName, mode: S.xr ? 'vr' : S.mode, env: env };
       },
+      bench: bench, gpu: gpuName,
       latLonToCell: latLonToCell,
       cellLatLon: cellLatLon,
       grid: function () { return { size: N, cellMeters: CELL, anchor: anchor }; },
@@ -4176,6 +4299,7 @@
       dispose: function () {
         if (S.disposed) return;
         S.disposed = true; syncLoop();
+        if (S.bench) { S.bench.reject(new Error('cliente cerrado')); S.bench = null; }
         if (xr.session) { try { xr.session.end(); } catch (e) {} }
         canvas.removeEventListener('pointerdown', L.pointerdown); canvas.removeEventListener('pointermove', L.pointermove);
         canvas.removeEventListener('pointerup', L.pointerup); canvas.removeEventListener('pointercancel', L.pointerup);

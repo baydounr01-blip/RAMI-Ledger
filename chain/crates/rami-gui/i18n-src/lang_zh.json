@@ -690,5 +690,17 @@
  "torre": "塔楼",
  "villa": "别墅",
  "nave": "仓库",
- "edificio": "建筑"
+ "edificio": "建筑",
+ "⏱ Fluidez": "⏱ 帧率",
+ "@title:Mide la fluidez en este equipo: cuatro vistas fijas, unos veinte segundos": "@title:在本机测量帧率：四个固定视角，约二十秒",
+ "Midiendo la fluidez: cuatro vistas fijas, unos veinte segundos…": "正在测量帧率：四个固定视角，约二十秒…",
+ "ciudad entera": "整座城市",
+ "vista del centro": "市中心视角",
+ "un hito de cerca": "近看地标",
+ "a pie en un cruce": "步行在路口",
+ "mín": "最低",
+ "triángulos": "三角形",
+ "llamadas": "绘制调用",
+ "calidad": "画质",
+ "No se pudo medir": "无法测量"
 }
