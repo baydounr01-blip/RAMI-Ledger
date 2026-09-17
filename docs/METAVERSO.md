@@ -232,6 +232,16 @@ sale de los dos cada cuadro con el mismo empuje que ya usaba con las fachadas, y
 los coches frenan por el de delante y por el jugador en su carril con el perfil
 de una deceleración constante. Probado con un paso de simulación determinista.
 
+**Hecho en la v0.10.13:** los pasos de peatones (7.908, cuadriláteros sueltos
+interpolados entre filas, sin fila propia), una sola cota por cruce en las dos
+vías (la caja ensanchada de la preferente tapaba a la que cede y a sus marcas),
+los coches que esquivan al jugador antes que frenar, la **medida de fluidez en
+el panel** (cuatro vistas fijas, tarjeta gráfica, media y peor cuadro: la cifra
+que faltaba la mide quien tiene tarjeta) y la mitad real de las calles
+**enchufable**: `tools/geo/osm_roads.py` convierte un extracto de OpenStreetMap
+en la clave `vias` que el cliente lee con el ancho de su clase. El repositorio
+sigue sin distribuir datos de OSM.
+
 **Pendiente de esta entrega:** queda el experimento que decide el presupuesto de
 todo lo demás:
 **quitar el buffer de profundidad logarítmico**, que hoy obliga a todos los

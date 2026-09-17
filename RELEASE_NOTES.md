@@ -1,3 +1,77 @@
+## Novedades de v0.10.13 — pasos de peatones, coches que esquivan y la medida de fluidez
+
+Sigue la entrega 5 del plan del metaverso (`docs/METAVERSO.md`). **No toca el
+consenso, la red ni el formato de los ficheros.**
+
+Los tres pendientes de la v0.10.12, en orden:
+
+- **Pasos de peatones.** Uno en cada boca que cede el paso y en cada entrada de
+  glorieta: 7.908. Bandas de 50 cm a lo ancho de la calzada entera, 2,5 m de
+  fondo, a 30 cm de la acera de la preferente (de 2,5 a 5 m del anillo en las
+  glorietas); la línea de detención se retrasa un metro por detrás. Las marcas
+  ya no piden fila propia en la cinta: cada una se interpola entre las dos filas
+  que la encierran y se escribe como cuadrilátero suelto, así que la malla de
+  vías se queda en 1.014.134 triángulos (con fila propia subía a 1.309.284).
+- **Una sola cota por cruce.** Al pintar el paso apareció un fallo que ya
+  estaba: la caja de la vía preferente sale ensanchada por el radio de la
+  esquina y monta sobre los primeros metros de la que cede, y como cada vía
+  llevaba su propio nivel, en el cruce de trama que sirve de prueba la caja
+  tapaba a la otra entre ocho y diecisiete centímetros —y con ella la línea de
+  detención y el paso—. Ahora toda la zona del cruce, en las dos vías, va a la
+  cota máxima de las secciones de ambas; la propia vuelve suave en los sesenta
+  metros siguientes, y la que cede va centímetro y medio por encima para que
+  dos planos iguales no parpadeen. El paso queda 3 cm sobre la caja y se ve
+  cenital, oblicuo y a pie; las esquinas salen iguales que en la v0.10.11.
+- **Los coches esquivan.** Un jugador parado en el carril paraba la fila entera.
+  Ahora el coche que lo ve por delante, dentro de su distancia de frenado, se
+  aparta y le pasa a 2,4 m por el lado que menos lo saque del carril —hacia el
+  eje hasta quedarse a 1,2 m de él, hacia fuera hasta 1,2 m del bordillo—, a
+  2,5 m/s de lado y girando el morro lo que dicta esa velocidad; el lado se
+  elige una vez y se mantiene mientras quepa (reelegido cada cuadro, con el
+  jugador en el centro los dos lados empatan y el coche se quedaba dudando sin
+  moverse); al pasar, vuelve al carril. Solo frena si no le da tiempo a quitarse
+  antes de llegar o no cabe por ningún lado. Las colas quedan como estaban.
+- **La medida de fluidez, en el panel.** Ninguna cifra de cuadros por segundo
+  del proyecto estaba medida en una tarjeta gráfica de verdad, y desde donde se
+  construye no se puede: aquí se dibuja por software a uno o dos cuadros por
+  segundo. El botón «⏱ Fluidez» de la pestaña Dubái mide cuatro vistas fijas
+  —la ciudad entera, el centro, un hito de cerca y a pie en un cruce—, un
+  segundo de calentamiento y cuatro de cuenta cada una, dentro del bucle normal
+  de dibujo, y deja en una línea la tarjeta gráfica que declara el navegador,
+  la calidad, el tamaño del lienzo y, por vista, la media, el peor cuadro, los
+  triángulos y las llamadas de dibujo. Al terminar devuelve la cámara donde
+  estaba. La cifra la mide quien tiene tarjeta; en este entorno sale
+  «SwiftShader», de 0,2 a 1,7 fps.
+- **La mitad real de las calles, enchufable.** La red de aquí no alcanza
+  OpenStreetMap y el repositorio no distribuye sus datos (ODbL).
+  `tools/geo/osm_roads.py` convierte un extracto que aporte quien lo ejecute
+  —JSON de Overpass o GeoJSON— en la clave `vias` del dataset: clasifica por
+  `highway`, encadena los tramos de una misma avenida, simplifica a 5 m y
+  descarta lo corto; el cliente lee `vias` con el ancho de su clase y las pone
+  por delante de las calles deducidas en cada cruce. La consulta de Overpass y
+  la nota de licencia están en `tools/geo/README.md`. Probado con un extracto
+  sintético de dos vías, que salió con cinta, tráfico con su calzada y un cruce
+  con paso y línea de detención; después se quitó del dataset.
+
+**Cómo se ha comprobado.** Con pasos de 1/60 s (`_debug.paso`): en una vía de
+15 m, el jugador en el centro del carril a 80 m → el coche pasa por la
+izquierda a 2,40 m sin bajar de 21,9 m/s y vuelve al carril en 4,7 s; 2 m a la
+izquierda → pasa por la derecha a 2,40 m; en una arteria, lo mismo; de sopetón
+a 12 m → frena a 14,5 m/s y pasa rozando (le empuja 25 cm); la cola de dos
+coches guarda sus 12,3 m sin desvío. Las marcas: 7.908 pasos, 7.776 líneas de
+detención y 23 cedas en 43 teselas. Fotos a pie y desde arriba de un coche
+desviándose, y del paso en el cruce de trama. El botón de fluidez, pulsado en
+el panel real: abre el 3D, mide y vuelve a habilitarse.
+
+**Lo que cuesta.** Nada en triángulos: la malla de vías mide lo mismo que sin
+pasos y sin cota común. Al construir, dos secciones más de nueve puntos por vía
+y cruce; por cuadro, una comparación más por coche.
+
+**Lo que sigue faltando:** los avatares ajenos no se apartan; donde la cinta se
+corta por el agua (Ras Al Khor) los coches siguen su vía por encima, sin
+puente; y la mitad real de las calles espera un extracto que aporte quien la
+quiera.
+
 ## Novedades de v0.10.12 — la colisión con lo que se mueve
 
 Sigue la entrega 5 del plan del metaverso (`docs/METAVERSO.md`). **No toca el
@@ -563,6 +637,84 @@ altura sin romperse.
   con los binarios de la v0.7.0 y la v0.7.3. Un binario v0.8.0 que abra un
   `chain.jsonl` escrito por la 0.9.0 con transacciones de mercado no lo lee
   (por red nunca las recibe): la salida es volver a la 0.9.0.
+
+## What's new in v0.10.13 — zebra crossings, cars that swerve and the frame-rate measure
+
+Continues delivery 5 of the metaverse plan (`docs/METAVERSO.md`). **It does not
+touch consensus, the network or the file formats.**
+
+The three items left pending by v0.10.12, in order:
+
+- **Zebra crossings.** One at every mouth that gives way and at every
+  roundabout entry: 7,908. Bands of 50 cm across the whole carriageway, 2.5 m
+  deep, 30 cm from the priority road's pavement (2.5 to 5 m from the ring at
+  roundabouts); the stop line moves one metre back behind it. Markings no
+  longer need a row of their own in the ribbon: each one is interpolated
+  between the two rows that enclose it and written as a loose quad, so the road
+  mesh stays at 1,014,134 triangles (with their own rows it rose to 1,309,284).
+- **One level per junction.** Painting the crossing exposed a defect that was
+  already there: the priority road's junction box is flared by the corner
+  radius and rides over the first metres of the yielding road, and since each
+  road carried its own level, at the grid junction used for testing the box
+  covered the other road by eight to seventeen centimetres — and with it the
+  stop line and the crossing. Now the whole junction area, on both roads, sits
+  at the maximum of both roads' sections; the road's own level returns smoothly
+  over the next sixty metres, and the yielding road sits a centimetre and a
+  half above so that two identical planes do not flicker. The crossing ends up
+  3 cm above the box and shows top-down, oblique and on foot; the corners come
+  out the same as in v0.10.11.
+- **Cars swerve.** A player standing in the lane stopped the whole queue. Now
+  a car that sees the player ahead, within its braking distance, moves aside
+  and passes 2.4 m away on the side that takes it least out of its lane —
+  towards the axis until it is 1.2 m from it, outwards until it is 1.2 m from
+  the kerb — at 2.5 m/s sideways, turning its nose by what that speed dictates;
+  the side is chosen once and kept while it fits (re-chosen every frame, with
+  the player at the lane centre both sides tie and the car dithered without
+  moving); once past, it returns to the lane. It brakes only if it cannot get
+  clear before reaching the player or does not fit on either side. Queues
+  behave as before.
+- **The frame-rate measure, in the dashboard.** No frames-per-second figure in
+  this project had been measured on a real graphics card, and it cannot be
+  done where the project is built: here everything is drawn in software at
+  one or two frames per second. The «⏱ Frame rate» button on the Dubai tab
+  measures four fixed views — the whole city, downtown, a landmark up close
+  and on foot at a junction — one second of warm-up and four of counting each,
+  inside the normal draw loop, and leaves one line with the graphics card the
+  browser declares, the quality, the canvas size and, per view, the average,
+  the worst frame, the triangles and the draw calls. When done it puts the
+  camera back. The figure is measured by whoever has a card; in this
+  environment it reads "SwiftShader", 0.2 to 1.7 fps.
+- **The real half of the streets, pluggable.** The network here does not reach
+  OpenStreetMap and the repository does not distribute its data (ODbL).
+  `tools/geo/osm_roads.py` converts an extract supplied by whoever runs it —
+  Overpass JSON or GeoJSON — into the dataset's `vias` key: it classifies by
+  `highway`, chains the pieces of one avenue, simplifies to 5 m and drops the
+  short ones; the client reads `vias` with the width of their class and puts
+  them ahead of the deduced streets at every junction. The Overpass query and
+  the licence note are in `tools/geo/README.md`. Tested with a synthetic
+  two-road extract, which came out with ribbon, traffic with its carriageway
+  and a junction with crossing and stop line; then removed from the dataset.
+
+**How it was checked.** With 1/60 s steps (`_debug.paso`): on a 15 m road, the
+player at the lane centre 80 m ahead → the car passes on the left at 2.40 m
+without dropping below 21.9 m/s and returns to the lane in 4.7 s; 2 m to the
+left → it passes on the right at 2.40 m; on an arterial, the same; suddenly at
+12 m → it brakes to 14.5 m/s and brushes past (pushing the player 25 cm); the
+two-car queue keeps its 12.3 m with no deviation. Markings: 7,908 crossings,
+7,776 stop lines and 23 give-way lines in 43 tiles. Photos on foot and from
+above of a car swerving, and of the crossing at the grid junction. The frame
+rate button, pressed in the real dashboard: opens the 3D, measures and is
+enabled again.
+
+**What it costs.** Nothing in triangles: the road mesh measures the same as
+without crossings and without the shared level. At build time, two more
+nine-point sections per road and junction; per frame, one more comparison per
+car.
+
+**What is still missing:** other players' avatars do not step aside; where the
+ribbon is cut by water (Ras Al Khor) cars keep following their road above it,
+with no bridge; and the real half of the streets waits for an extract supplied
+by whoever wants it.
 
 ## What's new in v0.10.12 — collision with what moves
 

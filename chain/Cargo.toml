@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/rami-core", "crates/rami-net", "crates/rami-node", "crates/rami-wallet", "crates/rami-gui"]
 
 [workspace.package]
-version = "0.10.12"
+version = "0.10.13"
 edition = "2021"
 license = "MIT"
 authors = ["Rami Baydoun Nabhan"]
