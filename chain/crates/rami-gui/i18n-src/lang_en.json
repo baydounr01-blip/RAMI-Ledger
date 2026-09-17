@@ -690,5 +690,17 @@
  "torre": "tower",
  "villa": "villa",
  "nave": "warehouse",
- "edificio": "building"
+ "edificio": "building",
+ "⏱ Fluidez": "⏱ Frame rate",
+ "@title:Mide la fluidez en este equipo: cuatro vistas fijas, unos veinte segundos": "@title:Measure the frame rate on this machine: four fixed views, about twenty seconds",
+ "Midiendo la fluidez: cuatro vistas fijas, unos veinte segundos…": "Measuring the frame rate: four fixed views, about twenty seconds…",
+ "ciudad entera": "whole city",
+ "vista del centro": "downtown view",
+ "un hito de cerca": "a landmark up close",
+ "a pie en un cruce": "on foot at a junction",
+ "mín": "min",
+ "triángulos": "triangles",
+ "llamadas": "draw calls",
+ "calidad": "quality",
+ "No se pudo medir": "Could not measure"
 }

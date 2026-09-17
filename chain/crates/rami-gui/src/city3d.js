@@ -14,7 +14,8 @@
  *   setMode('orbit'|'walk') / mode() / setQuality('baja'|'media'|'alta'|'ultra') /
  *   setTimeOfDay(horas|null) / setPresence(lista) / myPose() /
  *   resize() / setVisible(bool) / dispose() / xrSupported() / enterVR() /
- *   stats() / latLonToCell(lat,lon) / cellLatLon(x,y) / cellWorld(x,y) /
+ *   stats() / bench(opts) [mide la fluidez en cuatro vistas fijas] / gpu() /
+ *   latLonToCell(lat,lon) / cellLatLon(x,y) / cellWorld(x,y) /
  *   cellInfo(x,y) / project(x,y) / heightAt(lat,lon) / ready (Promise)
  *
  * Arquitectura (de abajo arriba):
@@ -1152,8 +1153,8 @@
     '  vec4 tC = texture2D(uAcera, vWorld.xz / 4.8);',          // 8 losas de 60 cm
     // Clases: 0 asfalto con marcas, 1 hormigón del bordillo, 2 losa de acera,
     // 3 asfalto sin marcas —la glorieta, que no lleva eje ni carriles pintados—,
-    // 4 pintura continua (línea de detención) y 5 pintura discontinua (ceda el
-    // paso), las dos sobre asfalto.
+    // 4 pintura continua (línea de detención), 5 pintura discontinua (ceda el
+    // paso) y 6 cebra del paso de peatones, las tres sobre asfalto.
     '  vec4 tex = clase < 0.5 ? tA : (clase < 1.5 ? tH : (clase < 2.5 ? tC : tA));',
     '  float esAsfalto = clamp(step(clase, 0.5) + step(2.5, clase), 0.0, 1.0);',
     '  vec3 base = aLineal(tex.rgb);',
@@ -1176,9 +1177,10 @@
     '    base = mix(base, vec3(0.72, 0.70, 0.64), pintura * 0.92);',
     '  }',
     // Las transversales de las bocas: continua la de detención; el ceda el paso,
-    // 60 cm pintados y 30 de hueco a lo ancho.
+    // 60 cm pintados y 30 de hueco a lo ancho; la cebra, bandas de 50 cm a lo
+    // largo de la calle con 50 de hueco, que es por donde cruza la gente.
     '  if (clase > 3.5) {',
-    '    float raya = clase > 4.5 ? step(0.34, fract(u / 0.9)) : 1.0;',
+    '    float raya = clase > 5.5 ? (1.0 - step(0.5, fract(u))) : (clase > 4.5 ? step(0.34, fract(u / 0.9)) : 1.0);',
     '    base = mix(base, vec3(0.72, 0.70, 0.64), raya * 0.92 * cerca);',
     '  }',
     '  float shadow = getShadowMask();',
@@ -1787,7 +1789,7 @@
 
     // Estado global del visor
     var S = {
-      ready: false, disposed: false, visible: true, docHidden: !!document.hidden, xr: false, lod: 0,
+      ready: false, disposed: false, visible: true, docHidden: !!document.hidden, xr: false, lod: 0, bench: null,
       field: null, geo: null, meta: null, fine: null, coarse: null, L: 60000, center: new THREE.Vector3(),
       sea: null, seabed: null, sky: null, stars: null, roads: null, towns: null, townsTop: null, lmLabels: null,
       city: null, cityHash: null, cellH: null, cellTop: null, cellSea: null, cellState: null, parcelAt: null, districts: null,
@@ -2396,9 +2398,9 @@
       }
     }
     function buildTrafficPaths(meta) {
-      var roads = meta.roads || [], paths = [], r, i;
+      var roads = ejesDelMapa(meta), paths = [], r, i;
       for (r = 0; r < roads.length; r++) {
-        var line = roads[r]; if (!line || line.length < 2) continue;
+        var line = roads[r].pts; if (!line || line.length < 2) continue;
         var pts = [], cum = [0], len = 0, prev = null;
         for (i = 0; i < line.length; i++) {
           var w = S.geo.toWorld(line[i][1], line[i][0]);
@@ -2407,7 +2409,15 @@
           if (prev) { len += prev.distanceTo(p); cum.push(len); }
           pts.push(p); prev = p;
         }
-        if (pts.length >= 2 && len > 2000) paths.push({ pts: pts, cum: cum, len: len, id: paths.length });
+        if (pts.length < 2 || len <= 2000) continue;
+        // El ancho de la vía, medido igual que al levantarla (por su longitud
+        // remuestreada), da el sitio que tiene un coche para desviarse: del
+        // carril hacia el eje hasta quedarse a 1,2 m de él y hacia fuera hasta
+        // quedarse a 1,2 m del bordillo.
+        var m0 = remuestrea(line, S.geo, VIA_PASO), largo = 0, k;
+        for (k = 0; k + 1 < m0.length; k++) largo += Math.sqrt(Math.pow(m0[k + 1].x - m0[k].x, 2) + Math.pow(m0[k + 1].z - m0[k].z, 2));
+        var an = roads[r].calzada ? roads[r] : anchoVia(largo / 1000);
+        paths.push({ pts: pts, cum: cum, len: len, id: paths.length, desvMin: 1.2 - COCHE_CARRIL, desvMax: an.calzada * 0.5 - 1.2 - COCHE_CARRIL });
       }
       return paths;
     }
@@ -2421,7 +2431,7 @@
         for (pi = 0; pi < paths.length; pi++) { acc += paths[pi].len; if (pick <= acc) break; }
         pi = Math.min(pi, paths.length - 1);
         var vc = 22 + rnd() * 14;
-        cars.push({ path: paths[pi], t: rnd() * paths[pi].len, v: vc, vel: vc, dir: rnd() < 0.5 ? 1 : -1, hue: rnd() });
+        cars.push({ path: paths[pi], t: rnd() * paths[pi].len, v: vc, vel: vc, dir: rnd() < 0.5 ? 1 : -1, hue: rnd(), desvio: 0, lado: 0 });
       }
       var m = new THREE.InstancedMesh(C.cars.geometry, plainMat, cars.length); m.frustumCulled = false; m.receiveShadow = true; m.name = 'traffic';
       for (i = 0; i < cars.length; i++) m.setColorAt(i, tmpColor.setHSL(cars[i].hue, cars[i].hue < 0.3 ? 0.1 : 0.6, 0.55));
@@ -2438,12 +2448,19 @@
     // círculos de 35 cm, y el jugador sale de los dos con el mismo empuje por la
     // normal que ya usaba con los edificios. Los coches, además, frenan: por el que
     // llevan delante en su misma vía y sentido, y por el jugador si pisa su carril,
-    // y arrancan otra vez cuando el hueco se abre.
+    // y arrancan otra vez cuando el hueco se abre. Desde la v0.10.13, antes que
+    // frenar por el jugador, se desvían para pasarle de largo.
     var COCHE_HL = 2.3, COCHE_HW = 1.0, AVATAR_R = 0.35;
     // Un coche a 22 m/s necesita 40 m para pararse a 6 m/s²; a 36 m/s, 108. La
     // distancia a la que empieza a frenar sale de su propia velocidad, y el
     // perfil es el de una deceleración constante: v·√(hueco / D).
     var COCHE_FRENO = 7, COCHE_DECEL = 6, COCHE_ACEL = 3;
+    // El desvío (v0.10.13): el coche que ve al jugador en su carril se aparta
+    // en vez de pararse, si hay sitio. El carril va a 4,5 m del eje; el coche
+    // pasa a 2,4 m del jugador, por el lado que menos lo saque del carril, y se
+    // mueve de lado a 2,5 m/s. Solo frena si no le da tiempo a quitarse antes
+    // de llegar, o si no cabe por ningún lado.
+    var COCHE_CARRIL = 4.5, DESVIO_HOLGURA = 2.4, DESVIO_V = 2.5;
     /** El punto del suelo que ocupa el jugador, o null si va volando o en órbita. */
     function jugadorEnSuelo() {
       if (S.xr) return rig.position;
@@ -2513,14 +2530,34 @@
         // El hueco libre por delante: el coche de su cola y, si el jugador pisa el
         // carril, el jugador. Se para a COCHE_FRENO metros del obstáculo; antes,
         // la velocidad sigue el perfil de una deceleración constante.
-        var hueco = c.hueco;
+        var hueco = c.hueco, D = c.v * c.v / (2 * COCHE_DECEL), quiere = 0, enVentana = false;
         if (jug && c.fx !== undefined) {
           var dx = jug.x - c.x, dz = jug.z - c.z, al = dx * c.fx + dz * c.fz, la = -dx * c.fz + dz * c.fx;
-          if (al > -COCHE_HL && al < hueco && Math.abs(la) < 2.4) hueco = Math.max(0, al);
+          // El jugador por delante, dentro de la distancia de frenado: el coche
+          // elige por qué lado pasarle. `lp` es dónde está el jugador respecto al
+          // CENTRO del carril (derecha positiva); pasar por su izquierda es ir a
+          // lp − holgura y por su derecha a lp + holgura, si cabe en la calzada.
+          if (al > -COCHE_HL - 3 && al < D + COCHE_FRENO) {
+            enVentana = true;
+            var lp = la + c.desvio, izq = lp - DESVIO_HOLGURA, der = lp + DESVIO_HOLGURA;
+            var cabeI = izq >= P.desvMin, cabeD = der <= P.desvMax;
+            // El lado se elige UNA vez y se mantiene mientras quepa. Reelegido
+            // cada cuadro, con el jugador en el centro del carril los dos lados
+            // empatan y el coche se quedaba dudando entre uno y otro sin moverse.
+            if ((c.lado < 0 && !cabeI) || (c.lado > 0 && !cabeD)) c.lado = 0;
+            if (!c.lado) c.lado = cabeI && (!cabeD || Math.abs(izq) <= Math.abs(der)) ? -1 : (cabeD ? 1 : 0);
+            quiere = c.lado < 0 ? izq : (c.lado > 0 ? der : c.desvio);   // sin sitio: se queda y frena
+            // Frena solo si el jugador sigue en su trayectoria y no le da tiempo
+            // a quitarse antes de llegar a él (o no cabe por ningún lado).
+            var tLibre = Math.abs(quiere - c.desvio) / DESVIO_V;
+            if (Math.abs(la) < DESVIO_HOLGURA && al < hueco && (al < COCHE_FRENO + c.vel * tLibre || !c.lado)) hueco = Math.max(0, al);
+          }
         }
-        var D = c.v * c.v / (2 * COCHE_DECEL);
+        if (!enVentana) c.lado = 0;
         var meta = c.v * Math.sqrt(clamp((hueco - COCHE_FRENO) / D, 0, 1));
         c.vel = meta < c.vel ? Math.max(meta, c.vel - COCHE_DECEL * 1.5 * dt) : Math.min(meta, c.vel + COCHE_ACEL * dt);
+        var desvioAntes = c.desvio;
+        c.desvio += clamp(quiere - c.desvio, -DESVIO_V * dt, DESVIO_V * dt);
         c.t += c.vel * dt * c.dir;
         if (c.t > P.len) c.t -= P.len; else if (c.t < 0) c.t += P.len;
         for (j = 1; j < P.cum.length && P.cum[j] < c.t; j++) {}
@@ -2528,8 +2565,12 @@
         var a = P.pts[j - 1], b = P.pts[j], segLen = P.cum[j] - P.cum[j - 1] || 1, u = (c.t - P.cum[j - 1]) / segLen;
         _tp.lerpVectors(a, b, u); _tq.subVectors(b, a).normalize();
         var yaw = Math.atan2(-_tq.z, _tq.x) + (c.dir < 0 ? Math.PI : 0);
-        // carril: a la derecha del sentido de marcha (4,5 m)
-        var side = c.dir * 4.5;
+        // Al desviarse gira el morro lo que dicta su velocidad de lado: girar a
+        // la derecha es girar en sentido horario visto desde arriba, o sea, yaw
+        // negativo.
+        if (dt > 0) yaw -= Math.atan2((c.desvio - desvioAntes) / dt, Math.max(c.vel, 1));
+        // carril: a la derecha del sentido de marcha (4,5 m), más el desvío
+        var side = c.dir * (COCHE_CARRIL + c.desvio);
         _tp.x += -_tq.z * side; _tp.z += _tq.x * side;
         _tp.y = groundH(_tp.x, _tp.z) + 0.4;
         // La pose se guarda: es lo que consultan el empuje del jugador y el
@@ -3066,7 +3107,8 @@
       scene.add(S.seabed);
       S.sky = makeSky(1000, skyMat); scene.add(S.sky);
       S.stars = makeStars(990, 1800, 99); scene.add(S.stars);
-      if (meta.roads && meta.roads.length) { S.roads = buildRoads(meta.roads, geo); if (S.roads) scene.add(S.roads); }
+      var ejes = ejesDelMapa(meta);
+      if (ejes.length) { S.roads = buildRoads(ejes, geo); if (S.roads) scene.add(S.roads); }
       var gc = localToWorld(N / 2 * CELL, N / 2 * CELL);
       S.gridCenter.set(gc.x, 0, gc.z);
       S.cellState = new Uint8Array(N * N);
@@ -3109,6 +3151,34 @@
     }
     /** Paso de remuestreo en metros: el dataset trae tramos rectos de kilómetros. */
     var VIA_PASO = 100;
+    /**
+     * El ancho por clase de las vías que SÍ traen jerarquía (v0.10.13): las de
+     * `meta.vias`, que salen de un extracto de OpenStreetMap pasado por
+     * tools/geo/osm_roads.py (el repositorio no trae ninguna; ver el README de
+     * tools/geo). Las mismas tres medidas que anchoVia más la calle de barrio.
+     */
+    var VIA_CLASE = {
+      troncal: { calzada: 42, acera: 5 },
+      arteria: { calzada: 26, acera: 4 },
+      secundaria: { calzada: 15, acera: 3 },
+      barrio: { calzada: 10, acera: 2.4 }
+    };
+    /**
+     * Todos los ejes que vienen del mapa, en un solo formato: `meta.roads` (las
+     * polilíneas de Natural Earth y las trazadas a mano, sin ancho: se deduce de
+     * la longitud) seguidas de `meta.vias` (con nombre y clase). Cada eje es
+     * { pts: [[lon, lat], ...], calzada, acera, nombre }; calzada 0 = por longitud.
+     */
+    function ejesDelMapa(meta) {
+      var out = [], i, r = (meta && meta.roads) || [], v = (meta && meta.vias) || [];
+      for (i = 0; i < r.length; i++) if (r[i] && r[i].length >= 2) out.push({ pts: r[i], calzada: 0, acera: 0, nombre: '' });
+      for (i = 0; i < v.length; i++) {
+        var e = v[i], cl = e && VIA_CLASE[e.clase];
+        if (!cl || !e.pts || e.pts.length < 2) continue;
+        out.push({ pts: e.pts, calzada: cl.calzada, acera: cl.acera, nombre: e.nombre || '' });
+      }
+      return out;
+    }
     /** El ancho sale de la longitud: el dataset no trae jerarquía ni carriles. */
     function anchoVia(km) {
       if (km > 40) return { calzada: 42, acera: 5 };   // troncal tipo Sheikh Zayed
@@ -3315,6 +3385,65 @@
       return mejor;
     }
     /**
+     * La cota de una sección de vía. Una sección es HORIZONTAL de lado a lado, y
+     * entre dos secciones la cinta va recta. Si cada punto se pegara a su propia
+     * cota, la cuerda se hundiría bajo cualquier bulto intermedio y el terreno
+     * mordería la calzada a trozos. Se nivela por la cota máxima de una cruz de
+     * nueve puntos (medio paso por delante y por detrás, el ancho a cada lado):
+     * es lo que hace un desmonte. Devuelve la cota fina y la gruesa.
+     */
+    function cotaSeccion(p0, tx, tz, ancho) {
+      var hF = 0, hC = 0, dt, du, qx, qz, nx = -tz, nz = tx;
+      for (dt = -0.5; dt <= 0.51; dt += 0.5) for (du = -1; du <= 1; du++) {
+        qx = p0.x + tx * VIA_PASO * dt + nx * ancho * du;
+        qz = p0.z + tz * VIA_PASO * dt + nz * ancho * du;
+        hF = Math.max(hF, surfaceH(qx, qz)); hC = Math.max(hC, coarseH(qx, qz));
+      }
+      return { hF: hF, hC: hC };
+    }
+    /**
+     * La cota de un cruce (v0.10.13): el máximo de las secciones de LAS DOS vías
+     * en el cruce y a un alcance a cada lado. La caja de la preferente sale
+     * ensanchada por el radio de la esquina y monta sobre los primeros metros de
+     * la que cede; si cada vía llevara su propio nivel, una tapaba a la otra por
+     * los centímetros que las separan —y con ella el paso de peatones y la línea
+     * de detención pintados encima—. Con una sola cota para toda la zona del
+     * cruce las dos calzadas quedan en el mismo plano.
+     */
+    function cotaCruce(A, ja, sa, alA, B, jb, sb, alB) {
+      var r = { hF: 0, hC: 0 }, vias = [[A, ja, sa, alA], [B, jb, sb, alB]], v, k, m, tx, tz, tl, p, c;
+      for (v = 0; v < 2; v++) {
+        m = vias[v][0].muestras;
+        tx = m[vias[v][1] + 1].x - m[vias[v][1]].x; tz = m[vias[v][1] + 1].z - m[vias[v][1]].z;
+        tl = Math.sqrt(tx * tx + tz * tz) || 1; tx /= tl; tz /= tl;
+        for (k = -1; k <= 1; k++) {
+          p = puntoArco(m, vias[v][0].arco, vias[v][2] + k * vias[v][3]);
+          c = cotaSeccion(p, tx, tz, anchoTotal(vias[v][0]) + 9);
+          r.hF = Math.max(r.hF, c.hF); r.hC = Math.max(r.hC, c.hC);
+        }
+      }
+      return r;
+    }
+    /** Lo que tarda la cota propia en volver pasada la zona del cruce, en metros. */
+    var NIVEL_VUELTA = 60;
+    /**
+     * Cuánto pesa la cota del cruce en `s` y cuál es (con el resalte de la boca):
+     * uno dentro del alcance de la boca y de ahí a los sesenta metros baja suave
+     * hasta cero. Con dos bocas cerca manda la que más pese. Devuelve null lejos
+     * de todo cruce.
+     */
+    function nivelEnBocas(bocas, s) {
+      var i, b, d, w, mejor = null, wm = 0;
+      for (i = 0; i < bocas.length; i++) {
+        b = bocas[i];
+        d = Math.abs(s - b.s) * b.sen - b.alcance;
+        if (d >= NIVEL_VUELTA) continue;
+        w = d <= 0 ? 1 : 1 - smoothstep(d / NIVEL_VUELTA);
+        if (w > wm) { wm = w; mejor = b; }
+      }
+      return mejor ? { w: wm, hF: mejor.nivel.hF + mejor.alza, hC: mejor.nivel.hC + mejor.alza } : null;
+    }
+    /**
      * Resuelve todos los cruces y deja en cada vía sus tramos de CAJA (donde manda,
      * y el bordillo se rebaja) y sus tramos de CORTE (donde cede el paso y
      * desaparece), más la lista de glorietas.
@@ -3387,6 +3516,10 @@
               // en +s y su derecha es u positiva; la otra, al revés.
               A.marcas.push({ s: sa - dA - 1.2, lado: 1, tipo: 5 }, { s: sa + dA + 1.2, lado: -1, tipo: 5 });
               B.marcas.push({ s: sb - dB - 1.2, lado: 1, tipo: 5 }, { s: sb + dB + 1.2, lado: -1, tipo: 5 });
+              // Y un paso de peatones por entrada, de 2,5 a 5 m del anillo: dos filas
+              // (s y s2) que el recorrido cose en un cuadrilátero de calzada entera.
+              A.marcas.push({ s: sa - dA - 5.0, s2: sa - dA - 2.5, tipo: 6 }, { s: sa + dA + 2.5, s2: sa + dA + 5.0, tipo: 6 });
+              B.marcas.push({ s: sb - dB - 5.0, s2: sb - dB - 2.5, tipo: 6 }, { s: sb + dB + 2.5, s2: sb + dB + 5.0, tipo: 6 });
               continue;
             }
             var mayor = A, menor = B, sMay = sa, sMen = sb, acMay = acA;
@@ -3409,14 +3542,29 @@
             // calles usan la misma fórmula, así que sus bordes recorren el mismo
             // arco y se encuentran en él en vez de cruzarse.
             var rad = radioEsquina(Math.min(mayor.calzada, menor.calzada));
-            mayor.bocas.push({ s: sMay, sen: c.sen, co: menor.calzada * 0.5, R: rad });
-            menor.bocas.push({ s: sMen, sen: c.sen, co: mayor.calzada * 0.5, R: rad });
-            // La línea de detención de la que cede, en sus dos bocas: donde el arco
-            // ya ha terminado y como poco un metro por detrás de la acera de la
-            // preferente, que es por donde cruza la gente. Solo en la mitad que
-            // llega al cruce, que es la derecha de su sentido de marcha.
-            var dLin = Math.max(rad, 0.45 + mayor.acera + 1.0), sLin = (mayor.calzada * 0.5 + dLin) / c.sen;
+            // La zona del cruce, medida perpendicular al eje ajeno: en la
+            // preferente, la caja y el arco entero; en la que cede, hasta donde
+            // llega la caja ensanchada de la otra (su acera más el radio). Toda la
+            // zona, en las dos vías, va a la cota del cruce.
+            var alMay = menor.calzada * 0.5 + rad + 0.05, alMen = acMay + rad + 0.05;
+            var niv = (mayor === A) ? cotaCruce(A, ja, sa, alMay / c.sen, B, jb, sb, alMen / c.sen)
+                                    : cotaCruce(B, jb, sb, alMay / c.sen, A, ja, sa, alMen / c.sen);
+            // La que cede va centímetro y medio POR ENCIMA de la cota: en los
+            // metros en que las dos calzadas se montan, dos planos exactamente
+            // iguales parpadean (z-fighting) y las rayas de una se ven a través
+            // de la otra. Con ese resalte manda la calzada de la que cede, que es
+            // la que lleva pintados el paso y la línea, y la caja queda debajo.
+            mayor.bocas.push({ s: sMay, sen: c.sen, co: menor.calzada * 0.5, R: rad, alcance: alMay, nivel: niv, alza: 0 });
+            menor.bocas.push({ s: sMen, sen: c.sen, co: mayor.calzada * 0.5, R: rad, alcance: alMen, nivel: niv, alza: 0.015 });
+            // En cada boca de la que cede, desde la acera de la preferente hacia
+            // fuera: 30 cm de nada, el paso de peatones (2,5 m, calzada entera), un
+            // metro, y la línea de detención, que además espera a que el arco de la
+            // esquina haya terminado. La línea solo va en la mitad que llega al
+            // cruce, que es la derecha de su sentido de marcha.
+            var dCeb = 0.45 + mayor.acera + 0.3, dLin = Math.max(rad, dCeb + 3.5), co2 = mayor.calzada * 0.5;
+            var sLin = (co2 + dLin) / c.sen, sCe1 = (co2 + dCeb) / c.sen, sCe2 = (co2 + dCeb + 2.5) / c.sen;
             menor.marcas.push({ s: sMen - sLin, lado: 1, tipo: 4 }, { s: sMen + sLin, lado: -1, tipo: 4 });
+            menor.marcas.push({ s: sMen - sCe2, s2: sMen - sCe1, tipo: 6 }, { s: sMen + sCe1, s2: sMen + sCe2, tipo: 6 });
           }
         }
       }
@@ -3490,10 +3638,28 @@
         }
         T.cose = true;
       }
-      // 1) Las vías del mapa abierto, con su ancho sacado de su longitud.
+      /**
+       * El punto de la cinta a fracción `t` entre dos filas: centro, dirección
+       * transversal y medio ancho del asfalto, sacados de los vértices 3 y 4 del
+       * perfil (los bordes de la calzada), que llevan ya el ensanche de la esquina.
+       */
+      function puntoCinta(fa, fb, t) {
+        var l = fa[3], r0 = fa[4], l2 = fb[3], r2 = fb[4];
+        var lx = l[0] + (l2[0] - l[0]) * t, ly = l[1] + (l2[1] - l[1]) * t, lz = l[2] + (l2[2] - l[2]) * t, lh = l[3] + (l2[3] - l[3]) * t;
+        var rx = r0[0] + (r2[0] - r0[0]) * t, ry = r0[1] + (r2[1] - r0[1]) * t, rz = r0[2] + (r2[2] - r0[2]) * t, rh = r0[3] + (r2[3] - r0[3]) * t;
+        var dx = rx - lx, dz = rz - lz, w = Math.sqrt(dx * dx + dz * dz) * 0.5;
+        if (w < 1e-3) return null;
+        return { x: (lx + rx) * 0.5, y: (ly + ry) * 0.5 + 0.015, z: (lz + rz) * 0.5, hc: (lh + rh) * 0.5 + 0.015, dx: dx / (2 * w), dz: dz / (2 * w), w: w };
+      }
+      /** Un vértice de marca a `u` metros del eje sobre el punto de cinta `P`. */
+      function enCinta(P, u) {
+        return [P.x + P.dx * u, P.y, P.z + P.dz * u, P.hc, u];
+      }
+      // 1) Las vías del mapa abierto (ejesDelMapa): con su ancho sacado de su
+      //    longitud las que no traen clase, y con el de su clase las que sí.
       var lineas = [];
       for (r = 0; r < roads.length; r++) {
-        var line = roads[r];
+        var line = roads[r].pts;
         if (!line || line.length < 2) continue;
         var m0 = remuestrea(line, geo, VIA_PASO);
         if (m0.length < 2) continue;
@@ -3501,7 +3667,7 @@
         for (i = 0; i + 1 < m0.length; i++) {
           largoKm += Math.sqrt(Math.pow(m0[i + 1].x - m0[i].x, 2) + Math.pow(m0[i + 1].z - m0[i].z, 2));
         }
-        var an = anchoVia(largoKm / 1000);
+        var an = roads[r].calzada ? roads[r] : anchoVia(largoKm / 1000);
         // Rango: cualquier vía del mapa manda sobre cualquier calle deducida.
         lineas.push({ muestras: m0, calzada: an.calzada, acera: an.acera, rango: 1000 + an.calzada });
       }
@@ -3562,11 +3728,9 @@
             paradas.push(bq.s - paso0 - fr, bq.s + paso0 + fr);
           }
         }
-        // Y una parada por cada marca transversal, para que su fila exista.
         var marcas = lineas[r].marcas;
-        for (i = 0; i < marcas.length; i++) paradas.push(marcas[i].s);
         paradas.sort(function (p, q) { return p - q; });
-        var sUlt = -1e9, filaAnt = null;
+        var sUlt = -1e9, sAnt = -1e9, filaAnt = null;
         for (i = 0; i < paradas.length; i++) {
           var sp = paradas[i];
           if (sp < -1e-6 || sp > total + 1e-6) continue;
@@ -3584,17 +3748,12 @@
           var tx = pSig.x - pAnt.x, tz = pSig.z - pAnt.z, tl2 = Math.sqrt(tx * tx + tz * tz) || 1;
           tx /= tl2; tz /= tl2;
           var nx = -tz, nz = tx;
-          // Una sección de carretera es HORIZONTAL de lado a lado, y entre dos
-          // secciones va recta. Si cada punto se pegara a su propia cota, la
-          // cuerda se hundiría bajo cualquier bulto intermedio y el terreno
-          // mordería la calzada a trozos. Se nivela por la cota máxima de una
-          // cruz de nueve puntos: es lo que hace un desmonte.
-          var hF = 0, hC = 0, dt, du2, qx, qz, anchoAqui = ac + 9;
-          for (dt = -0.5; dt <= 0.51; dt += 0.5) for (du2 = -1; du2 <= 1; du2++) {
-            qx = p0.x + tx * VIA_PASO * dt + nx * anchoAqui * du2;
-            qz = p0.z + tz * VIA_PASO * dt + nz * anchoAqui * du2;
-            hF = Math.max(hF, surfaceH(qx, qz)); hC = Math.max(hC, coarseH(qx, qz));
-          }
+          // La cota de la sección (ver cotaSeccion) y, cerca de un cruce, la del
+          // cruce: dentro de su zona manda entera y en los sesenta metros
+          // siguientes la propia va volviendo.
+          var cota = cotaSeccion(p0, tx, tz, ac + 9), hF = cota.hF, hC = cota.hC;
+          var nb = nivelEnBocas(bocas, sp);
+          if (nb) { hF += nb.w * (nb.hF - hF); hC += nb.w * (nb.hC - hC); }
           var perfil = enTramo(cajas, sp) ? perfilL : perfilN;
           // El bordillo se abre en cuarto de circunferencia al llegar a la boca:
           // todo el perfil se separa del eje lo mismo, así que la acera y la
@@ -3612,24 +3771,29 @@
             // sección que las une se cose en la tesela nueva, no en la vieja.
             T.cose = false; escribeFila(T, filaAnt.fila);
           }
+          // Las marcas transversales que caigan entre la fila anterior y esta. No
+          // se les da fila propia: entre dos filas la cinta es lineal, así que un
+          // punto interpolado entre los bordes de asfalto de las dos filas está
+          // sobre la cinta. Cada marca es un cuadrilátero suelto —cuatro vértices,
+          // dos triángulos— que se escribe al final: metido entre dos filas
+          // rompería el cosido de ocho vértices. Una marca que cruce una fila se
+          // parte en un trozo por tramo. Centímetro y medio por encima del asfalto,
+          // como la junta de la glorieta.
+          if (filaAnt && sp > sAnt) for (k = 0; k < marcas.length; k++) {
+            var mk = marcas[k], ma = mk.tipo === 6 ? mk.s : mk.s - 0.2, mb = mk.tipo === 6 ? mk.s2 : mk.s + 0.2;
+            var pa = Math.max(ma, sAnt), pb = Math.min(mb, sp);
+            if (pb - pa < 0.01) continue;
+            var A = puntoCinta(filaAnt.fila, fila, (pa - sAnt) / (sp - sAnt)), B = puntoCinta(filaAnt.fila, fila, (pb - sAnt) / (sp - sAnt));
+            if (!A || !B) continue;
+            var wa = A.w - 0.1, wb = B.w - 0.1, va, vb, vc, vd;
+            if (wa <= 0.8 || wb <= 0.8) continue;
+            if (mk.tipo === 6) { va = enCinta(A, -wa); vb = enCinta(A, wa); vc = enCinta(B, -wb); vd = enCinta(B, wb); }   // la cebra cruza la calzada entera
+            else { va = enCinta(A, 0.7 * mk.lado); vb = enCinta(A, wa * mk.lado); vc = enCinta(B, 0.7 * mk.lado); vd = enCinta(B, wb * mk.lado); }   // la línea, la mitad que llega al cruce
+            decales.push({ T: T, tipo: mk.tipo, m: mk, v: [va, vb, vc, vd] });
+          }
           escribeFila(T, fila);
           filaAnt = { T: T, fila: fila };
-          sUlt = sp;
-          // La marca transversal que caiga en esta fila: un cuadrilátero suelto,
-          // de la línea de eje al bordillo de su mitad, 40 cm a lo largo y centímetro
-          // y medio por encima del asfalto, como la junta de la glorieta. Se escribe
-          // al final, aparte de la cinta: metido entre dos filas rompería el cosido
-          // de ocho vértices.
-          for (k = 0; k < marcas.length; k++) {
-            if (Math.abs(marcas[k].s - sp) > 0.05) continue;
-            var u0 = 0.7 * marcas[k].lado, u1 = (c - 0.1) * marcas[k].lado, ys = hF + 0.235, yc2 = hC + 0.235;
-            if (Math.abs(u1) <= Math.abs(u0)) continue;
-            decales.push({ T: T, tipo: marcas[k].tipo, s: sp, v: [
-              [p0.x + nx * u0 - tx * 0.2, ys, p0.z + nz * u0 - tz * 0.2, yc2, u0],
-              [p0.x + nx * u1 - tx * 0.2, ys, p0.z + nz * u1 - tz * 0.2, yc2, u1],
-              [p0.x + nx * u0 + tx * 0.2, ys, p0.z + nz * u0 + tz * 0.2, yc2, u0],
-              [p0.x + nx * u1 + tx * 0.2, ys, p0.z + nz * u1 + tz * 0.2, yc2, u1]] });
-          }
+          sUlt = sp; sAnt = sp;
         }
       }
       // 5) Las marcas transversales de las bocas, una vez cerradas todas las cintas.
@@ -3637,7 +3801,7 @@
         var D = decales[r], TD = D.T, d0 = TD.pos.length / 3;
         for (k = 0; k < 4; k++) {
           var dv = D.v[k];
-          TD.pos.push(dv[0], dv[1], dv[2]); TD.hcs.push(dv[3]); TD.vias.push(dv[4], D.s, D.tipo);
+          TD.pos.push(dv[0], dv[1], dv[2]); TD.hcs.push(dv[3]); TD.vias.push(dv[4], 0, D.tipo);
         }
         // Mismo devanado que las filas: u creciente dentro de la fila, s creciente
         // entre filas, y la mitad de la izquierda lo invierte para seguir mirando
@@ -3645,7 +3809,7 @@
         if (D.v[1][4] > D.v[0][4]) TD.idx.push(d0, d0 + 1, d0 + 2, d0 + 1, d0 + 3, d0 + 2);
         else TD.idx.push(d0 + 1, d0, d0 + 3, d0, d0 + 2, d0 + 3);
         TD.cose = false;
-        S.marcas.push({ x: (D.v[0][0] + D.v[3][0]) * 0.5, z: (D.v[0][2] + D.v[3][2]) * 0.5, tipo: D.tipo });
+        if (!D.m.reg) { D.m.reg = true; S.marcas.push({ x: (D.v[0][0] + D.v[3][0]) * 0.5, z: (D.v[0][2] + D.v[3][2]) * 0.5, tipo: D.tipo }); }
       }
       // 6) Las glorietas: anillo de asfalto sin marcas, bordillo e isla central.
       for (r = 0; r < cru.glorietas.length; r++) {
@@ -3861,7 +4025,98 @@
       }
       renderer.render(scene, camera);
       S.frame++;
+      if (S.bench) benchFrame(now);
       syncLoop();
+    }
+    // --- Medida de fluidez (v0.10.13) ------------------------------------------------
+    // Ninguna cifra de fluidez de este proyecto estaba medida en una tarjeta
+    // gráfica de verdad: el entorno donde se construye dibuja por software a uno o
+    // dos cuadros por segundo. La medida se hace donde hay tarjeta: en el panel del
+    // usuario. Cuatro encuadres fijos —la ciudad entera, el centro, un hito de
+    // cerca y a pie en un cruce—, un segundo de calentamiento y unos segundos de
+    // cuenta cada uno; de cada vista se anota la media, el peor cuadro, los
+    // triángulos y las llamadas de dibujo del último cuadro, y el nombre de la
+    // tarjeta que da el navegador. Corre dentro del bucle normal de dibujo, así
+    // que mide lo mismo que ve el usuario, y al terminar devuelve la cámara donde
+    // estaba.
+    function gpuName() {
+      try {
+        var gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
+        return String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+      } catch (e) { return '?'; }
+    }
+    function ponVista(v) {
+      cam.flight = null;
+      cam.cur.theta = cam.goal.theta = v.theta; cam.cur.phi = cam.goal.phi = v.phi;
+      cam.cur.radius = cam.goal.radius = clamp(v.radius, cam.minR, cam.maxR);
+      cam.cur.target.copy(v.target); cam.goal.target.copy(v.target);
+    }
+    function copiaVista(v) { return { theta: v.theta, phi: v.phi, radius: v.radius, target: v.target.clone() }; }
+    /** Un cruce de la trama de barrio más grande, mirando a lo largo de la calle. */
+    function puntoAPie() {
+      var t = null, i;
+      for (i = 0; i < S.tramas.length; i++) if (!t || S.tramas[i].R > t.R) t = S.tramas[i];
+      if (!t) return { x: S.gridCenter.x, z: S.gridCenter.z, yaw: 0 };
+      var cs = Math.cos(t.ang), sn = Math.sin(t.ang), d = t.paso;
+      // El frente a pie es (−sin yaw, −cos yaw): para mirar por (cs, sn), yaw = atan2(−cs, −sn).
+      return { x: t.x + cs * d - sn * d + cs * 12, z: t.z + sn * d + cs * d + sn * 12, yaw: Math.atan2(-cs, -sn) };
+    }
+    function bench(opts) {
+      opts = opts || {};
+      if (!S.ready) return Promise.reject(new Error('la ciudad no está cargada'));
+      if (S.xr) return Promise.reject(new Error('no se mide en VR'));
+      if (S.bench) return S.bench.promise;
+      var seg = clamp(Number(opts.segundos) || 4, 1, 20);
+      var vistas = [
+        { id: 'ciudad', pon: function () { setMode('orbit'); ponVista(cityView()); } },
+        { id: 'centro', pon: function () { setMode('orbit'); ponVista(skylineView()); } },
+        { id: 'cerca', pon: function () {
+          setMode('orbit');
+          var l = S.lmIndex.burj_khalifa || tallestLandmark();
+          ponVista(l ? { theta: 2.6, phi: 1.05, radius: Math.max(l.h * 2.2, l.w * 3, 300), target: new THREE.Vector3(l.x, l.y, l.z) } : cityView());
+        } },
+        { id: 'a_pie', pon: function () {
+          var p = puntoAPie();
+          setMode('walk'); walk.pos.set(p.x, 0, p.z); walk.yaw = p.yaw; walk.pitch = 0.05; walk.fly = 0;
+        } }
+      ];
+      var b = {
+        vistas: vistas, i: -1, fase: 2, t0: 0, n: 0, peor: 0, ultimo: 0, res: [], seg: seg, inicio: performance.now(),
+        guardado: { mode: S.mode, cur: copiaVista(cam.cur), goal: copiaVista(cam.goal), flight: cam.flight, pos: walk.pos.clone(), yaw: walk.yaw, pitch: walk.pitch, fly: walk.fly }
+      };
+      b.promise = new Promise(function (resolve, reject) { b.resolve = resolve; b.reject = reject; });
+      S.bench = b;
+      syncLoop();
+      return b.promise;
+    }
+    /** Un cuadro de la medida: fase 0 calienta un segundo, fase 1 cuenta, fase 2 pasa a la vista siguiente. */
+    function benchFrame(now) {
+      var b = S.bench;
+      if (b.fase === 2) {
+        b.i++;
+        if (b.i >= b.vistas.length) { benchFin(); return; }
+        b.vistas[b.i].pon(); b.fase = 0; b.t0 = now;
+        return;
+      }
+      if (b.fase === 0) {
+        if (now - b.t0 >= 1000) { b.fase = 1; b.t0 = now; b.ultimo = now; b.n = 0; b.peor = 0; }
+        return;
+      }
+      var ms = now - b.ultimo; b.ultimo = now; b.n++;
+      if (ms > b.peor) b.peor = ms;
+      if (now - b.t0 >= b.seg * 1000) {
+        var el = (now - b.t0) / 1000;
+        b.res.push({ vista: b.vistas[b.i].id, fps: Math.round(b.n / el * 10) / 10, fpsMin: Math.round(1000 / Math.max(b.peor, 1) * 10) / 10, cuadros: b.n,
+                     triangulos: renderer.info.render.triangles, llamadas: renderer.info.render.calls });
+        b.fase = 2;
+      }
+    }
+    function benchFin() {
+      var b = S.bench, g = b.guardado; S.bench = null;
+      if (g.mode === 'walk') { setMode('walk'); walk.pos.copy(g.pos); walk.yaw = g.yaw; walk.pitch = g.pitch; walk.fly = g.fly; }
+      else { setMode('orbit'); ponVista(g.cur); cam.goal.theta = g.goal.theta; cam.goal.phi = g.goal.phi; cam.goal.radius = g.goal.radius; cam.goal.target.copy(g.goal.target); cam.flight = g.flight; }
+      b.resolve({ gpu: gpuName(), calidad: qualityName, ancho: renderer.domElement.width, alto: renderer.domElement.height, pixelRatio: renderer.getPixelRatio(),
+                  segundos: b.seg, duracion: Math.round((performance.now() - b.inicio) / 100) / 10, vistas: b.res });
     }
     function resize() {
       if (S.disposed) return;
@@ -4023,6 +4278,7 @@
         try { var px = new Uint8Array(4 * 4 * 4); renderer.readRenderTargetPixels(envRT, 0, 0, 4, 4, px, 2); var sum = 0; for (var i = 0; i < 64; i++) sum += px[i]; env = Math.round(sum / 64); } catch (e) { env = -1; }
         return { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame, landmarks: S.landmarks.length, skyline: S.clusterTotal, solidos: S.catastro ? S.catastro.items.length : 0, avatars: S.avatarOrder.length, quality: qualityName, mode: S.xr ? 'vr' : S.mode, env: env };
       },
+      bench: bench, gpu: gpuName,
       latLonToCell: latLonToCell,
       cellLatLon: cellLatLon,
       grid: function () { return { size: N, cellMeters: CELL, anchor: anchor }; },
@@ -4043,6 +4299,7 @@
       dispose: function () {
         if (S.disposed) return;
         S.disposed = true; syncLoop();
+        if (S.bench) { S.bench.reject(new Error('cliente cerrado')); S.bench = null; }
         if (xr.session) { try { xr.session.end(); } catch (e) {} }
         canvas.removeEventListener('pointerdown', L.pointerdown); canvas.removeEventListener('pointermove', L.pointermove);
         canvas.removeEventListener('pointerup', L.pointerup); canvas.removeEventListener('pointercancel', L.pointerup);

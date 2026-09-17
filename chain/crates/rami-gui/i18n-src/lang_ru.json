@@ -690,5 +690,17 @@
  "torre": "башня",
  "villa": "вилла",
  "nave": "склад",
- "edificio": "здание"
+ "edificio": "здание",
+ "⏱ Fluidez": "⏱ Кадры/с",
+ "@title:Mide la fluidez en este equipo: cuatro vistas fijas, unos veinte segundos": "@title:Измерить частоту кадров на этом компьютере: четыре фиксированных вида, около двадцати секунд",
+ "Midiendo la fluidez: cuatro vistas fijas, unos veinte segundos…": "Измеряется частота кадров: четыре фиксированных вида, около двадцати секунд…",
+ "ciudad entera": "весь город",
+ "vista del centro": "вид на центр",
+ "un hito de cerca": "достопримечательность вблизи",
+ "a pie en un cruce": "пешком на перекрёстке",
+ "mín": "мин",
+ "triángulos": "треугольников",
+ "llamadas": "вызовов отрисовки",
+ "calidad": "качество",
+ "No se pudo medir": "Не удалось измерить"
 }

@@ -690,5 +690,17 @@
  "torre": "mnara",
  "villa": "villa",
  "nave": "ghala",
- "edificio": "jengo"
+ "edificio": "jengo",
+ "⏱ Fluidez": "⏱ Fremu",
+ "@title:Mide la fluidez en este equipo: cuatro vistas fijas, unos veinte segundos": "@title:Pima kasi ya fremu kwenye kompyuta hii: mionekano minne isiyobadilika, sekunde ishirini hivi",
+ "Midiendo la fluidez: cuatro vistas fijas, unos veinte segundos…": "Inapima kasi ya fremu: mionekano minne isiyobadilika, sekunde ishirini hivi…",
+ "ciudad entera": "jiji zima",
+ "vista del centro": "mwonekano wa katikati",
+ "un hito de cerca": "alama ya jiji kwa karibu",
+ "a pie en un cruce": "kwa miguu kwenye makutano",
+ "mín": "chini",
+ "triángulos": "pembetatu",
+ "llamadas": "miito ya kuchora",
+ "calidad": "ubora",
+ "No se pudo medir": "Haikuweza kupima"
 }
