@@ -1,3 +1,38 @@
+## Novedades de v0.10.11 — las líneas de detención y el ceda el paso
+
+Sigue la entrega 5 del plan del metaverso (`docs/METAVERSO.md`). **No toca el
+consenso, la red ni el formato de los ficheros.**
+
+La calle que cedía llegaba al cruce con sus marcas de carril y se acababa: ni
+una raya que dijera dónde parar. Ahora las bocas van pintadas:
+
+- **Una línea de detención en cada boca de la calle que cede**, 7.876 en los
+  4.505 cruces: banda continua de 40 cm, de la línea de eje al bordillo, solo en
+  la **mitad que llega al cruce** —la derecha de su sentido de marcha, que aquí se
+  circula por la derecha—. Va donde el arco de la esquina ya ha terminado y, como
+  poco, un metro por detrás de la acera de la preferente, que es por donde cruza
+  la gente.
+- **Ceda el paso en las entradas de las glorietas**, 23 en las siete: línea
+  discontinua —60 cm pintados, 30 de hueco— metro y pico antes del anillo, en la
+  misma mitad.
+- **Son cuadriláteros sueltos, no filas de la cinta.** Cada marca son cuatro
+  vértices y dos triángulos escritos en la tesela de su calle, con la misma cota
+  basta para el relevo de nivel y centímetro y medio por encima del asfalto, como
+  la junta de la glorieta. Metidas entre dos filas de la cinta habrían roto el
+  cosido de ocho vértices. Dos clases nuevas en el mismo sombreador: pintura
+  continua y pintura discontinua por la coordenada transversal, con el mismo
+  desvanecido de lejos que las demás marcas.
+
+**Lo que cuesta.** La malla de calzada pasa de 964.208 a 983.240 triángulos
+(15.798 de las marcas, el resto de las filas que hubo que añadir donde no había
+una). A pie en un cruce, de 740.308 a 741.322: un 0,14 %. La ciudad entera, de
+1.797.684 a 1.816.716 en las mismas 65 llamadas de dibujo. Ninguna llamada nueva:
+las marcas van dentro de las mallas de la calzada.
+
+**Lo que sigue faltando:** los coches y los avatares se siguen atravesando; no hay
+pasos de peatones; y sigue sin haber ni una cifra de fluidez medida en una tarjeta
+gráfica de verdad.
+
 ## Novedades de v0.10.10 — las palmeras dejan de enviarse enteras
 
 Sigue la entrega 5 del plan del metaverso (`docs/METAVERSO.md`). **No toca el
@@ -486,6 +521,41 @@ altura sin romperse.
   con los binarios de la v0.7.0 y la v0.7.3. Un binario v0.8.0 que abra un
   `chain.jsonl` escrito por la 0.9.0 con transacciones de mercado no lo lee
   (por red nunca las recibe): la salida es volver a la 0.9.0.
+
+## What's new in v0.10.11 — the stop lines and the give-way lines
+
+Continues delivery 5 of the metaverse plan (`docs/METAVERSO.md`). **It does not
+touch consensus, the network or the file formats.**
+
+The street that gave way reached the junction with its lane markings and just
+ended: not one stripe saying where to stop. The mouths are now painted:
+
+- **A stop line at every mouth of the street that gives way**, 7,876 across the
+  4,505 junctions: a solid 40 cm band from the centre line to the kerb, only on
+  the **half that arrives at the junction** — the right-hand half of its
+  direction of travel; traffic here keeps right. It sits where the corner arc has
+  already ended and at least one metre behind the priority road's pavement, which
+  is where people cross.
+- **Give-way lines at the roundabout entries**, 23 across the seven: a broken
+  line — 60 cm painted, 30 cm gap — a metre and a bit before the ring, on the
+  same half.
+- **They are loose quads, not ribbon rows.** Each marking is four vertices and
+  two triangles written into its street's tile, with the same coarse height for
+  the level relay and one and a half centimetres above the asphalt, like the
+  roundabout's joint. Slipped between two ribbon rows they would have broken the
+  eight-vertex stitching. Two new classes in the same shader: solid paint and
+  paint broken along the transverse coordinate, with the same distance fade as
+  the other markings.
+
+**What it costs.** The roadway mesh goes from 964,208 to 983,240 triangles
+(15,798 from the markings, the rest from the rows that had to be added where
+none existed). On foot at a junction, from 740,308 to 741,322: 0.14 %. The whole
+city, from 1,797,684 to 1,816,716 in the same 65 draw calls. No new call: the
+markings live inside the roadway meshes.
+
+**What is still missing:** cars and avatars still pass through each other; there
+are no pedestrian crossings; and there is still not one frame-rate figure
+measured on real graphics hardware.
 
 ## What's new in v0.10.10 — the palms stop being sent whole
 

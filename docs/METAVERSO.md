@@ -219,8 +219,15 @@ triángulos frente a 914.196) por una llamada de dibujo menos; el peor caso paga
 15 llamadas más. Las palmeras eran el 21 % de la escena, no el 44 % que decía la
 nota anterior: ese número contaba una pasada de sombra que no las dibuja.
 
-**Pendiente de esta entrega:** no hay líneas de detención ni ceda el paso
-pintados. Y queda el experimento que decide el presupuesto de todo lo demás:
+**Hecho en la v0.10.11:** las líneas de detención y el ceda el paso. Cada boca de
+la calle que cede lleva una banda continua de 40 cm en la mitad que llega al
+cruce (7.876 en los 4.505 cruces), y cada entrada de glorieta una discontinua
+(23 en las siete). Son cuadriláteros sueltos dentro de las mallas de la calzada,
+con dos clases nuevas de pintura en el mismo sombreador: a pie cuestan un 0,14 %
+y ninguna llamada de dibujo.
+
+**Pendiente de esta entrega:** queda el experimento que decide el presupuesto de
+todo lo demás:
 **quitar el buffer de profundidad logarítmico**, que hoy obliga a todos los
 sombreadores a escribir profundidad y anula el descarte temprano de píxeles en
 la escena entera. Es el número más grande que nadie ha medido.
