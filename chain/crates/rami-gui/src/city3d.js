@@ -2407,7 +2407,7 @@
           if (prev) { len += prev.distanceTo(p); cum.push(len); }
           pts.push(p); prev = p;
         }
-        if (pts.length >= 2 && len > 2000) paths.push({ pts: pts, cum: cum, len: len });
+        if (pts.length >= 2 && len > 2000) paths.push({ pts: pts, cum: cum, len: len, id: paths.length });
       }
       return paths;
     }
@@ -2420,7 +2420,8 @@
         var pick = rnd() * total, acc = 0, pi = 0;
         for (pi = 0; pi < paths.length; pi++) { acc += paths[pi].len; if (pick <= acc) break; }
         pi = Math.min(pi, paths.length - 1);
-        cars.push({ path: paths[pi], t: rnd() * paths[pi].len, v: 22 + rnd() * 14, dir: rnd() < 0.5 ? 1 : -1, hue: rnd() });
+        var vc = 22 + rnd() * 14;
+        cars.push({ path: paths[pi], t: rnd() * paths[pi].len, v: vc, vel: vc, dir: rnd() < 0.5 ? 1 : -1, hue: rnd() });
       }
       var m = new THREE.InstancedMesh(C.cars.geometry, plainMat, cars.length); m.frustumCulled = false; m.receiveShadow = true; m.name = 'traffic';
       for (i = 0; i < cars.length; i++) m.setColorAt(i, tmpColor.setHSL(cars[i].hue, cars[i].hue < 0.3 ? 0.1 : 0.6, 0.55));
@@ -2429,12 +2430,98 @@
       S.traffic = { cars: cars, mesh: m };
     }
     var _tp = new THREE.Vector3(), _tq = new THREE.Vector3();
+    // --- Colisión con lo que se mueve (v0.10.12) ------------------------------------
+    // El jugador chocaba con las fachadas y con nada más: los coches lo
+    // atravesaban y él atravesaba a los demás avatares. Ahora los coches son cajas
+    // orientadas por su sentido de marcha —2,3 m de medio largo y 1 m de medio
+    // ancho, lo que mide la carrocería con faros y ruedas— y los avatares ajenos
+    // círculos de 35 cm, y el jugador sale de los dos con el mismo empuje por la
+    // normal que ya usaba con los edificios. Los coches, además, frenan: por el que
+    // llevan delante en su misma vía y sentido, y por el jugador si pisa su carril,
+    // y arrancan otra vez cuando el hueco se abre.
+    var COCHE_HL = 2.3, COCHE_HW = 1.0, AVATAR_R = 0.35;
+    // Un coche a 22 m/s necesita 40 m para pararse a 6 m/s²; a 36 m/s, 108. La
+    // distancia a la que empieza a frenar sale de su propia velocidad, y el
+    // perfil es el de una deceleración constante: v·√(hueco / D).
+    var COCHE_FRENO = 7, COCHE_DECEL = 6, COCHE_ACEL = 3;
+    /** El punto del suelo que ocupa el jugador, o null si va volando o en órbita. */
+    function jugadorEnSuelo() {
+      if (S.xr) return rig.position;
+      if (S.mode === 'walk' && walk.fly < 2) return walk.pos;
+      return null;
+    }
+    /**
+     * Saca un círculo de radio `r` de cualquier coche o avatar ajeno que pise y
+     * devuelve qué lo empujó ('coche', 'avatar' o null). El coche se trata en su
+     * marco (adelante, derecha): la misma matemática de caja que `empujarFuera`.
+     */
+    function empujarDeMoviles(pos, r) {
+      var tocado = null, i, tr = S.traffic;
+      if (tr && tr.mesh) for (i = 0; i < tr.cars.length; i++) {
+        var c = tr.cars[i]; if (c.fx === undefined) continue;
+        var dx = pos.x - c.x, dz = pos.z - c.z;
+        if (dx * dx + dz * dz > 16) continue;                      // a más de 4 m no toca
+        var al = dx * c.fx + dz * c.fz, la = -dx * c.fz + dz * c.fx;
+        var cx = clamp(al, -COCHE_HL, COCHE_HL), cz = clamp(la, -COCHE_HW, COCHE_HW);
+        var ex = al - cx, ez = la - cz, d2 = ex * ex + ez * ez;
+        if (d2 >= r * r) continue;
+        var d = Math.sqrt(d2);
+        if (d > 1e-4) { ex /= d; ez /= d; }
+        else {
+          var px = COCHE_HL - Math.abs(al), pz = COCHE_HW - Math.abs(la);
+          if (px < pz) { ex = al >= 0 ? 1 : -1; ez = 0; d = -px; } else { ex = 0; ez = la >= 0 ? 1 : -1; d = -pz; }
+        }
+        var emp = r - d;
+        pos.x += (ex * c.fx - ez * c.fz) * emp; pos.z += (ex * c.fz + ez * c.fx) * emp;
+        tocado = 'coche';
+      }
+      for (i = 0; i < S.avatarOrder.length; i++) {
+        var e = S.avatars[S.avatarOrder[i]]; if (!e) continue;
+        var ax = pos.x - e.cur.x, az = pos.z - e.cur.z, ad2 = ax * ax + az * az, rr = r + AVATAR_R;
+        if (ad2 >= rr * rr) continue;
+        var ad = Math.sqrt(ad2);
+        if (ad < 1e-4) { ax = 1; az = 0; } else { ax /= ad; az /= ad; }
+        pos.x += ax * (rr - ad); pos.z += az * (rr - ad);
+        tocado = 'avatar';
+      }
+      return tocado;
+    }
+    /** Por vía y sentido, cuánto hueco lleva cada coche hasta el de delante (metros por la vía). */
+    function ordenaColas(cars) {
+      var grupos = {}, i, k, key;
+      for (i = 0; i < cars.length; i++) { key = cars[i].path.id + ':' + cars[i].dir; (grupos[key] || (grupos[key] = [])).push(cars[i]); }
+      for (key in grupos) {
+        if (!Object.prototype.hasOwnProperty.call(grupos, key)) continue;
+        var g = grupos[key], n = g.length, len = g[0].path.len;
+        g.sort(function (a, b) { return a.t - b.t; });
+        for (k = 0; k < n; k++) {
+          var c = g[k];
+          if (n < 2) { c.hueco = 1e9; continue; }
+          var d = c.dir > 0 ? g[(k + 1) % n] : g[(k - 1 + n) % n];
+          var h = c.dir > 0 ? d.t - c.t : c.t - d.t;
+          if (h < 0) h += len;
+          c.hueco = h;
+        }
+      }
+    }
     function updateTraffic(dt) {
       var tr = S.traffic; if (!tr || !tr.mesh) return;
-      var i, j;
+      var i, j, jug = jugadorEnSuelo();
+      ordenaColas(tr.cars);
       for (i = 0; i < tr.cars.length; i++) {
         var c = tr.cars[i], P = c.path;
-        c.t += c.v * dt * c.dir;
+        // El hueco libre por delante: el coche de su cola y, si el jugador pisa el
+        // carril, el jugador. Se para a COCHE_FRENO metros del obstáculo; antes,
+        // la velocidad sigue el perfil de una deceleración constante.
+        var hueco = c.hueco;
+        if (jug && c.fx !== undefined) {
+          var dx = jug.x - c.x, dz = jug.z - c.z, al = dx * c.fx + dz * c.fz, la = -dx * c.fz + dz * c.fx;
+          if (al > -COCHE_HL && al < hueco && Math.abs(la) < 2.4) hueco = Math.max(0, al);
+        }
+        var D = c.v * c.v / (2 * COCHE_DECEL);
+        var meta = c.v * Math.sqrt(clamp((hueco - COCHE_FRENO) / D, 0, 1));
+        c.vel = meta < c.vel ? Math.max(meta, c.vel - COCHE_DECEL * 1.5 * dt) : Math.min(meta, c.vel + COCHE_ACEL * dt);
+        c.t += c.vel * dt * c.dir;
         if (c.t > P.len) c.t -= P.len; else if (c.t < 0) c.t += P.len;
         for (j = 1; j < P.cum.length && P.cum[j] < c.t; j++) {}
         j = Math.min(j, P.pts.length - 1);
@@ -2445,6 +2532,9 @@
         var side = c.dir * 4.5;
         _tp.x += -_tq.z * side; _tp.z += _tq.x * side;
         _tp.y = groundH(_tp.x, _tp.z) + 0.4;
+        // La pose se guarda: es lo que consultan el empuje del jugador y el
+        // frenado del cuadro siguiente.
+        c.x = _tp.x; c.z = _tp.z; c.fx = _tq.x * c.dir; c.fz = _tq.z * c.dir;
         dummy.position.copy(_tp); dummy.rotation.set(0, yaw, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix();
         tr.mesh.setMatrixAt(i, dummy.matrix);
       }
@@ -3710,6 +3800,11 @@
         else { var alto = solidoBajo(walk.pos.x, walk.pos.z); walk.choque = null;
           if (!alto || walk.pos.y + walk.fly < alto.y0 + alto.h) empujarFuera(walk.pos, 0.42); }
       }
+      // Lo que se mueve empuja aunque el jugador esté quieto: un coche que llega
+      // por detrás no lo atraviesa. Y si el empujón lo mete en una fachada, la
+      // fachada gana.
+      if (walk.fly < 2) { walk.choqueMovil = empujarDeMoviles(walk.pos, 0.42); if (walk.choqueMovil) empujarFuera(walk.pos, 0.42); }
+      else walk.choqueMovil = null;
       walk.pos.y = groundH(walk.pos.x, walk.pos.z);
       // La capa de parcelas baja hasta rozar el suelo mientras se anda (si no,
       // flotaría a la altura de los ojos y taparía la calle).
@@ -3839,6 +3934,7 @@
       }
       var gh = groundH(rig.position.x, rig.position.z);
       if (rig.position.y < gh) rig.position.y = gh;
+      if (rig.position.y - gh < 2) empujarDeMoviles(rig.position, 0.42);
     }
     var xrLast = 0;
     function xrFrame(now) {
@@ -3978,7 +4074,9 @@
         try { renderer.forceContextLoss(); } catch (e2) {}
         if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
       },
-      _debug: { scene: scene, camera: camera, renderer: renderer, state: S, meshes: C, cam: cam, walk: walk, vrPlacement: function () { return vrPlacement(new THREE.Vector3()); }, keysDown: function () { return Object.keys(keys); }, pick: pick, rayoSolido: rayoSolido, empujarFuera: empujarFuera }
+      _debug: { scene: scene, camera: camera, renderer: renderer, state: S, meshes: C, cam: cam, walk: walk, vrPlacement: function () { return vrPlacement(new THREE.Vector3()); }, keysDown: function () { return Object.keys(keys); }, pick: pick, rayoSolido: rayoSolido, empujarFuera: empujarFuera, empujarDeMoviles: empujarDeMoviles,
+        // Un paso de simulación sin dibujar, para probar la colisión sin depender del reloj.
+        paso: function (dt) { if (!S.ready) return; updateCamera(dt); updateTraffic(dt); updateAvatars(dt); } }
     };
     return handle;
   }
