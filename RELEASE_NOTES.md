@@ -1,3 +1,45 @@
+## Novedades de v0.10.12 — la colisión con lo que se mueve
+
+Sigue la entrega 5 del plan del metaverso (`docs/METAVERSO.md`). **No toca el
+consenso, la red ni el formato de los ficheros.**
+
+El jugador chocaba con las fachadas y con nada más: los coches lo atravesaban y
+él atravesaba a los demás avatares. Ahora:
+
+- **Los coches son sólidos.** Cada coche es una caja orientada por su sentido de
+  marcha —2,3 m de medio largo y 1 m de medio ancho, lo que mide la carrocería
+  con faros y ruedas— y el jugador sale de ella con el mismo empuje por la normal
+  que ya usaba con los edificios. El empuje se aplica **cada cuadro**, no solo al
+  pulsar una tecla: un coche que llega por detrás no atraviesa a un jugador
+  quieto. Y si el empujón lo mete en una fachada, la fachada gana.
+- **Los avatares ajenos también.** Círculos de 35 cm; contra el jugador, de 42,
+  la distancia mínima queda en 77 cm.
+- **Los coches frenan.** Por el que llevan delante en su misma vía y sentido, y
+  por el jugador si pisa su carril: se paran a siete metros del obstáculo con el
+  perfil de una deceleración constante de 6 m/s² —un coche a 22 m/s empieza a
+  frenar a 40 m; a 36 m/s, a 108— y arrancan otra vez cuando el hueco se abre.
+  En cola, el de atrás se ajusta a la velocidad del de delante y guarda hueco.
+- **En VR, lo mismo**: el mismo empuje sobre el rig cuando va a ras de suelo.
+
+**Cómo se ha comprobado.** Con un paso de simulación sin dibujar, expuesto en
+`_debug.paso(dt)`, que hace las pruebas deterministas: a 2 cuadros por segundo
+en el navegador sin pantalla un segundo de reloj es una décima de simulación, y
+las pruebas de la primera pasada ni llegaron a ejecutar un cuadro. Con 900 pasos
+de 1/60 s: un coche a 22,6 m/s se para a 7,0 m del centro (4,7 del morro) del
+jugador en 4,2 s sin moverlo un milímetro, y arranca 1,7 s después de que se
+aparte; un jugador plantado dentro de un coche sale de la caja en un paso; contra
+un avatar la distancia mínima es 0,77 m exactos; en cola, el de atrás baja de
+22,6 a los 8 m/s del de delante y se queda a 12,3 m.
+
+**Lo que cuesta.** Ninguna geometría nueva: el mismo presupuesto de triángulos y
+llamadas de dibujo. Por cuadro, ordenar los coches por vía y sentido y mirar los
+que están a menos de cuatro metros del jugador.
+
+**Lo que sigue faltando:** los avatares ajenos van donde dice su cliente, así que
+solo se empuja al jugador local; los coches no esquivan, solo frenan; no hay
+pasos de peatones; y sigue sin haber ni una cifra de fluidez medida en una
+tarjeta gráfica de verdad.
+
 ## Novedades de v0.10.11 — las líneas de detención y el ceda el paso
 
 Sigue la entrega 5 del plan del metaverso (`docs/METAVERSO.md`). **No toca el
@@ -521,6 +563,49 @@ altura sin romperse.
   con los binarios de la v0.7.0 y la v0.7.3. Un binario v0.8.0 que abra un
   `chain.jsonl` escrito por la 0.9.0 con transacciones de mercado no lo lee
   (por red nunca las recibe): la salida es volver a la 0.9.0.
+
+## What's new in v0.10.12 — collision with what moves
+
+Continues delivery 5 of the metaverse plan (`docs/METAVERSO.md`). **It does not
+touch consensus, the network or the file formats.**
+
+The player collided with façades and with nothing else: cars drove through them
+and they walked through other avatars. Now:
+
+- **Cars are solid.** Each car is a box oriented along its direction of travel
+  — 2.3 m half-length and 1 m half-width, what the body measures with lights
+  and wheels — and the player is pushed out of it by the same normal push already
+  used for buildings. The push runs **every frame**, not only on a key press: a
+  car arriving from behind does not pass through a standing player. And if the
+  shove puts them into a façade, the façade wins.
+- **Other avatars too.** 35 cm circles; against the player's 42, the minimum
+  distance is 77 cm.
+- **Cars brake.** For the car ahead on the same road and direction, and for the
+  player standing in their lane: they stop seven metres from the obstacle
+  following the profile of a constant 6 m/s² deceleration — a car at 22 m/s
+  starts braking at 40 m; at 36 m/s, at 108 — and pull away again when the gap
+  opens. In a queue the rear car settles at the speed of the one ahead and keeps
+  its distance.
+- **In VR, the same**: the same push on the rig when it is at ground level.
+
+**How it was checked.** With a simulation step that draws nothing, exposed as
+`_debug.paso(dt)`, which makes the tests deterministic: at 2 frames per second
+in the headless browser one second of clock is a tenth of a second of
+simulation, and the first pass of tests never got to run a frame. With 900 steps
+of 1/60 s: a car at 22.6 m/s stops 7.0 m from the player's centre (4.7 from the
+bumper) in 4.2 s without moving them a millimetre, and pulls away 1.7 s after
+they step aside; a player planted inside a car leaves the box in one step;
+against an avatar the minimum distance is exactly 0.77 m; in a queue the rear
+car drops from 22.6 to the 8 m/s of the one ahead and settles 12.3 m behind.
+
+**What it costs.** No new geometry: the same triangle and draw-call budget. Per
+frame, sorting the cars by road and direction and checking those within four
+metres of the player.
+
+**What is still missing:** other avatars go where their own client says, so only
+the local player is pushed; cars do not swerve, they only brake; there are no
+pedestrian crossings; and there is still not one frame-rate figure measured on
+real graphics hardware.
 
 ## What's new in v0.10.11 — the stop lines and the give-way lines
 

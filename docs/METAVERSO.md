@@ -226,6 +226,12 @@ cruce (7.876 en los 4.505 cruces), y cada entrada de glorieta una discontinua
 con dos clases nuevas de pintura en el mismo sombreador: a pie cuestan un 0,14 %
 y ninguna llamada de dibujo.
 
+**Hecho en la v0.10.12:** la colisión con lo que se mueve. Los coches son cajas
+orientadas por su sentido de marcha y los avatares ajenos círculos; el jugador
+sale de los dos cada cuadro con el mismo empuje que ya usaba con las fachadas, y
+los coches frenan por el de delante y por el jugador en su carril con el perfil
+de una deceleración constante. Probado con un paso de simulación determinista.
+
 **Pendiente de esta entrega:** queda el experimento que decide el presupuesto de
 todo lo demás:
 **quitar el buffer de profundidad logarítmico**, que hoy obliga a todos los
