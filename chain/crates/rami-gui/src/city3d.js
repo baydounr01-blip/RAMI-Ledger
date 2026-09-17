@@ -2408,7 +2408,15 @@
           if (prev) { len += prev.distanceTo(p); cum.push(len); }
           pts.push(p); prev = p;
         }
-        if (pts.length >= 2 && len > 2000) paths.push({ pts: pts, cum: cum, len: len, id: paths.length });
+        if (pts.length < 2 || len <= 2000) continue;
+        // El ancho de la vía, medido igual que al levantarla (por su longitud
+        // remuestreada), da el sitio que tiene un coche para desviarse: del
+        // carril hacia el eje hasta quedarse a 1,2 m de él y hacia fuera hasta
+        // quedarse a 1,2 m del bordillo.
+        var m0 = remuestrea(line, S.geo, VIA_PASO), largo = 0, k;
+        for (k = 0; k + 1 < m0.length; k++) largo += Math.sqrt(Math.pow(m0[k + 1].x - m0[k].x, 2) + Math.pow(m0[k + 1].z - m0[k].z, 2));
+        var an = anchoVia(largo / 1000);
+        paths.push({ pts: pts, cum: cum, len: len, id: paths.length, desvMin: 1.2 - COCHE_CARRIL, desvMax: an.calzada * 0.5 - 1.2 - COCHE_CARRIL });
       }
       return paths;
     }
@@ -2422,7 +2430,7 @@
         for (pi = 0; pi < paths.length; pi++) { acc += paths[pi].len; if (pick <= acc) break; }
         pi = Math.min(pi, paths.length - 1);
         var vc = 22 + rnd() * 14;
-        cars.push({ path: paths[pi], t: rnd() * paths[pi].len, v: vc, vel: vc, dir: rnd() < 0.5 ? 1 : -1, hue: rnd() });
+        cars.push({ path: paths[pi], t: rnd() * paths[pi].len, v: vc, vel: vc, dir: rnd() < 0.5 ? 1 : -1, hue: rnd(), desvio: 0, lado: 0 });
       }
       var m = new THREE.InstancedMesh(C.cars.geometry, plainMat, cars.length); m.frustumCulled = false; m.receiveShadow = true; m.name = 'traffic';
       for (i = 0; i < cars.length; i++) m.setColorAt(i, tmpColor.setHSL(cars[i].hue, cars[i].hue < 0.3 ? 0.1 : 0.6, 0.55));
@@ -2439,12 +2447,19 @@
     // círculos de 35 cm, y el jugador sale de los dos con el mismo empuje por la
     // normal que ya usaba con los edificios. Los coches, además, frenan: por el que
     // llevan delante en su misma vía y sentido, y por el jugador si pisa su carril,
-    // y arrancan otra vez cuando el hueco se abre.
+    // y arrancan otra vez cuando el hueco se abre. Desde la v0.10.13, antes que
+    // frenar por el jugador, se desvían para pasarle de largo.
     var COCHE_HL = 2.3, COCHE_HW = 1.0, AVATAR_R = 0.35;
     // Un coche a 22 m/s necesita 40 m para pararse a 6 m/s²; a 36 m/s, 108. La
     // distancia a la que empieza a frenar sale de su propia velocidad, y el
     // perfil es el de una deceleración constante: v·√(hueco / D).
     var COCHE_FRENO = 7, COCHE_DECEL = 6, COCHE_ACEL = 3;
+    // El desvío (v0.10.13): el coche que ve al jugador en su carril se aparta
+    // en vez de pararse, si hay sitio. El carril va a 4,5 m del eje; el coche
+    // pasa a 2,4 m del jugador, por el lado que menos lo saque del carril, y se
+    // mueve de lado a 2,5 m/s. Solo frena si no le da tiempo a quitarse antes
+    // de llegar, o si no cabe por ningún lado.
+    var COCHE_CARRIL = 4.5, DESVIO_HOLGURA = 2.4, DESVIO_V = 2.5;
     /** El punto del suelo que ocupa el jugador, o null si va volando o en órbita. */
     function jugadorEnSuelo() {
       if (S.xr) return rig.position;
@@ -2514,14 +2529,34 @@
         // El hueco libre por delante: el coche de su cola y, si el jugador pisa el
         // carril, el jugador. Se para a COCHE_FRENO metros del obstáculo; antes,
         // la velocidad sigue el perfil de una deceleración constante.
-        var hueco = c.hueco;
+        var hueco = c.hueco, D = c.v * c.v / (2 * COCHE_DECEL), quiere = 0, enVentana = false;
         if (jug && c.fx !== undefined) {
           var dx = jug.x - c.x, dz = jug.z - c.z, al = dx * c.fx + dz * c.fz, la = -dx * c.fz + dz * c.fx;
-          if (al > -COCHE_HL && al < hueco && Math.abs(la) < 2.4) hueco = Math.max(0, al);
+          // El jugador por delante, dentro de la distancia de frenado: el coche
+          // elige por qué lado pasarle. `lp` es dónde está el jugador respecto al
+          // CENTRO del carril (derecha positiva); pasar por su izquierda es ir a
+          // lp − holgura y por su derecha a lp + holgura, si cabe en la calzada.
+          if (al > -COCHE_HL - 3 && al < D + COCHE_FRENO) {
+            enVentana = true;
+            var lp = la + c.desvio, izq = lp - DESVIO_HOLGURA, der = lp + DESVIO_HOLGURA;
+            var cabeI = izq >= P.desvMin, cabeD = der <= P.desvMax;
+            // El lado se elige UNA vez y se mantiene mientras quepa. Reelegido
+            // cada cuadro, con el jugador en el centro del carril los dos lados
+            // empatan y el coche se quedaba dudando entre uno y otro sin moverse.
+            if ((c.lado < 0 && !cabeI) || (c.lado > 0 && !cabeD)) c.lado = 0;
+            if (!c.lado) c.lado = cabeI && (!cabeD || Math.abs(izq) <= Math.abs(der)) ? -1 : (cabeD ? 1 : 0);
+            quiere = c.lado < 0 ? izq : (c.lado > 0 ? der : c.desvio);   // sin sitio: se queda y frena
+            // Frena solo si el jugador sigue en su trayectoria y no le da tiempo
+            // a quitarse antes de llegar a él (o no cabe por ningún lado).
+            var tLibre = Math.abs(quiere - c.desvio) / DESVIO_V;
+            if (Math.abs(la) < DESVIO_HOLGURA && al < hueco && (al < COCHE_FRENO + c.vel * tLibre || !c.lado)) hueco = Math.max(0, al);
+          }
         }
-        var D = c.v * c.v / (2 * COCHE_DECEL);
+        if (!enVentana) c.lado = 0;
         var meta = c.v * Math.sqrt(clamp((hueco - COCHE_FRENO) / D, 0, 1));
         c.vel = meta < c.vel ? Math.max(meta, c.vel - COCHE_DECEL * 1.5 * dt) : Math.min(meta, c.vel + COCHE_ACEL * dt);
+        var desvioAntes = c.desvio;
+        c.desvio += clamp(quiere - c.desvio, -DESVIO_V * dt, DESVIO_V * dt);
         c.t += c.vel * dt * c.dir;
         if (c.t > P.len) c.t -= P.len; else if (c.t < 0) c.t += P.len;
         for (j = 1; j < P.cum.length && P.cum[j] < c.t; j++) {}
@@ -2529,8 +2564,12 @@
         var a = P.pts[j - 1], b = P.pts[j], segLen = P.cum[j] - P.cum[j - 1] || 1, u = (c.t - P.cum[j - 1]) / segLen;
         _tp.lerpVectors(a, b, u); _tq.subVectors(b, a).normalize();
         var yaw = Math.atan2(-_tq.z, _tq.x) + (c.dir < 0 ? Math.PI : 0);
-        // carril: a la derecha del sentido de marcha (4,5 m)
-        var side = c.dir * 4.5;
+        // Al desviarse gira el morro lo que dicta su velocidad de lado: girar a
+        // la derecha es girar en sentido horario visto desde arriba, o sea, yaw
+        // negativo.
+        if (dt > 0) yaw -= Math.atan2((c.desvio - desvioAntes) / dt, Math.max(c.vel, 1));
+        // carril: a la derecha del sentido de marcha (4,5 m), más el desvío
+        var side = c.dir * (COCHE_CARRIL + c.desvio);
         _tp.x += -_tq.z * side; _tp.z += _tq.x * side;
         _tp.y = groundH(_tp.x, _tp.z) + 0.4;
         // La pose se guarda: es lo que consultan el empuje del jugador y el
