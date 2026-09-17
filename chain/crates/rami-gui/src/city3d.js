@@ -1152,8 +1152,8 @@
     '  vec4 tC = texture2D(uAcera, vWorld.xz / 4.8);',          // 8 losas de 60 cm
     // Clases: 0 asfalto con marcas, 1 hormigón del bordillo, 2 losa de acera,
     // 3 asfalto sin marcas —la glorieta, que no lleva eje ni carriles pintados—,
-    // 4 pintura continua (línea de detención) y 5 pintura discontinua (ceda el
-    // paso), las dos sobre asfalto.
+    // 4 pintura continua (línea de detención), 5 pintura discontinua (ceda el
+    // paso) y 6 cebra del paso de peatones, las tres sobre asfalto.
     '  vec4 tex = clase < 0.5 ? tA : (clase < 1.5 ? tH : (clase < 2.5 ? tC : tA));',
     '  float esAsfalto = clamp(step(clase, 0.5) + step(2.5, clase), 0.0, 1.0);',
     '  vec3 base = aLineal(tex.rgb);',
@@ -1176,9 +1176,10 @@
     '    base = mix(base, vec3(0.72, 0.70, 0.64), pintura * 0.92);',
     '  }',
     // Las transversales de las bocas: continua la de detención; el ceda el paso,
-    // 60 cm pintados y 30 de hueco a lo ancho.
+    // 60 cm pintados y 30 de hueco a lo ancho; la cebra, bandas de 50 cm a lo
+    // largo de la calle con 50 de hueco, que es por donde cruza la gente.
     '  if (clase > 3.5) {',
-    '    float raya = clase > 4.5 ? step(0.34, fract(u / 0.9)) : 1.0;',
+    '    float raya = clase > 5.5 ? (1.0 - step(0.5, fract(u))) : (clase > 4.5 ? step(0.34, fract(u / 0.9)) : 1.0);',
     '    base = mix(base, vec3(0.72, 0.70, 0.64), raya * 0.92 * cerca);',
     '  }',
     '  float shadow = getShadowMask();',
@@ -3315,6 +3316,65 @@
       return mejor;
     }
     /**
+     * La cota de una sección de vía. Una sección es HORIZONTAL de lado a lado, y
+     * entre dos secciones la cinta va recta. Si cada punto se pegara a su propia
+     * cota, la cuerda se hundiría bajo cualquier bulto intermedio y el terreno
+     * mordería la calzada a trozos. Se nivela por la cota máxima de una cruz de
+     * nueve puntos (medio paso por delante y por detrás, el ancho a cada lado):
+     * es lo que hace un desmonte. Devuelve la cota fina y la gruesa.
+     */
+    function cotaSeccion(p0, tx, tz, ancho) {
+      var hF = 0, hC = 0, dt, du, qx, qz, nx = -tz, nz = tx;
+      for (dt = -0.5; dt <= 0.51; dt += 0.5) for (du = -1; du <= 1; du++) {
+        qx = p0.x + tx * VIA_PASO * dt + nx * ancho * du;
+        qz = p0.z + tz * VIA_PASO * dt + nz * ancho * du;
+        hF = Math.max(hF, surfaceH(qx, qz)); hC = Math.max(hC, coarseH(qx, qz));
+      }
+      return { hF: hF, hC: hC };
+    }
+    /**
+     * La cota de un cruce (v0.10.13): el máximo de las secciones de LAS DOS vías
+     * en el cruce y a un alcance a cada lado. La caja de la preferente sale
+     * ensanchada por el radio de la esquina y monta sobre los primeros metros de
+     * la que cede; si cada vía llevara su propio nivel, una tapaba a la otra por
+     * los centímetros que las separan —y con ella el paso de peatones y la línea
+     * de detención pintados encima—. Con una sola cota para toda la zona del
+     * cruce las dos calzadas quedan en el mismo plano.
+     */
+    function cotaCruce(A, ja, sa, alA, B, jb, sb, alB) {
+      var r = { hF: 0, hC: 0 }, vias = [[A, ja, sa, alA], [B, jb, sb, alB]], v, k, m, tx, tz, tl, p, c;
+      for (v = 0; v < 2; v++) {
+        m = vias[v][0].muestras;
+        tx = m[vias[v][1] + 1].x - m[vias[v][1]].x; tz = m[vias[v][1] + 1].z - m[vias[v][1]].z;
+        tl = Math.sqrt(tx * tx + tz * tz) || 1; tx /= tl; tz /= tl;
+        for (k = -1; k <= 1; k++) {
+          p = puntoArco(m, vias[v][0].arco, vias[v][2] + k * vias[v][3]);
+          c = cotaSeccion(p, tx, tz, anchoTotal(vias[v][0]) + 9);
+          r.hF = Math.max(r.hF, c.hF); r.hC = Math.max(r.hC, c.hC);
+        }
+      }
+      return r;
+    }
+    /** Lo que tarda la cota propia en volver pasada la zona del cruce, en metros. */
+    var NIVEL_VUELTA = 60;
+    /**
+     * Cuánto pesa la cota del cruce en `s` y cuál es (con el resalte de la boca):
+     * uno dentro del alcance de la boca y de ahí a los sesenta metros baja suave
+     * hasta cero. Con dos bocas cerca manda la que más pese. Devuelve null lejos
+     * de todo cruce.
+     */
+    function nivelEnBocas(bocas, s) {
+      var i, b, d, w, mejor = null, wm = 0;
+      for (i = 0; i < bocas.length; i++) {
+        b = bocas[i];
+        d = Math.abs(s - b.s) * b.sen - b.alcance;
+        if (d >= NIVEL_VUELTA) continue;
+        w = d <= 0 ? 1 : 1 - smoothstep(d / NIVEL_VUELTA);
+        if (w > wm) { wm = w; mejor = b; }
+      }
+      return mejor ? { w: wm, hF: mejor.nivel.hF + mejor.alza, hC: mejor.nivel.hC + mejor.alza } : null;
+    }
+    /**
      * Resuelve todos los cruces y deja en cada vía sus tramos de CAJA (donde manda,
      * y el bordillo se rebaja) y sus tramos de CORTE (donde cede el paso y
      * desaparece), más la lista de glorietas.
@@ -3387,6 +3447,10 @@
               // en +s y su derecha es u positiva; la otra, al revés.
               A.marcas.push({ s: sa - dA - 1.2, lado: 1, tipo: 5 }, { s: sa + dA + 1.2, lado: -1, tipo: 5 });
               B.marcas.push({ s: sb - dB - 1.2, lado: 1, tipo: 5 }, { s: sb + dB + 1.2, lado: -1, tipo: 5 });
+              // Y un paso de peatones por entrada, de 2,5 a 5 m del anillo: dos filas
+              // (s y s2) que el recorrido cose en un cuadrilátero de calzada entera.
+              A.marcas.push({ s: sa - dA - 5.0, s2: sa - dA - 2.5, tipo: 6 }, { s: sa + dA + 2.5, s2: sa + dA + 5.0, tipo: 6 });
+              B.marcas.push({ s: sb - dB - 5.0, s2: sb - dB - 2.5, tipo: 6 }, { s: sb + dB + 2.5, s2: sb + dB + 5.0, tipo: 6 });
               continue;
             }
             var mayor = A, menor = B, sMay = sa, sMen = sb, acMay = acA;
@@ -3409,14 +3473,29 @@
             // calles usan la misma fórmula, así que sus bordes recorren el mismo
             // arco y se encuentran en él en vez de cruzarse.
             var rad = radioEsquina(Math.min(mayor.calzada, menor.calzada));
-            mayor.bocas.push({ s: sMay, sen: c.sen, co: menor.calzada * 0.5, R: rad });
-            menor.bocas.push({ s: sMen, sen: c.sen, co: mayor.calzada * 0.5, R: rad });
-            // La línea de detención de la que cede, en sus dos bocas: donde el arco
-            // ya ha terminado y como poco un metro por detrás de la acera de la
-            // preferente, que es por donde cruza la gente. Solo en la mitad que
-            // llega al cruce, que es la derecha de su sentido de marcha.
-            var dLin = Math.max(rad, 0.45 + mayor.acera + 1.0), sLin = (mayor.calzada * 0.5 + dLin) / c.sen;
+            // La zona del cruce, medida perpendicular al eje ajeno: en la
+            // preferente, la caja y el arco entero; en la que cede, hasta donde
+            // llega la caja ensanchada de la otra (su acera más el radio). Toda la
+            // zona, en las dos vías, va a la cota del cruce.
+            var alMay = menor.calzada * 0.5 + rad + 0.05, alMen = acMay + rad + 0.05;
+            var niv = (mayor === A) ? cotaCruce(A, ja, sa, alMay / c.sen, B, jb, sb, alMen / c.sen)
+                                    : cotaCruce(B, jb, sb, alMay / c.sen, A, ja, sa, alMen / c.sen);
+            // La que cede va centímetro y medio POR ENCIMA de la cota: en los
+            // metros en que las dos calzadas se montan, dos planos exactamente
+            // iguales parpadean (z-fighting) y las rayas de una se ven a través
+            // de la otra. Con ese resalte manda la calzada de la que cede, que es
+            // la que lleva pintados el paso y la línea, y la caja queda debajo.
+            mayor.bocas.push({ s: sMay, sen: c.sen, co: menor.calzada * 0.5, R: rad, alcance: alMay, nivel: niv, alza: 0 });
+            menor.bocas.push({ s: sMen, sen: c.sen, co: mayor.calzada * 0.5, R: rad, alcance: alMen, nivel: niv, alza: 0.015 });
+            // En cada boca de la que cede, desde la acera de la preferente hacia
+            // fuera: 30 cm de nada, el paso de peatones (2,5 m, calzada entera), un
+            // metro, y la línea de detención, que además espera a que el arco de la
+            // esquina haya terminado. La línea solo va en la mitad que llega al
+            // cruce, que es la derecha de su sentido de marcha.
+            var dCeb = 0.45 + mayor.acera + 0.3, dLin = Math.max(rad, dCeb + 3.5), co2 = mayor.calzada * 0.5;
+            var sLin = (co2 + dLin) / c.sen, sCe1 = (co2 + dCeb) / c.sen, sCe2 = (co2 + dCeb + 2.5) / c.sen;
             menor.marcas.push({ s: sMen - sLin, lado: 1, tipo: 4 }, { s: sMen + sLin, lado: -1, tipo: 4 });
+            menor.marcas.push({ s: sMen - sCe2, s2: sMen - sCe1, tipo: 6 }, { s: sMen + sCe1, s2: sMen + sCe2, tipo: 6 });
           }
         }
       }
@@ -3490,6 +3569,23 @@
         }
         T.cose = true;
       }
+      /**
+       * El punto de la cinta a fracción `t` entre dos filas: centro, dirección
+       * transversal y medio ancho del asfalto, sacados de los vértices 3 y 4 del
+       * perfil (los bordes de la calzada), que llevan ya el ensanche de la esquina.
+       */
+      function puntoCinta(fa, fb, t) {
+        var l = fa[3], r0 = fa[4], l2 = fb[3], r2 = fb[4];
+        var lx = l[0] + (l2[0] - l[0]) * t, ly = l[1] + (l2[1] - l[1]) * t, lz = l[2] + (l2[2] - l[2]) * t, lh = l[3] + (l2[3] - l[3]) * t;
+        var rx = r0[0] + (r2[0] - r0[0]) * t, ry = r0[1] + (r2[1] - r0[1]) * t, rz = r0[2] + (r2[2] - r0[2]) * t, rh = r0[3] + (r2[3] - r0[3]) * t;
+        var dx = rx - lx, dz = rz - lz, w = Math.sqrt(dx * dx + dz * dz) * 0.5;
+        if (w < 1e-3) return null;
+        return { x: (lx + rx) * 0.5, y: (ly + ry) * 0.5 + 0.015, z: (lz + rz) * 0.5, hc: (lh + rh) * 0.5 + 0.015, dx: dx / (2 * w), dz: dz / (2 * w), w: w };
+      }
+      /** Un vértice de marca a `u` metros del eje sobre el punto de cinta `P`. */
+      function enCinta(P, u) {
+        return [P.x + P.dx * u, P.y, P.z + P.dz * u, P.hc, u];
+      }
       // 1) Las vías del mapa abierto, con su ancho sacado de su longitud.
       var lineas = [];
       for (r = 0; r < roads.length; r++) {
@@ -3562,11 +3658,9 @@
             paradas.push(bq.s - paso0 - fr, bq.s + paso0 + fr);
           }
         }
-        // Y una parada por cada marca transversal, para que su fila exista.
         var marcas = lineas[r].marcas;
-        for (i = 0; i < marcas.length; i++) paradas.push(marcas[i].s);
         paradas.sort(function (p, q) { return p - q; });
-        var sUlt = -1e9, filaAnt = null;
+        var sUlt = -1e9, sAnt = -1e9, filaAnt = null;
         for (i = 0; i < paradas.length; i++) {
           var sp = paradas[i];
           if (sp < -1e-6 || sp > total + 1e-6) continue;
@@ -3584,17 +3678,12 @@
           var tx = pSig.x - pAnt.x, tz = pSig.z - pAnt.z, tl2 = Math.sqrt(tx * tx + tz * tz) || 1;
           tx /= tl2; tz /= tl2;
           var nx = -tz, nz = tx;
-          // Una sección de carretera es HORIZONTAL de lado a lado, y entre dos
-          // secciones va recta. Si cada punto se pegara a su propia cota, la
-          // cuerda se hundiría bajo cualquier bulto intermedio y el terreno
-          // mordería la calzada a trozos. Se nivela por la cota máxima de una
-          // cruz de nueve puntos: es lo que hace un desmonte.
-          var hF = 0, hC = 0, dt, du2, qx, qz, anchoAqui = ac + 9;
-          for (dt = -0.5; dt <= 0.51; dt += 0.5) for (du2 = -1; du2 <= 1; du2++) {
-            qx = p0.x + tx * VIA_PASO * dt + nx * anchoAqui * du2;
-            qz = p0.z + tz * VIA_PASO * dt + nz * anchoAqui * du2;
-            hF = Math.max(hF, surfaceH(qx, qz)); hC = Math.max(hC, coarseH(qx, qz));
-          }
+          // La cota de la sección (ver cotaSeccion) y, cerca de un cruce, la del
+          // cruce: dentro de su zona manda entera y en los sesenta metros
+          // siguientes la propia va volviendo.
+          var cota = cotaSeccion(p0, tx, tz, ac + 9), hF = cota.hF, hC = cota.hC;
+          var nb = nivelEnBocas(bocas, sp);
+          if (nb) { hF += nb.w * (nb.hF - hF); hC += nb.w * (nb.hC - hC); }
           var perfil = enTramo(cajas, sp) ? perfilL : perfilN;
           // El bordillo se abre en cuarto de circunferencia al llegar a la boca:
           // todo el perfil se separa del eje lo mismo, así que la acera y la
@@ -3612,24 +3701,29 @@
             // sección que las une se cose en la tesela nueva, no en la vieja.
             T.cose = false; escribeFila(T, filaAnt.fila);
           }
+          // Las marcas transversales que caigan entre la fila anterior y esta. No
+          // se les da fila propia: entre dos filas la cinta es lineal, así que un
+          // punto interpolado entre los bordes de asfalto de las dos filas está
+          // sobre la cinta. Cada marca es un cuadrilátero suelto —cuatro vértices,
+          // dos triángulos— que se escribe al final: metido entre dos filas
+          // rompería el cosido de ocho vértices. Una marca que cruce una fila se
+          // parte en un trozo por tramo. Centímetro y medio por encima del asfalto,
+          // como la junta de la glorieta.
+          if (filaAnt && sp > sAnt) for (k = 0; k < marcas.length; k++) {
+            var mk = marcas[k], ma = mk.tipo === 6 ? mk.s : mk.s - 0.2, mb = mk.tipo === 6 ? mk.s2 : mk.s + 0.2;
+            var pa = Math.max(ma, sAnt), pb = Math.min(mb, sp);
+            if (pb - pa < 0.01) continue;
+            var A = puntoCinta(filaAnt.fila, fila, (pa - sAnt) / (sp - sAnt)), B = puntoCinta(filaAnt.fila, fila, (pb - sAnt) / (sp - sAnt));
+            if (!A || !B) continue;
+            var wa = A.w - 0.1, wb = B.w - 0.1, va, vb, vc, vd;
+            if (wa <= 0.8 || wb <= 0.8) continue;
+            if (mk.tipo === 6) { va = enCinta(A, -wa); vb = enCinta(A, wa); vc = enCinta(B, -wb); vd = enCinta(B, wb); }   // la cebra cruza la calzada entera
+            else { va = enCinta(A, 0.7 * mk.lado); vb = enCinta(A, wa * mk.lado); vc = enCinta(B, 0.7 * mk.lado); vd = enCinta(B, wb * mk.lado); }   // la línea, la mitad que llega al cruce
+            decales.push({ T: T, tipo: mk.tipo, m: mk, v: [va, vb, vc, vd] });
+          }
           escribeFila(T, fila);
           filaAnt = { T: T, fila: fila };
-          sUlt = sp;
-          // La marca transversal que caiga en esta fila: un cuadrilátero suelto,
-          // de la línea de eje al bordillo de su mitad, 40 cm a lo largo y centímetro
-          // y medio por encima del asfalto, como la junta de la glorieta. Se escribe
-          // al final, aparte de la cinta: metido entre dos filas rompería el cosido
-          // de ocho vértices.
-          for (k = 0; k < marcas.length; k++) {
-            if (Math.abs(marcas[k].s - sp) > 0.05) continue;
-            var u0 = 0.7 * marcas[k].lado, u1 = (c - 0.1) * marcas[k].lado, ys = hF + 0.235, yc2 = hC + 0.235;
-            if (Math.abs(u1) <= Math.abs(u0)) continue;
-            decales.push({ T: T, tipo: marcas[k].tipo, s: sp, v: [
-              [p0.x + nx * u0 - tx * 0.2, ys, p0.z + nz * u0 - tz * 0.2, yc2, u0],
-              [p0.x + nx * u1 - tx * 0.2, ys, p0.z + nz * u1 - tz * 0.2, yc2, u1],
-              [p0.x + nx * u0 + tx * 0.2, ys, p0.z + nz * u0 + tz * 0.2, yc2, u0],
-              [p0.x + nx * u1 + tx * 0.2, ys, p0.z + nz * u1 + tz * 0.2, yc2, u1]] });
-          }
+          sUlt = sp; sAnt = sp;
         }
       }
       // 5) Las marcas transversales de las bocas, una vez cerradas todas las cintas.
@@ -3637,7 +3731,7 @@
         var D = decales[r], TD = D.T, d0 = TD.pos.length / 3;
         for (k = 0; k < 4; k++) {
           var dv = D.v[k];
-          TD.pos.push(dv[0], dv[1], dv[2]); TD.hcs.push(dv[3]); TD.vias.push(dv[4], D.s, D.tipo);
+          TD.pos.push(dv[0], dv[1], dv[2]); TD.hcs.push(dv[3]); TD.vias.push(dv[4], 0, D.tipo);
         }
         // Mismo devanado que las filas: u creciente dentro de la fila, s creciente
         // entre filas, y la mitad de la izquierda lo invierte para seguir mirando
@@ -3645,7 +3739,7 @@
         if (D.v[1][4] > D.v[0][4]) TD.idx.push(d0, d0 + 1, d0 + 2, d0 + 1, d0 + 3, d0 + 2);
         else TD.idx.push(d0 + 1, d0, d0 + 3, d0, d0 + 2, d0 + 3);
         TD.cose = false;
-        S.marcas.push({ x: (D.v[0][0] + D.v[3][0]) * 0.5, z: (D.v[0][2] + D.v[3][2]) * 0.5, tipo: D.tipo });
+        if (!D.m.reg) { D.m.reg = true; S.marcas.push({ x: (D.v[0][0] + D.v[3][0]) * 0.5, z: (D.v[0][2] + D.v[3][2]) * 0.5, tipo: D.tipo }); }
       }
       // 6) Las glorietas: anillo de asfalto sin marcas, bordillo e isla central.
       for (r = 0; r < cru.glorietas.length; r++) {
