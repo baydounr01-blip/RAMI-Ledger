@@ -1,3 +1,68 @@
+## Novedades de v0.10.15 — los edificios de las parcelas, y ninguno sobre otro
+
+Sigue la entrega 4 del plan del metaverso (`docs/METAVERSO.md`, «TRAMA: la
+manzana y la fachada»). **No toca el consenso, la red, el nodo ni el formato de
+los ficheros**: todo el cambio está en el cliente 3D.
+
+- **Los edificios de las parcelas —los del jugador— salen del mismo catálogo
+  que los de los barrios.** Hasta ahora eran catorce arquetipos por sector,
+  cajas instanciadas y estiradas con la esbeltez; ahora la torre del sector
+  financiero es lámina, podio y torre, escalonada, en L o gemelas; el hotel, la
+  clínica, el comercio y el concesionario son bloques con planta; la nave
+  industrial lleva bóveda o casetones y muelle; y todos tienen coronación —peto,
+  cuarto de máquinas, antena en las torres de más de 150 m— y **portal hacia el
+  frente de la parcela** (el lado +y de la cuadrícula, por donde se llega a pie).
+  Cuál le toca a cada parcela sale **solo de su celda** (`semillaMorfologia`,
+  canales 13 y 14): dos máquinas deducen el mismo edificio. Cada sector conserva
+  sus piezas propias —la piscina del hotel, la chimenea y la grúa, los paneles,
+  los depósitos, el silo, la cruz, la cúpula, el cono y la bandera, los taxis,
+  el mástil—, que ya no se tiñen del color del sector: solo el cuerpo lo lleva.
+  Se escriben en metros en una malla por tesela de ocho kilómetros, como los de
+  los barrios, con la cota del pie y el atributo «sin ventanas» para naves,
+  granjas, depósitos, paneles y taxis. El catastro los tiene como sólidos de tipo
+  `parcela` con el nombre de la empresa: al pasar el ratón por encima o chocar
+  con ellos a pie se sabe cuál es.
+- **Ningún edificio de barrio se planta sobre otro ni sobre un hito.** La
+  colocación dentro del barrio rechazaba solo la calle; ahora rechaza también
+  las huellas ya ocupadas (`huellaLibre`: dos círculos envolventes que se montan
+  más de un quinto). Cada edificio aceptado se da de alta en el catastro al
+  momento, así que el siguiente ya lo ve. En Dubái son 695 posiciones
+  rechazadas y 54 edificios menos (3.106 → 3.052): los barrios que agotan sus
+  intentos se quedan con menos. Quedan **cero** solapes con ese criterio. Como
+  la serie del barrio sigue tras cada rechazo —igual que hacía ya con la
+  calle—, los edificios posteriores a un rechazo dentro del mismo barrio cambian
+  de sitio respecto a la v0.10.14.
+- **La calidad «baja» ya no choca con lo que no se ve.** El catastro se rehace
+  con exactamente los edificios dibujados: 1.221 edificios y 1.221 sólidos de
+  barrio en «baja», 3.052 y 3.052 en «media». Venía de la v0.10.3.
+
+**Lo que cuesta.** Medido con los mismos encuadres en el binario de la v0.10.14
+y en este: torres de cerca 925.438 → 920.678; manzana de bloques 789.410 →
+790.042; naves 1.014.894 → 1.014.414; a pie en la manzana 952.312 → 952.544;
+ante una torre 806.004 → 802.440; villas 926.780 → 959.508 (una tesela más
+entra en el encuadre: 14 → 15 llamadas); la ciudad entera 1.753.464 →
+1.748.908 con las mismas 86 llamadas, y el centro 1.533.338 → 1.532.854. Las
+mallas de los barrios suman 328.388 triángulos (332.944 en la v0.10.14);
+treinta parcelas sintéticas, 5.044 triángulos en dos teselas.
+
+**Cómo se ha comprobado.** Panel real en Chromium sin pantalla, cero errores:
+recuento de barrios con los solapes que quedan (cero), rechazos por huella y
+teselas; el catastro en «baja» y de vuelta en «media»; una ciudad sintética de
+treinta parcelas, una por sector, en dos filas: dos teselas, treinta sólidos de
+tipo `parcela`, el sondeo del suelo bajo la torre devuelve «Empresa 0» con su
+altura, los dos rótulos a 148 y 121 m; fotos de la fila entera, de la torre,
+del hotel con su piscina, de una nave con chimenea y grúa, de la escuela y la
+clínica, y a pie ante el portal de la torre (vidriera, puerta y marquesina) y
+mirando arriba por su fachada. `cargo test` (137), compatibilidad v0.7.0,
+inventario, i18n, panel (191 ids) y léxico.
+
+**Lo que sigue faltando** de esta entrega: el portal no se abre (entrega 5); un
+edificio de barrio puede caer dentro de una parcela comprada, porque el plano
+de los barrios se hace antes de conocer las parcelas; los fantasmas del
+multiverso siguen con la morfología neutra de su sector; y las proporciones del
+edificio de la parcela —la torre es tan ancha como alta— son las heredadas de
+los arquetipos: la celda mide 650 m y el edificio, el 28 % de ella.
+
 ## Novedades de v0.10.14 — la manzana y la fachada
 
 Empieza la entrega 4 del plan del metaverso (`docs/METAVERSO.md`, «TRAMA: la

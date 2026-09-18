@@ -262,7 +262,7 @@ de forma determinista, con el color en sRGB y la altura en el alfa. No arrastran
 licencia de nadie y la descarga sube 1,6 MB, no 3–4. Si algún día entra un juego
 fotográfico CC0, se sustituyen esos cuatro ficheros: el sombreador no cambia.
 
-### Entrega 4 — TRAMA: la manzana y la fachada · 6–8 sesiones · **empezada en la v0.10.14**
+### Entrega 4 — TRAMA: la manzana y la fachada · 6–8 sesiones · **empezada en la v0.10.14, sigue en la v0.10.15**
 
 El genotipo entero y el catálogo de fachadas. Las 3.124 cajas anónimas del
 skyline pasan a ser edificios con planta, coronación, entrada y **rótulo con el
@@ -279,8 +279,18 @@ paralela a ella en 2.344 de ellos. La forma sale solo de la posición
 en una malla por tesela de ocho kilómetros, no instanciadas: a pie cuestan entre
 −1,5 % y +4,7 % de escena y la ciudad entera un 19,5 % más. El nodo añade a cada
 parcela el nombre único de su dueño y el cliente lo cuelga sobre su edificio.
-Quedan de esta entrega los edificios de las parcelas, que siguen siendo los
-arquetipos por sector.
+Quedaban de esta entrega los edificios de las parcelas.
+
+**Hecho en la v0.10.15:** los edificios de las parcelas —los del jugador— salen
+del mismo catálogo: planta por celda (`semillaMorfologia`, canales 13 y 14),
+coronación y portal hacia el frente de la parcela, con las piezas propias de
+cada sector (piscina, chimenea y grúa, paneles, depósitos, silo, cruz, cúpula,
+cono y bandera, taxis, mástil) sin teñir; en una malla por tesela y en el
+catastro con el nombre de la empresa. Ningún edificio de barrio se planta ya
+sobre otro ni sobre un hito (3.106 → 3.052 edificios, cero solapes), y la
+calidad «baja» choca solo con lo que dibuja. Queda de esta entrega que el plano
+de los barrios no conoce las parcelas compradas, así que un edificio de barrio
+puede caer dentro de una.
 
 ### Entrega 5 — el umbral y el apartamento · 8–10 sesiones
 

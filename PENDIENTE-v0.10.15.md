@@ -1,10 +1,10 @@
-# PENDIENTE v0.10.14 (estado de la rama; borrar al publicar el release)
+# PENDIENTE v0.10.15 (estado de la rama; borrar al publicar el release)
 
-Empieza la entrega 4 del plan del metaverso (`docs/METAVERSO.md`, «TRAMA: la
-manzana y la fachada»): las cajas del skyline pasan a ser edificios con planta,
-coronación y portal, y las parcelas llevan el nombre de su dueño. Sin cambios de
-consenso, de red ni de formato; la vista `/api/city` gana el campo `handle` en
-cada parcela.
+Sigue la entrega 4 del plan del metaverso (`docs/METAVERSO.md`, «TRAMA: la
+manzana y la fachada»): los edificios de las parcelas —los del jugador— salen
+del mismo catálogo que los de los barrios, ningún edificio de barrio se planta
+sobre otro ni sobre un hito, y la calidad «baja» choca solo con lo que dibuja.
+Sin cambios de consenso, de red, de nodo ni de formato: todo en `city3d.js`.
 
 ## Verificado en esta rama (Linux, Rust estable)
 
@@ -16,11 +16,11 @@ cada parcela.
 
   | Prueba | Resultado |
   |---|---|
-  | Recuento | 3.106 edificios en 19 teselas: 720 torres, 837 bloques, 830 villas, 720 naves; 2.344 alineados con su calle; 332.944 triángulos de barrio |
-  | Plantas | Las cinco variantes de cada tipo repartidas entre 130 y 182 edificios cada una |
-  | Mismos encuadres, binario v0.10.13 → este | Torres de cerca 897.962 → 925.438; manzana de bloques 801.322 → 789.410; a pie en la manzana 928.100 → 952.312; ante una torre 805.296 → 806.004; ciudad entera 1.467.752 → 1.753.464 (71 → 86 llamadas); centro 1.398.354 → 1.533.338 |
-  | Fotos | Plantas desde arriba (escalonada, en L, podio y torre); portal de torre (vidriera, puerta, marquesina); bloque en L con el portal en el rincón; villa con tapia; muelle de nave con dos portones; corona con antena y pasarela de gemelas |
-  | Rótulo (ciudad sintética de tres parcelas) | «@rami_dxb» blanco a 176 m sobre la torre, «@karim» en el color de acento (parcela del jugador) a 61 m sobre el comercio, ninguno para la parcela sin perfil; las tres instancias de arquetipo colocadas |
+  | Barrios | 3.052 edificios en 19 teselas (3.106 en la v0.10.14): 695 posiciones rechazadas por huella ocupada, cero solapes con el criterio de `huellaLibre`; 328.388 triángulos de barrio |
+  | Calidad | «baja»: 1.221 dibujados y 1.221 sólidos de barrio en el catastro; «media»: 3.052 y 3.052; los 56 hitos siempre |
+  | Ciudad sintética de 30 parcelas (una por sector, dos filas) | 2 teselas, 5.044 triángulos, 30 sólidos `parcela`; `solidoEn` bajo la torre devuelve «Empresa 0» (132,8 m, media huella 54,6 m) y bajo el hotel «Empresa 5»; rótulos «@rami_dxb» a 148 m y «@karim» a 121 m |
+  | Mismos encuadres, binario v0.10.14 → este | Torres de cerca 925.438 → 920.678; manzana de bloques 789.410 → 790.042; naves 1.014.894 → 1.014.414; a pie en la manzana 952.312 → 952.544; ante una torre 806.004 → 802.440; villas 926.780 → 959.508 (una tesela más en el encuadre: 14 → 15 llamadas); ciudad entera 1.753.464 → 1.748.908 (las mismas 86 llamadas); centro 1.533.338 → 1.532.854 |
+  | Fotos | La fila de los treinta sectores; la torre con ventanas, coronación y rótulo; el hotel con la piscina y la banda dorada; la nave con chimenea y grúa; escuela y clínica; a pie ante el portal de la torre (vidriera, puerta, marquesina) y mirando arriba por la fachada |
 
 - Para fotografiar una ciudad sintética hay que bloquear el `setCity` del panel,
   que sondea `/api/city` y vuelve a poner la ciudad real (vacía) a los pocos
@@ -56,15 +56,37 @@ cada parcela.
   un rótulo por parcela con `handle`, a `ARCH_TOP[arquetipo] · sy + 10` m sobre
   la celda, en el color de acento si `owner === me`.
 
+- **El catálogo de cuerpos** (`piezas`, `cuerpoTorre`, `cuerpoBloque`,
+  `cuerpoNave`, `cuerpoVilla`) está fuera del cierre del cliente, a nivel de
+  módulo, y lo comparten `edificioPartes(e)` (barrios; suelo local en `y = 1`)
+  y `parcelaPartes(key, c, e)` (parcelas; suelo local en `y = suelo`, con
+  `suelo = clamp(0,02·celda, 3, 20)` para que la caja baje bajo la cota de la
+  celda en las laderas). `parcelaPartes` devuelve `{ p, top, hw, hd, suelo }`:
+  el rótulo cuelga a `top + 10` y el catastro recibe `hw`, `hd`.
+- **La parcela mira a +y de la cuadrícula**: el edificio se gira `rotR`
+  (`−rotationDeg`), que es el mismo giro que la cuadrícula; su +z local cae en
+  la dirección `rotOff(0, +)`, por donde arranca el paseo a pie.
+- **Los fantasmas del multiverso** (`ghost_*`) usan `parcelaPartes` con una
+  morfología neutra (`v = 0,1`, `v2 = 0,5`, `sy = 1`) y siguen instanciados.
+  Las mallas instanciadas `arch_*` han desaparecido.
+- **`huellaLibre(cat, x, z, r)`** mira las celdas vecinas del catastro (256 m)
+  y rechaza si dos círculos envolventes se montan más de un quinto de la suma
+  de radios. `planificarBarrios` da de alta cada edificio aceptado al momento;
+  `buildClusters` quita después los de barrio (`catastroQuita`) y vuelve a dar
+  de alta solo los dibujados. `applyCity` hace lo mismo con los de tipo
+  `parcela` en cada ciudad nueva.
+
 ## Queda por hacer
 
-1. **Los edificios de las parcelas** (los del jugador) siguen siendo los
-   arquetipos por sector, sin planta ni portal deducidos; el rótulo ya está.
-2. **Calidad «baja»**: dibuja el 40 % de los edificios y el catastro tiene el
-   100 %: se choca con edificios que no se ven. Viene de la v0.10.3.
-3. **Un edificio puede pisar a otro**: la colocación dentro del barrio es
-   aleatoria y solo rechaza la calle; dos edificios cercanos se montan. Rechazar
-   también las huellas ya ocupadas.
+1. **El plano de los barrios no conoce las parcelas compradas**: se hace al
+   cargar el mapa, antes de la ciudad, así que un edificio de barrio puede caer
+   dentro de una parcela con edificio. Rechazar también las celdas con parcela
+   cuando llegue la ciudad, o replanificar el barrio afectado.
+2. **Las proporciones del edificio de la parcela** son las heredadas de los
+   arquetipos: la torre es tan ancha como alta (109 × 133 m con la celda de
+   650 m). Dar a la torre una huella menor y más altura sin mover el resto.
+3. **Los fantasmas del multiverso** siguen con la morfología neutra de su
+   sector, no con la deducida de la celda.
 4. **Los avatares ajenos no se apartan.** Van donde dice su cliente; solo se
    empuja al jugador local.
 5. **Los coches cruzan el agua.** Donde el terreno baja de 0,6 m la cinta se

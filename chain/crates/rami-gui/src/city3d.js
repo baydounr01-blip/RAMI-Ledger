@@ -28,8 +28,8 @@
  *   3. Dubái: hitos icónicos procedurales (Burj Khalifa, Burj Al Arab, Museo
  *      del Futuro, Dubai Frame, Ain Dubai, Atlantis, Cayan, Emirates Towers,
  *      Palm…) en UNA geometría con ventanas que se encienden de noche;
- *      skylines por barrio deducidos de la posición —planta, coronación y
- *      portal— en una malla por tesela; tráfico ambiente por las vías;
+ *      skylines por barrio y edificios de las parcelas deducidos de la posición
+ *      —planta, coronación y portal— en una malla por tesela; tráfico ambiente por las vías;
  *      la cuadrícula de parcelas (64×64, drapeada) con un edificio por sector,
  *      coches de los concesionarios, carteles de venta y avatares de otros
  *      visitantes (presencia efímera de la red).
@@ -1548,45 +1548,173 @@
     'taxi', 'comercio', 'comercio', 'seguridad', 'industria'];
   var ARCH_KEYS = ['torre', 'hotel', 'comercio', 'concesionario', 'industria', 'solar', 'agua', 'granja', 'clinica', 'escuela', 'gimnasio', 'turismo', 'taxi', 'seguridad'];
 
-  /**
-   * Arquetipos de edificio por sector, escalados con la celda (huella ~0.28·CELL,
-   * alturas acotadas a [8, 400] m) y con una «cimentación» que baja bajo el suelo
-   * para no flotar en laderas. Devuelven piezas en blanco: el color lo pone la
-   * instancia (color del sector).
-   */
-  function archetypeParts(key, c) {
-    var f = c * 0.28, fd = clamp(c * 0.12, 3, 400), i, parts;
-    var H = function (k, lo, hi) { return clamp(c * k, lo || 8, hi || 400); };
-    switch (key) {
-      case 'torre': return [{ sx: f * 0.6, sy: H(0.18) + fd, sz: f * 0.6, y: -fd, c: WHITE }, { sx: f * 0.42, sy: H(0.18) * 0.08, sz: f * 0.42, y: H(0.18), c: [0.7, 0.7, 0.72] }, { g: 'cyl', a: 6, sx: f * 0.03, sy: H(0.18) * 0.15, sz: f * 0.03, y: H(0.18) * 1.08, c: [0.6, 0.6, 0.62] }];
-      case 'hotel': return [{ sx: f * 1.1, sy: H(0.14) + fd, sz: f * 0.45, y: -fd, c: WHITE }, { sx: f * 1.16, sy: H(0.14) * 0.06, sz: f * 0.5, y: H(0.14), c: [0.9, 0.8, 0.55] }, { sx: f * 0.5, sy: 1.2, sz: f * 0.3, z: f * 0.5, c: WATER }, { sx: f * 1.2, sy: 0.6, sz: f * 1.3, z: f * 0.3, c: [0.95, 0.9, 0.75] }];
-      case 'comercio': return [{ sx: f * 0.9, sy: H(0.05) + fd, sz: f * 0.7, y: -fd, c: WHITE }, { sx: f * 1.0, sy: H(0.05) * 0.12, sz: f * 0.25, y: H(0.05) * 0.5, z: f * 0.45, c: [1, 1, 1] }, { sx: f * 0.6, sy: H(0.05) * 0.3, sz: f * 0.04, y: H(0.05), z: f * 0.3, c: [1, 1, 0.85] }];
-      case 'concesionario':
-        parts = [{ sx: f * 1.0, sy: H(0.045) + fd, sz: f * 0.6, y: -fd, c: [0.8, 0.9, 1] }, { sx: f * 1.3, sy: 0.5, sz: f * 1.2, z: f * 0.35, c: ASPHALT }, { sx: f * 0.9, sy: H(0.045) * 0.25, sz: f * 0.04, y: H(0.045), z: f * 0.3, c: [1, 0.35, 0.3] }];
-        for (i = 0; i < 6; i++) parts.push({ sx: f * 0.09, sy: 1.6, sz: f * 0.045, x: -f * 0.45 + i * f * 0.18, z: f * 0.7, c: [0.9, 0.9, 0.95] });
-        return parts;
-      case 'industria': return [{ sx: f * 1.2, sy: H(0.04) + fd, sz: f * 0.8, y: -fd, c: [0.85, 0.85, 0.85] }, { g: 'halfcyl', sx: f * 0.8, sy: f * 1.2, sz: H(0.04) * 0.5, x: f * 0.6, y: H(0.04), rz: Math.PI / 2, c: [0.6, 0.6, 0.62] }, { g: 'cyl', a: 10, sx: f * 0.14, sy: H(0.09), sz: f * 0.14, x: f * 0.75, z: -f * 0.3, c: [0.7, 0.7, 0.72] }, { sx: f * 0.05, sy: H(0.12), sz: f * 0.05, x: -f * 0.7, z: f * 0.4, c: [0.9, 0.55, 0.2] }, { sx: f * 0.9, sy: f * 0.04, sz: f * 0.04, x: -f * 0.35, y: H(0.12), z: f * 0.4, c: [0.9, 0.55, 0.2] }];
-      case 'solar':
-        parts = [{ sx: f * 0.4, sy: H(0.02) + fd, sz: f * 0.3, y: -fd, z: -f * 0.6, c: WHITE }];
-        for (i = 0; i < 24; i++) parts.push({ g: 'slab', sx: f * 0.22, sy: 0.4, sz: f * 0.12, x: -f * 0.6 + (i % 6) * f * 0.24, y: 3, z: -f * 0.25 + Math.floor(i / 6) * f * 0.2, rx: -0.45, c: [0.12, 0.18, 0.45] });
-        return parts;
-      case 'agua':
-        parts = [{ sx: f * 0.7, sy: H(0.03) + fd, sz: f * 0.5, y: -fd, c: WHITE }];
-        for (i = 0; i < 4; i++) parts.push({ g: 'cyl', a: 14, sx: f * 0.22, sy: H(0.05), sz: f * 0.22, x: -f * 0.45 + i * f * 0.3, z: f * 0.45, c: [0.8, 0.9, 0.95] });
-        parts.push({ g: 'cyl', a: 8, sx: f * 0.05, sy: f * 1.2, sz: f * 0.05, x: 0, y: H(0.05) * 0.5, z: f * 0.45, rz: Math.PI / 2, c: [0.3, 0.6, 0.75] });
-        return parts;
-      case 'granja': return [{ sx: f * 1.2, sy: H(0.035) + fd, sz: f, y: -fd, c: [1, 1, 0.94] }, { sx: f * 1.26, sy: H(0.035) * 0.25, sz: f * 1.06, y: H(0.035), c: [0.55, 1, 0.55] }, { g: 'cyl', a: 12, sx: f * 0.16, sy: H(0.035) * 0.6, sz: f * 0.16, x: f * 0.5, z: f * 0.4, y: H(0.035) * 1.2, c: [0.7, 0.7, 0.75] }];
-      case 'clinica': return [{ sx: f * 0.9, sy: H(0.09) + fd, sz: f * 0.6, y: -fd, c: WHITE }, { sx: f * 0.12, sy: f * 0.36, sz: f * 0.03, y: H(0.09) * 0.5, z: f * 0.31, c: RED }, { sx: f * 0.36, sy: f * 0.12, sz: f * 0.03, y: H(0.09) * 0.5 + f * 0.12, z: f * 0.31, c: RED }, { g: 'ring', sx: f * 0.4, sy: 1, sz: f * 0.4, x: f * 0.7, y: H(0.09) + 0.5, c: RED }];
-      case 'escuela': return [{ sx: f * 1.1, sy: H(0.07) + fd, sz: f * 0.3, y: -fd, z: -f * 0.35, c: [0.95, 0.9, 0.8] }, { sx: f * 0.3, sy: H(0.07) + fd, sz: f * 0.7, y: -fd, x: -f * 0.4, c: [0.95, 0.9, 0.8] }, { sx: f * 0.3, sy: H(0.07) + fd, sz: f * 0.7, y: -fd, x: f * 0.4, c: [0.95, 0.9, 0.8] }, { g: 'hemi', sx: f * 0.3, sy: H(0.07) * 0.4, sz: f * 0.3, y: H(0.07), z: -f * 0.35, c: [0.6, 0.5, 0.9] }, { sx: f * 0.5, sy: 0.5, sz: f * 0.4, z: f * 0.1, c: GREEN }];
-      case 'gimnasio': return [{ sx: f * 0.9, sy: H(0.05) + fd, sz: f * 0.7, y: -fd, c: [0.9, 0.9, 0.9] }, { g: 'halfcyl', sx: f * 0.7, sy: f * 0.9, sz: H(0.05) * 0.6, x: f * 0.45, y: H(0.05), rz: Math.PI / 2, c: [0.65, 0.9, 0.3] }, { sx: f * 0.6, sy: 0.4, sz: f * 0.35, z: f * 0.55, c: [0.85, 0.5, 0.3] }];
-      case 'turismo': return [{ sx: f * 0.5, sy: H(0.04) + fd, sz: f * 0.5, y: -fd, c: WHITE }, { g: 'cone', a: 8, sx: f * 0.7, sy: H(0.04) * 0.5, sz: f * 0.7, y: H(0.04), c: [0.2, 0.8, 0.85] }, { g: 'cyl', a: 8, sx: f * 0.03, sy: H(0.1), sz: f * 0.03, x: f * 0.4, c: [0.7, 0.7, 0.72] }, { g: 'slab', sx: f * 0.25, sy: f * 0.15, sz: 0.5, x: f * 0.52, y: H(0.1) * 0.92, c: [0.9, 0.2, 0.2] }];
-      case 'taxi':
-        parts = [{ sx: f * 0.5, sy: H(0.035) + fd, sz: f * 0.4, y: -fd, z: -f * 0.5, c: WHITE }, { sx: f * 1.3, sy: 0.5, sz: f * 1.0, z: f * 0.2, c: ASPHALT }];
-        for (i = 0; i < 8; i++) parts.push({ sx: f * 0.08, sy: 1.5, sz: f * 0.04, x: -f * 0.5 + (i % 4) * f * 0.3, z: -f * 0.05 + Math.floor(i / 4) * f * 0.35, c: [1, 0.85, 0.2] });
-        return parts;
-      case 'seguridad': return [{ sx: f * 0.5, sy: H(0.06) + fd, sz: f * 0.5, y: -fd, c: [0.55, 0.6, 0.68] }, { g: 'cyl', a: 8, sx: f * 0.04, sy: H(0.2), sz: f * 0.04, x: f * 0.3, z: -f * 0.3, c: [0.75, 0.75, 0.78] }, { g: 'sphere', sx: f * 0.1, sy: f * 0.1, sz: f * 0.1, x: f * 0.3, y: H(0.2), z: -f * 0.3, c: [0.95, 0.3, 0.3] }, { sx: f * 1.1, sy: 3, sz: 1, z: f * 0.55, c: [0.6, 0.6, 0.64] }];
+  // ---- El catálogo de cuerpos (v0.10.14–15) --------------------------------------
+  // Lo comparten los edificios de los barrios (edificioPartes) y los de las
+  // parcelas (parcelaPartes). Marco local: origen en el centro de la huella, x a
+  // lo largo de la calle, +z hacia ella; el suelo está en y = `suelo` (el cuerpo
+  // arranca en 0, por debajo, para que ninguna pendiente deje hueco).
+  var TONO_MAQUINAS = [0.5, 0.52, 0.56], TONO_PUERTA = [0.06, 0.07, 0.09], TONO_MARQUESINA = [0.9, 0.88, 0.82], TONO_VIDRIERA = [0.5, 0.66, 0.86], TONO_ANTENA = [0.55, 0.55, 0.58];
+  /** Los ayudantes de un edificio: escriben en `p` con el tono `T` y el suelo en `suelo`. */
+  function piezas(p, T, suelo) {
+    var TC = [Math.min(1, T[0] * 0.9 + 0.08), Math.min(1, T[1] * 0.9 + 0.07), Math.min(1, T[2] * 0.9 + 0.05)];   // coronación: un punto más clara y cálida
+    var K = {
+      T: T, TC: TC, TP: [T[0] * 0.82, T[1] * 0.82, T[2] * 0.82], suelo: suelo,
+      caja: function (sx, sy, sz, x, y, z, c) { p.push({ sx: sx, sy: sy, sz: sz, x: x || 0, y: y || 0, z: z || 0, c: c || T }); },
+      peto: function (sx, sz, x, y, z) { K.caja(sx + 1.4, 1.4, sz + 1.4, x, y - 1.2, z, TC); },        // el remate sobresale 70 cm y sube 20
+      corona: function (sx, sz, x, y, z, alta) {
+        K.peto(sx, sz, x, y, z);
+        K.caja(sx * 0.42, 4.5, sz * 0.42, x - sx * 0.14, y, z - sz * 0.14, TONO_MAQUINAS);            // cuarto de máquinas
+        if (alta) p.push({ g: 'cyl', a: 6, sx: 1.4, sy: Math.max(8, (y - suelo) * 0.1), sz: 1.4, x: x + sx * 0.24, y: y, z: z + sz * 0.2, c: TONO_ANTENA });
+      },
+      // El portal en la cara z = zf, mirando a +z: vidriera del vestíbulo, hueco de la puerta y marquesina.
+      portal: function (x, zf, ancho) {
+        var g = Math.max(4, Math.min(ancho - 2, 14));
+        K.caja(g, 4.4, 0.4, x, suelo, zf, TONO_VIDRIERA);
+        K.caja(3.4, 3.2, 0.6, x, suelo, zf + 0.3, TONO_PUERTA);
+        K.caja(Math.min(8, g), 0.35, 3.2, x, suelo + 3.8, zf + 1.4, TONO_MARQUESINA);
+      }
+    };
+    return K;
+  }
+  /** Torre: lámina, podio y torre, escalonada, en L o gemelas sobre podio, según `v`. `H` es la cota de la azotea. */
+  function cuerpoTorre(K, w, d, H, v, v2, alta) {
+    var s0 = K.suelo, caja = K.caja, peto = K.peto, corona = K.corona;
+    if (v < 0.25) {                                                                              // lámina
+      caja(w, H, d); corona(w, d, 0, H, 0, alta); K.portal(0, d / 2, w);
+    } else if (v < 0.5) {                                                                        // podio y torre
+      caja(w, s0 + 13, d, 0, 0, 0, K.TP); peto(w, d, 0, s0 + 13, 0);
+      var tw = w * 0.66, td = d * 0.66, tx = (v2 - 0.5) * w * 0.2, tz = -d * 0.1;
+      caja(tw, H, td, tx, 0, tz); corona(tw, td, tx, H, tz, alta); K.portal(0, d / 2, w);
+    } else if (v < 0.7) {                                                                        // escalonada
+      var h1 = s0 + (H - s0) * 0.6, h2 = s0 + (H - s0) * 0.82;
+      caja(w, h1, d); peto(w, d, 0, h1, 0);
+      caja(w * 0.78, h2, d * 0.78, -w * 0.08, 0, -d * 0.08); peto(w * 0.78, d * 0.78, -w * 0.08, h2, -d * 0.08);
+      caja(w * 0.55, H, d * 0.55, -w * 0.16, 0, -d * 0.16); corona(w * 0.55, d * 0.55, -w * 0.16, H, -d * 0.16, alta);
+      K.portal(0, d / 2, w);
+    } else if (v < 0.85) {                                                                       // en L
+      caja(w, H, d * 0.45, 0, 0, -d * 0.275); corona(w, d * 0.45, 0, H, -d * 0.275, alta);
+      var hb = s0 + (H - s0) * 0.8;
+      caja(w * 0.45, hb, d, -w * 0.275, 0, 0); peto(w * 0.45, d, -w * 0.275, hb, 0);
+      K.portal(w * 0.15, -d * 0.05, w * 0.5);
+    } else {                                                                                     // gemelas sobre podio
+      caja(w, s0 + 8, d, 0, 0, 0, K.TP); peto(w, d, 0, s0 + 8, 0);
+      caja(w * 0.36, H, d * 0.72, -w * 0.3, 0, -d * 0.1); corona(w * 0.36, d * 0.72, -w * 0.3, H, -d * 0.1, alta);
+      caja(w * 0.36, H, d * 0.72, w * 0.3, 0, -d * 0.1); peto(w * 0.36, d * 0.72, w * 0.3, H, -d * 0.1);
+      caja(w * 0.3, 4, d * 0.3, 0, s0 + (H - s0) * 0.55, -d * 0.1, TONO_MAQUINAS);                 // la pasarela
+      K.portal(0, d / 2, w);
     }
-    return [{ sx: f, sy: H(0.1) + fd, sz: f * 0.8, y: -fd, c: WHITE }];
+  }
+  /** Bloque: barra, en L, en U con el patio a la calle o con ático retranqueado. */
+  function cuerpoBloque(K, w, d, H, v) {
+    var s0 = K.suelo, caja = K.caja, peto = K.peto, corona = K.corona;
+    if (v < 0.35) {                                                                              // barra
+      caja(w, H, d); corona(w, d, 0, H, 0, false); K.portal(0, d / 2, w);
+    } else if (v < 0.6) {                                                                        // en L
+      caja(w, H, d * 0.45, 0, 0, -d * 0.275); corona(w, d * 0.45, 0, H, -d * 0.275, false);
+      caja(w * 0.42, H, d, -w * 0.29, 0, 0); peto(w * 0.42, d, -w * 0.29, H, 0);
+      K.portal(w * 0.15, -d * 0.05, w * 0.5);
+    } else if (v < 0.8) {                                                                        // en U
+      caja(w, H, d * 0.42, 0, 0, -d * 0.29); corona(w, d * 0.42, 0, H, -d * 0.29, false);
+      caja(w * 0.28, H, d, -w * 0.36, 0, 0); peto(w * 0.28, d, -w * 0.36, H, 0);
+      caja(w * 0.28, H, d, w * 0.36, 0, 0); peto(w * 0.28, d, w * 0.36, H, 0);
+      K.portal(0, -d * 0.08, w * 0.4);
+    } else {                                                                                     // con ático retranqueado
+      var ha = s0 + (H - s0) * 0.88;
+      caja(w, ha, d); peto(w, d, 0, ha, 0);
+      caja(w * 0.84, H, d * 0.84, 0, 0, -d * 0.05, K.TC); peto(w * 0.84, d * 0.84, 0, H, -d * 0.05);
+      K.portal(0, d / 2, w);
+    }
+  }
+  /** Nave: con bóveda o plana con casetones; el muelle de carga con dos portones y la puerta de la oficina. */
+  function cuerpoNave(K, w, d, H, v, p) {
+    var s0 = K.suelo, caja = K.caja, hv = Math.min(d * 0.5, 6);
+    if (v < 0.5) { caja(w, H - hv, d); p.push({ g: 'halfcyl', sx: hv * 2, sy: w, sz: d, x: w / 2, y: H - hv, rz: Math.PI / 2, c: K.TC }); }
+    else { caja(w, H, d); K.peto(w, d, 0, H, 0); caja(4, 2.5, 4, -w * 0.3, H, -d * 0.2, TONO_MAQUINAS); caja(4, 2.5, 4, 0, H, -d * 0.2, TONO_MAQUINAS); caja(4, 2.5, 4, w * 0.3, H, -d * 0.2, TONO_MAQUINAS); }
+    caja(w * 0.5, 1.2, 4, w * 0.1, s0, d / 2 + 2, [0.55, 0.55, 0.55]);
+    caja(4.5, 4.5, 0.5, -w * 0.02, s0, d / 2 + 0.2, TONO_PUERTA); caja(4.5, 4.5, 0.5, w * 0.22, s0, d / 2 + 0.2, TONO_PUERTA);
+    caja(2, 2.6, 0.5, -w * 0.3, s0, d / 2 + 0.2, TONO_PUERTA);
+  }
+  /** Villa: casa con losa de tejado, tapia con cancela, puerta y marquesina. */
+  function cuerpoVilla(K, w, d, H) {
+    var s0 = K.suelo, caja = K.caja;
+    caja(w, H, d); caja(w * 1.08, 0.8, d * 1.08, 0, H, 0, [0.9, 0.85, 0.78]);
+    var mw = w + 7, md = d + 7, hueco = 3.5, tr = (mw - hueco) / 2;
+    caja(0.3, 2.2, md, -mw / 2, s0, 0, TONO_MARQUESINA); caja(0.3, 2.2, md, mw / 2, s0, 0, TONO_MARQUESINA); caja(mw, 2.2, 0.3, 0, s0, -md / 2, TONO_MARQUESINA);
+    caja(tr, 2.2, 0.3, -(hueco + tr) / 2, s0, md / 2, TONO_MARQUESINA); caja(tr, 2.2, 0.3, (hueco + tr) / 2, s0, md / 2, TONO_MARQUESINA);
+    caja(2.4, 2.6, 0.5, 0, s0, d / 2 + 0.2, TONO_PUERTA); caja(4, 0.3, 2.2, 0, s0 + 2.6, d / 2 + 0.9, TONO_MARQUESINA);
+  }
+  /**
+   * El edificio de una parcela (v0.10.15): el cuerpo sale del catálogo con la
+   * planta que dicta la morfología de la celda (`e.v`, `e.v2`) y la altura de la
+   * esbeltez (`e.sy`); cada sector conserva sus piezas propias —la piscina del
+   * hotel, la chimenea y la grúa, los paneles, los depósitos, el silo, la cruz,
+   * la cúpula, la bóveda, el cono y la bandera, los taxis, el mástil—, que ya no
+   * se tiñen del color del sector: solo el cuerpo lleva `e.T`. Escalado con la
+   * celda (huella ~0.28·CELL, alturas acotadas a [8, 400] m). El cuerpo baja
+   * `suelo` metros bajo la cota de la celda para no flotar en laderas.
+   * Devuelve { p: piezas, top: cota de lo más alto, hw, hd: media huella }.
+   */
+  function parcelaPartes(key, c, e) {
+    var f = c * 0.28, suelo = clamp(c * 0.02, 3, 20), p = [], i, top, hw, hd;
+    var Hf = function (k, lo, hi) { return suelo + clamp(c * k, lo || 8, hi || 400) * e.sy; };
+    var K = piezas(p, e.T, suelo), caja = K.caja, v = e.v, v2 = e.v2;
+    switch (key) {
+      case 'torre': { var Ht = Hf(0.18); cuerpoTorre(K, f * 0.6, f * 0.6, Ht, v, v2, Ht - suelo > 150); top = Ht + 6; hw = f * 0.3; hd = f * 0.3; break; }
+      case 'hotel': { var Hh = Hf(0.14); cuerpoBloque(K, f * 1.1, f * 0.45, Hh, v * 0.8);
+        caja(f * 1.12, 1.6, f * 0.47, 0, Hh - 0.4, 0, GOLD);                                         // la banda dorada de la coronación
+        caja(f * 0.5, 1.2, f * 0.3, 0, suelo, f * 0.5, WATER); caja(f * 1.2, 0.6, f * 1.3, 0, suelo - 0.3, f * 0.3, [0.95, 0.9, 0.75]);   // piscina y terraza
+        top = Hh + 5; hw = f * 0.55; hd = f * 0.225; break; }
+      case 'comercio': { var Hc = Hf(0.05); cuerpoBloque(K, f * 0.9, f * 0.7, Hc, v < 0.5 ? 0.1 : 0.9);
+        caja(f * 1.0, (Hc - suelo) * 0.12, f * 0.25, 0, suelo + (Hc - suelo) * 0.5, f * 0.45, [1, 1, 1]);   // la marquesina grande
+        caja(f * 0.6, (Hc - suelo) * 0.3, f * 0.04, 0, Hc, f * 0.3, [1, 1, 0.85]);                        // el rótulo luminoso
+        top = Hc + (Hc - suelo) * 0.3; hw = f * 0.45; hd = f * 0.35; break; }
+      case 'concesionario': { var Hd = Hf(0.045); K.T = [0.8, 0.9, 1]; cuerpoBloque(K, f * 1.0, f * 0.6, Hd, 0.1);
+        caja(f * 1.3, 0.5, f * 1.2, 0, suelo - 0.3, f * 0.35, ASPHALT); caja(f * 0.9, (Hd - suelo) * 0.25, f * 0.04, 0, Hd, f * 0.3, [1, 0.35, 0.3]);
+        for (i = 0; i < 6; i++) caja(f * 0.09, 1.6, f * 0.045, -f * 0.45 + i * f * 0.18, suelo, f * 0.7, [0.9, 0.9, 0.95]);
+        top = Hd + (Hd - suelo) * 0.25; hw = f * 0.5; hd = f * 0.3; break; }
+      case 'industria': { var Hi = Hf(0.04); cuerpoNave(K, f * 1.2, f * 0.8, Hi, v, p);
+        p.push({ g: 'cyl', a: 10, sx: f * 0.14, sy: Hf(0.09) - suelo, sz: f * 0.14, x: f * 0.75, y: suelo, z: -f * 0.3, c: [0.7, 0.7, 0.72] });   // chimenea
+        caja(f * 0.05, Hf(0.12) - suelo, f * 0.05, -f * 0.7, suelo, f * 0.4, [0.9, 0.55, 0.2]); caja(f * 0.9, f * 0.04, f * 0.04, -f * 0.35, Hf(0.12), f * 0.4, [0.9, 0.55, 0.2]);   // grúa
+        top = Hf(0.12) + f * 0.04; hw = f * 0.6; hd = f * 0.4; break; }
+      case 'solar': { var Hs = Hf(0.02); caja(f * 0.4, Hs, f * 0.3, 0, 0, -f * 0.6); K.peto(f * 0.4, f * 0.3, 0, Hs, -f * 0.6); K.portal(0, -f * 0.45, f * 0.4);
+        for (i = 0; i < 24; i++) p.push({ g: 'slab', sx: f * 0.22, sy: 0.4, sz: f * 0.12, x: -f * 0.6 + (i % 6) * f * 0.24, y: suelo + 3, z: -f * 0.25 + Math.floor(i / 6) * f * 0.2, rx: -0.45, c: [0.12, 0.18, 0.45] });
+        top = Hs + 1; hw = f * 0.2; hd = f * 0.15; break; }
+      case 'agua': { var Ha = Hf(0.03); caja(f * 0.7, Ha, f * 0.5); K.peto(f * 0.7, f * 0.5, 0, Ha, 0); K.portal(0, f * 0.25, f * 0.7);
+        for (i = 0; i < 4; i++) p.push({ g: 'cyl', a: 14, sx: f * 0.22, sy: Hf(0.05) - suelo, sz: f * 0.22, x: -f * 0.45 + i * f * 0.3, y: suelo, z: -f * 0.45, c: [0.8, 0.9, 0.95] });
+        p.push({ g: 'cyl', a: 8, sx: f * 0.05, sy: f * 1.2, sz: f * 0.05, x: 0, y: suelo + (Hf(0.05) - suelo) * 0.5, z: -f * 0.45, rz: Math.PI / 2, c: [0.3, 0.6, 0.75] });
+        top = Math.max(Ha, Hf(0.05)) + 1; hw = f * 0.35; hd = f * 0.25; break; }
+      case 'granja': { var Hg = Hf(0.035); K.T = [1, 1, 0.94]; caja(f * 1.2, Hg, f); caja(f * 1.26, (Hg - suelo) * 0.25, f * 1.06, 0, Hg, 0, [0.55, 1, 0.55]); K.portal(0, f * 0.5, f * 1.2);
+        p.push({ g: 'cyl', a: 12, sx: f * 0.16, sy: (Hg - suelo) * 0.6, sz: f * 0.16, x: f * 0.5, y: suelo + (Hg - suelo) * 1.2, z: f * 0.4, c: [0.7, 0.7, 0.75] });
+        top = Hg + (Hg - suelo) * 0.9; hw = f * 0.6; hd = f * 0.5; break; }
+      case 'clinica': { var Hk = Hf(0.09); cuerpoBloque(K, f * 0.9, f * 0.6, Hk, v < 0.5 ? 0.1 : 0.9);
+        caja(f * 0.12, f * 0.36, f * 0.03, f * 0.25, suelo + (Hk - suelo) * 0.5, f * 0.31, RED); caja(f * 0.36, f * 0.12, f * 0.03, f * 0.25, suelo + (Hk - suelo) * 0.5 + f * 0.12, f * 0.31, RED);
+        p.push({ g: 'ring', sx: f * 0.4, sy: 1, sz: f * 0.4, x: -f * 0.7, y: suelo + 0.5, c: RED });                 // helipuerto en el jardín
+        top = Hk + 5; hw = f * 0.45; hd = f * 0.3; break; }
+      case 'escuela': { var He = Hf(0.07); K.T = [0.95, 0.9, 0.8]; cuerpoBloque(K, f * 1.1, f * 0.7, He, 0.7);     // en U, con el patio a la calle
+        p.push({ g: 'hemi', sx: f * 0.3, sy: (He - suelo) * 0.4, sz: f * 0.3, y: He, z: -f * 0.2, c: [0.6, 0.5, 0.9] });
+        caja(f * 0.5, 0.5, f * 0.4, 0, suelo - 0.25, f * 0.1, GREEN);
+        top = He + (He - suelo) * 0.4; hw = f * 0.55; hd = f * 0.35; break; }
+      case 'gimnasio': { var Hm = Hf(0.05); K.T = [0.9, 0.9, 0.9]; caja(f * 0.9, Hm, f * 0.7); K.peto(f * 0.9, f * 0.7, 0, Hm, 0); K.portal(0, f * 0.35, f * 0.9);
+        p.push({ g: 'halfcyl', sx: (Hm - suelo) * 0.6, sy: f * 0.9, sz: f * 0.7, x: f * 0.45, y: Hm, rz: Math.PI / 2, c: [0.65, 0.9, 0.3] });
+        caja(f * 0.6, 0.4, f * 0.35, 0, suelo - 0.2, f * 0.55, [0.85, 0.5, 0.3]);
+        top = Hm + (Hm - suelo) * 0.3; hw = f * 0.45; hd = f * 0.35; break; }
+      case 'turismo': { var Hu = Hf(0.04); caja(f * 0.5, Hu, f * 0.5); K.portal(0, f * 0.25, f * 0.5);
+        p.push({ g: 'cone', a: 8, sx: f * 0.7, sy: (Hu - suelo) * 0.5, sz: f * 0.7, y: Hu, c: [0.2, 0.8, 0.85] });
+        p.push({ g: 'cyl', a: 8, sx: f * 0.03, sy: Hf(0.1) - suelo, sz: f * 0.03, x: f * 0.4, y: suelo, c: [0.7, 0.7, 0.72] });
+        p.push({ g: 'slab', sx: f * 0.25, sy: f * 0.15, sz: 0.5, x: f * 0.52, y: Hf(0.1) * 0.92, c: [0.9, 0.2, 0.2] });
+        top = Math.max(Hu + (Hu - suelo) * 0.5, Hf(0.1)); hw = f * 0.25; hd = f * 0.25; break; }
+      case 'taxi': { var Hx = Hf(0.035); caja(f * 0.5, Hx, f * 0.4, 0, 0, -f * 0.5); K.peto(f * 0.5, f * 0.4, 0, Hx, -f * 0.5); K.portal(0, -f * 0.3, f * 0.5);
+        caja(f * 1.3, 0.5, f * 1.0, 0, suelo - 0.3, f * 0.2, ASPHALT);
+        for (i = 0; i < 8; i++) caja(f * 0.08, 1.5, f * 0.04, -f * 0.5 + (i % 4) * f * 0.3, suelo, -f * 0.05 + Math.floor(i / 4) * f * 0.35, [1, 0.85, 0.2]);
+        top = Hx + 1; hw = f * 0.25; hd = f * 0.2; break; }
+      case 'seguridad': { var Hz = Hf(0.06); K.T = [0.55, 0.6, 0.68]; caja(f * 0.5, Hz, f * 0.5); K.peto(f * 0.5, f * 0.5, 0, Hz, 0); K.portal(0, f * 0.25, f * 0.5);
+        p.push({ g: 'cyl', a: 8, sx: f * 0.04, sy: Hf(0.2) - suelo, sz: f * 0.04, x: f * 0.3, y: suelo, z: -f * 0.3, c: [0.75, 0.75, 0.78] });
+        p.push({ g: 'sphere', sx: f * 0.1, sy: f * 0.1, sz: f * 0.1, x: f * 0.3, y: Hf(0.2), z: -f * 0.3, c: [0.95, 0.3, 0.3] });
+        caja(f * 1.1, 3, 1, 0, suelo, f * 0.55, [0.6, 0.6, 0.64]);                                                     // la valla
+        top = Hf(0.2) + f * 0.05; hw = f * 0.25; hd = f * 0.25; break; }
+      default: { var Hq = Hf(0.1); caja(f, Hq, f * 0.8); K.peto(f, f * 0.8, 0, Hq, 0); K.portal(0, f * 0.4, f); top = Hq + 1; hw = f * 0.5; hd = f * 0.4; }
+    }
+    return { p: p, top: top, hw: hw, hd: hd, suelo: suelo };
   }
 
   /** Coche sencillo (metros reales): carrocería + cabina, color por instancia. */
@@ -1807,7 +1935,7 @@
       sel: null, hover: null, frame: 0, fps: 0, fpsN: 0, fpsT: 0, lastT: 0, raf: 0,
       mode: 'orbit', hour: null, night: 0, landmarks: [], lmIndex: {}, clusterTotal: 0,
       avatars: {}, avatarOrder: [], traffic: null, gridShown: false, catastro: null, tramas: [], glorietas: [], nCruces: 0, trozosVia: 0,
-      edificios: [], barrios: null, trozosBarrio: 0
+      edificios: [], barrios: null, trozosBarrio: 0, parcelas: null, trozosParcela: 0, rechazadosPorHuella: 0
     };
     var gridGroup = new THREE.Group(); scene.add(gridGroup);
     var pending = null, pendingFlight = null;
@@ -1990,14 +2118,19 @@
       C[name] = inst(geometry, material, cap, name, shadow);
       return C[name];
     }
-    var ARCH_GEO = {}, ARCH_TOP = {}, PALMA_GEO = null;
+    var ARCH_GEO = {}, PALMA_GEO = null;
+    // El color del cuerpo de cada sector, en sRGB, para las piezas (pushPart lo linealiza).
+    var SECTOR_SRGB = [];
+    for (var ks = 0; ks < SECTOR_COLORS.length; ks++) {
+      var hx = SECTOR_COLORS[ks].replace('#', '');
+      SECTOR_SRGB.push([parseInt(hx.slice(0, 2), 16) / 255, parseInt(hx.slice(2, 4), 16) / 255, parseInt(hx.slice(4, 6), 16) / 255]);
+    }
     var ghostTime = { value: 0 }, ghostMat = makeGhostMaterial(ghostTime);
     function buildCityMeshes() {
       var k;
       for (k = 0; k < ARCH_KEYS.length; k++) {
-        var acc = newAcc(); pushParts(acc, archetypeParts(ARCH_KEYS[k], CELL)); ARCH_GEO[ARCH_KEYS[k]] = accGeometry(acc);
-        ARCH_GEO[ARCH_KEYS[k]].computeBoundingBox(); ARCH_TOP[ARCH_KEYS[k]] = ARCH_GEO[ARCH_KEYS[k]].boundingBox.max.y;
-        ensureCap('arch_' + ARCH_KEYS[k], ARCH_GEO[ARCH_KEYS[k]], buildMat, 64, true);
+        // Solo para los fantasmas del multiverso: una morfología neutra por sector.
+        var acc = newAcc(); pushParts(acc, parcelaPartes(ARCH_KEYS[k], CELL, { v: 0.1, v2: 0.5, sy: 1, T: WHITE }).p); ARCH_GEO[ARCH_KEYS[k]] = accGeometry(acc);
       }
       var a = ASSET;
       var cone = new THREE.ConeGeometry(a * 0.45, a * 1.3, 7); cone.translate(0, a * 0.65, 0);
@@ -2050,8 +2183,8 @@
       S.parcelAt = parcelAt;
       if (d.districts && d.districts.length) S.districts = d.districts;
       var me = d.me || null, col = C.tiles.geometry.attributes.cellColor.array, state = S.cellState;
-      var perArch = {}, k;
-      for (k = 0; k < ARCH_KEYS.length; k++) perArch[ARCH_KEYS[k]] = [];
+      var k, teselas = {}, parcelasSolidas = [];
+      for (k = 0; k < ARCH_KEYS.length; k++) cnt.arch[ARCH_KEYS[k]] = 0;
       var saleItems = [], signItems = [];
       for (y = 0; y < n; y++) for (x = 0; x < n; x++) {
         var ci = y * n + x, pi = parcelAt[ci];
@@ -2074,13 +2207,26 @@
         v *= 0.94 + 0.12 * real01(semillaRopaje(x, y, pc.owner || '', pc.since | 0));
         var sy = (pend ? 0.3 : 1) * (0.85 + 0.3 * real01(semillaMorfologia(x, y, 2)) + Math.min(pc.assets | 0, 6) * 0.03);
         var arch = SECTOR_ARCH[kind] || 'torre';
-        perArch[arch].push({ x: w.x, y: S.cellH[ci] + 0.5, z: w.z, sy: sy, c: tmpColor.clone().copy(sectorColors[kind]).multiplyScalar(v) });
+        // El edificio de la parcela (v0.10.15): su planta sale de los canales 13
+        // y 14 de la morfología de la celda —solo de (x, y)—, su altura de la
+        // esbeltez y su color del sector con el ropaje. Se escribe en metros en
+        // la malla de su tesela, con el portal hacia el frente de la parcela
+        // (+y de la cuadrícula, donde arranca el paseo a pie).
+        var sr = SECTOR_SRGB[kind], ed = parcelaPartes(arch, CELL, { v: real01(semillaMorfologia(x, y, 13)), v2: real01(semillaMorfologia(x, y, 14)), sy: sy, T: [Math.min(1, sr[0] * v), Math.min(1, sr[1] * v), Math.min(1, sr[2] * v)] });
+        var y0 = S.cellH[ci] + 0.5 - ed.suelo, clave = Math.floor(w.x / TESELA_VIA) + ':' + Math.floor(w.z / TESELA_VIA);
+        var TT = teselas[clave] || (teselas[clave] = { acc: newAcc(), abase: [], aflags: [] });
+        _m4b.compose(_pv.set(w.x, y0, w.z), _q.setFromEuler(_e.set(0, rotR, 0)), _sv.set(1, 1, 1));
+        pushParts(TT.acc, ed.p, _m4b);
+        var conVentanas = (arch === 'industria' || arch === 'solar' || arch === 'agua' || arch === 'granja' || arch === 'taxi') ? 1 : 0;
+        while (TT.abase.length * 3 < TT.acc.pos.length) { TT.abase.push(y0 + ed.suelo - 1); TT.aflags.push(conVentanas); }
+        parcelasSolidas.push({ x: w.x, z: w.z, hw: ed.hw, hd: ed.hd, yaw: rotR, y0: y0, h: ed.top, tipo: 'parcela', id: 'parcela:' + x + ':' + y, nombre: pc.name || '' });
+        cnt.arch[arch]++;
         // El rótulo (v0.10.14): el nombre único del dueño —`SetProfile` garantiza
         // que no hay dos iguales en toda la cadena— sobre la coronación de su
         // edificio. Es ropaje: cambia cuando cambia el dueño, y sin perfil no hay
         // rótulo (una dirección en hexadecimal no es un nombre).
         if (pc.handle) {
-          signItems.push({ x: w.x, y: S.cellH[ci] + 0.5 + (ARCH_TOP[arch] || 40) * sy + 10, z: w.z, text: '@' + pc.handle,
+          signItems.push({ x: w.x, y: y0 + ed.top + 10, z: w.z, text: '@' + pc.handle,
             color: own ? colors.accent : '#ffffff', size: 12, bold: true, pin: true, maxDist: S.L * 0.4, priority: 2 });
         }
         if (pc.sale) {
@@ -2089,11 +2235,27 @@
         }
       }
       C.tiles.geometry.attributes.cellColor.needsUpdate = true;
-      for (k = 0; k < ARCH_KEYS.length; k++) {
-        var list = perArch[ARCH_KEYS[k]], m = ensureCap('arch_' + ARCH_KEYS[k], ARCH_GEO[ARCH_KEYS[k]], buildMat, list.length, true);
-        for (i = 0; i < list.length; i++) place(m, i, list[i].x, list[i].y, list[i].z, 1, list[i].sy, 1, list[i].c);
-        finish(m, list.length);
-        cnt.arch[ARCH_KEYS[k]] = list.length;
+      // Las mallas de las parcelas, una por tesela; y sus sólidos en el catastro,
+      // en lugar de los de la ciudad anterior.
+      if (S.parcelas) {
+        scene.remove(S.parcelas);
+        for (i = 0; i < S.parcelas.children.length; i++) S.parcelas.children[i].geometry.dispose();
+      }
+      S.parcelas = new THREE.Group(); S.parcelas.name = 'parcelas'; S.trozosParcela = 0;
+      for (clave in teselas) {
+        if (!Object.prototype.hasOwnProperty.call(teselas, clave)) continue;
+        var gp = accGeometry(teselas[clave].acc);
+        gp.setAttribute('abase', new THREE.Float32BufferAttribute(teselas[clave].abase, 1));
+        gp.setAttribute('aflags', new THREE.Float32BufferAttribute(teselas[clave].aflags, 1));
+        gp.boundingSphere.radius += 5;
+        var mp = new THREE.Mesh(gp, buildMat);
+        mp.castShadow = true; mp.receiveShadow = true; mp.frustumCulled = true; mp.name = 'parcela_' + clave;
+        S.parcelas.add(mp); S.trozosParcela++;
+      }
+      scene.add(S.parcelas);
+      if (S.catastro) {
+        catastroQuita(S.catastro, function (so) { return so.tipo === 'parcela'; });
+        for (i = 0; i < parcelasSolidas.length; i++) catastroAlta(S.catastro, parcelasSolidas[i]);
       }
       // Activos: anillos de 12 huecos alrededor del edificio; los coches en el aparcamiento del frente.
       var need = Math.max(assets.length, 1);
@@ -2174,6 +2336,37 @@
         var k = j * cat.nx + i;
         (cat.bins[k] || (cat.bins[k] = [])).push(idx);
       }
+    }
+    /** Rehace las celdas a partir de la lista de sólidos (tras quitar o cambiar alguno). */
+    function catastroReconstruye(cat) {
+      var items = cat.items, i;
+      cat.bins = new Array(cat.nx * cat.nz); cat.items = [];
+      for (i = 0; i < items.length; i++) catastroAlta(cat, items[i]);
+    }
+    /** Quita del catastro los sólidos que cumplen `pred` y rehace las celdas. */
+    function catastroQuita(cat, pred) {
+      cat.items = cat.items.filter(function (so) { return !pred(so); });
+      catastroReconstruye(cat);
+    }
+    /**
+     * ¿Cabe una huella circular de radio `r` en (wx, wz) sin montarse en ningún
+     * sólido ya alzado? Dos círculos que se solapan más de un quinto de sus
+     * radios se consideran montados. Mira solo las celdas vecinas: ningún
+     * sólido envuelve más de 256 m.
+     */
+    function huellaLibre(cat, wx, wz, r) {
+      var i0 = Math.max(0, Math.floor((wx - r) / SOLIDO_CELDA) - 1), i1 = Math.min(cat.nx - 1, Math.floor((wx + r) / SOLIDO_CELDA) + 1);
+      var j0 = Math.max(0, Math.floor((wz - r) / SOLIDO_CELDA) - 1), j1 = Math.min(cat.nz - 1, Math.floor((wz + r) / SOLIDO_CELDA) + 1);
+      var vistos = {}, i, j, n;
+      for (j = j0; j <= j1; j++) for (i = i0; i <= i1; i++) {
+        var lista = cat.bins[j * cat.nx + i]; if (!lista) continue;
+        for (n = 0; n < lista.length; n++) {
+          var id = lista[n]; if (vistos[id]) continue; vistos[id] = 1;
+          var so = cat.items[id], dx = so.x - wx, dz = so.z - wz, ro = Math.sqrt(so.hw * so.hw + so.hd * so.hd);
+          if (dx * dx + dz * dz < (r + ro) * (r + ro) * 0.64) return false;
+        }
+      }
+      return true;
     }
     /** Punto (wx,wz) en el marco local de la huella: girar por -yaw. */
     function aLocal(so, wx, wz, out) {
@@ -2311,12 +2504,14 @@
     // marquesina— hacia la calle más cercana, con la fachada paralela a ella.
     // La forma sale SOLO de la posición (semillaMorfologia), así que dos
     // máquinas deducen el mismo edificio; la posición, la altura y la huella
-    // siguen saliendo de la misma serie que en la v0.10.6, así que el skyline no
-    // se mueve. Ya no son mallas instanciadas de una caja escalada: un portal de
-    // tres metros no puede escalar con la torre. Cada edificio se escribe en
-    // metros en la malla de su tesela de ocho kilómetros, con esfera envolvente,
-    // como la calzada y las palmeras.
+    // siguen saliendo de la misma serie que en la v0.10.6. Ya no son mallas
+    // instanciadas de una caja escalada: un portal de tres metros no puede
+    // escalar con la torre. Cada edificio se escribe en metros en la malla de su
+    // tesela de ocho kilómetros, con esfera envolvente, como la calzada y las
+    // palmeras. Desde la v0.10.15 un edificio no se planta sobre otro ni sobre un
+    // hito (huellaLibre), y el catastro tiene exactamente los que se dibujan.
     var TONOS_BARRIO = { towers: [[0.62, 0.74, 0.86], [0.55, 0.62, 0.72], [0.82, 0.78, 0.7], [0.7, 0.8, 0.9]], blocks: [[0.88, 0.84, 0.76], [0.8, 0.8, 0.82], [0.9, 0.87, 0.8]], villas: [[0.95, 0.92, 0.85], [0.9, 0.84, 0.72]], warehouses: [[0.85, 0.85, 0.86], [0.75, 0.75, 0.78], [0.9, 0.9, 0.9]] };
+    var TIPOS_BARRIO = ['towers', 'blocks', 'villas', 'warehouses'];
     /**
      * Cómo se orienta un edificio: dentro de una trama de barrio, con la fachada
      * paralela a la calle más cercana y el portal mirando a ella; fuera, con el
@@ -2338,98 +2533,28 @@
       }
       return { yaw: yawLibre, alineado: false };
     }
-    /**
-     * Las piezas de un edificio en su marco local: el origen en el centro de la
-     * huella, un metro por debajo del suelo (la caja va hundida para que ninguna
-     * pendiente deje un hueco), x a lo largo de la calle, +z hacia ella.
-     */
+    /** Las piezas de un edificio de barrio en su marco local (ver el catálogo de cuerpos). */
     function edificioPartes(e) {
-      var w = e.w, d = e.d, H = e.h, T = e.tono, k = e.kind, v = e.v, p = [];
-      var TC = [Math.min(1, T[0] * 0.9 + 0.08), Math.min(1, T[1] * 0.9 + 0.07), Math.min(1, T[2] * 0.9 + 0.05)];   // coronación: un punto más clara y cálida
-      var TP = [T[0] * 0.82, T[1] * 0.82, T[2] * 0.82];                                                              // podio: más oscuro
-      var TM = [0.5, 0.52, 0.56], TD = [0.06, 0.07, 0.09], TCa = [0.9, 0.88, 0.82], TG = [0.5, 0.66, 0.86], TA = [0.55, 0.55, 0.58];
-      function caja(sx, sy, sz, x, y, z, c) { p.push({ sx: sx, sy: sy, sz: sz, x: x || 0, y: y || 0, z: z || 0, c: c || T }); }
-      function peto(sx, sz, x, y, z) { caja(sx + 1.4, 1.4, sz + 1.4, x, y - 1.2, z, TC); }        // el remate sobresale 70 cm y sube 20
-      function corona(sx, sz, x, y, z, alta) {
-        peto(sx, sz, x, y, z);
-        caja(sx * 0.42, 4.5, sz * 0.42, x - sx * 0.14, y, z - sz * 0.14, TM);                        // cuarto de máquinas
-        if (alta) p.push({ g: 'cyl', a: 6, sx: 1.4, sy: Math.max(8, H * 0.1), sz: 1.4, x: x + sx * 0.24, y: y, z: z + sz * 0.2, c: TA });
-      }
-      // El portal en la cara z = zf, mirando a +z. El suelo local está en y = 1.
-      function portal(x, zf, ancho) {
-        var g = Math.min(ancho - 2, 14);
-        caja(g, 4.4, 0.4, x, 1, zf, TG);                                                             // vidriera del vestíbulo
-        caja(3.4, 3.2, 0.6, x, 1, zf + 0.3, TD);                                                     // el hueco de la puerta
-        caja(Math.min(8, g), 0.35, 3.2, x, 4.8, zf + 1.4, TCa);                                      // marquesina
-      }
-      if (k === 'towers') {
-        var alta = H > 150;
-        if (v < 0.25) {                                                                              // lámina
-          caja(w, H, d); corona(w, d, 0, H, 0, alta); portal(0, d / 2, w);
-        } else if (v < 0.5) {                                                                        // podio y torre
-          caja(w, 14, d, 0, 0, 0, TP); peto(w, d, 0, 14, 0);
-          var tw = w * 0.66, td = d * 0.66, tx = (e.v2 - 0.5) * w * 0.2, tz = -d * 0.1;
-          caja(tw, H, td, tx, 0, tz); corona(tw, td, tx, H, tz, alta); portal(0, d / 2, w);
-        } else if (v < 0.7) {                                                                        // escalonada
-          caja(w, H * 0.6, d); peto(w, d, 0, H * 0.6, 0);
-          caja(w * 0.78, H * 0.82, d * 0.78, -w * 0.08, 0, -d * 0.08); peto(w * 0.78, d * 0.78, -w * 0.08, H * 0.82, -d * 0.08);
-          caja(w * 0.55, H, d * 0.55, -w * 0.16, 0, -d * 0.16); corona(w * 0.55, d * 0.55, -w * 0.16, H, -d * 0.16, alta);
-          portal(0, d / 2, w);
-        } else if (v < 0.85) {                                                                       // en L
-          caja(w, H, d * 0.45, 0, 0, -d * 0.275); corona(w, d * 0.45, 0, H, -d * 0.275, alta);
-          caja(w * 0.45, H * 0.8, d, -w * 0.275, 0, 0); peto(w * 0.45, d, -w * 0.275, H * 0.8, 0);
-          portal(w * 0.15, -d * 0.05, w * 0.5);
-        } else {                                                                                     // gemelas sobre podio
-          caja(w, 9, d, 0, 0, 0, TP); peto(w, d, 0, 9, 0);
-          caja(w * 0.36, H, d * 0.72, -w * 0.3, 0, -d * 0.1); corona(w * 0.36, d * 0.72, -w * 0.3, H, -d * 0.1, alta);
-          caja(w * 0.36, H, d * 0.72, w * 0.3, 0, -d * 0.1); peto(w * 0.36, d * 0.72, w * 0.3, H, -d * 0.1);
-          caja(w * 0.3, 4, d * 0.3, 0, H * 0.55, -d * 0.1, TM);                                      // la pasarela
-          portal(0, d / 2, w);
-        }
-      } else if (k === 'blocks') {
-        if (v < 0.35) {                                                                              // barra
-          caja(w, H, d); corona(w, d, 0, H, 0, false); portal(0, d / 2, w);
-        } else if (v < 0.6) {                                                                        // en L
-          caja(w, H, d * 0.45, 0, 0, -d * 0.275); corona(w, d * 0.45, 0, H, -d * 0.275, false);
-          caja(w * 0.42, H, d, -w * 0.29, 0, 0); peto(w * 0.42, d, -w * 0.29, H, 0);
-          portal(w * 0.15, -d * 0.05, w * 0.5);
-        } else if (v < 0.8) {                                                                        // en U, con el patio a la calle
-          caja(w, H, d * 0.42, 0, 0, -d * 0.29); corona(w, d * 0.42, 0, H, -d * 0.29, false);
-          caja(w * 0.28, H, d, -w * 0.36, 0, 0); peto(w * 0.28, d, -w * 0.36, H, 0);
-          caja(w * 0.28, H, d, w * 0.36, 0, 0); peto(w * 0.28, d, w * 0.36, H, 0);
-          portal(0, -d * 0.08, w * 0.4);
-        } else {                                                                                     // con ático retranqueado
-          caja(w, H * 0.88, d); peto(w, d, 0, H * 0.88, 0);
-          caja(w * 0.84, H, d * 0.84, 0, 0, -d * 0.05, TC); peto(w * 0.84, d * 0.84, 0, H, -d * 0.05);
-          portal(0, d / 2, w);
-        }
-      } else if (k === 'villas') {
-        caja(w, H, d); caja(w * 1.08, 0.8, d * 1.08, 0, H, 0, [0.9, 0.85, 0.78]);                   // la casa y la losa del tejado
-        var mw = w + 7, md = d + 7, hueco = 3.5, tr = (mw - hueco) / 2;                              // la tapia, a 3,5 m de la casa
-        caja(0.3, 2.2, md, -mw / 2, 1, 0, TCa); caja(0.3, 2.2, md, mw / 2, 1, 0, TCa); caja(mw, 2.2, 0.3, 0, 1, -md / 2, TCa);
-        caja(tr, 2.2, 0.3, -(hueco + tr) / 2, 1, md / 2, TCa); caja(tr, 2.2, 0.3, (hueco + tr) / 2, 1, md / 2, TCa);   // el frente, con la cancela
-        caja(2.4, 2.6, 0.5, 0, 1, d / 2 + 0.2, TD); caja(4, 0.3, 2.2, 0, 3.6, d / 2 + 0.9, TCa);      // puerta y marquesina
-      } else {                                                                                       // naves
-        var hv = Math.min(d * 0.5, 6);
-        if (v < 0.5) { caja(w, H - hv, d); p.push({ g: 'halfcyl', sx: hv * 2, sy: w, sz: d, x: w / 2, y: H - hv, rz: Math.PI / 2, c: TC }); }   // bóveda
-        else { caja(w, H, d); peto(w, d, 0, H, 0); caja(4, 2.5, 4, -w * 0.3, H, -d * 0.2, TM); caja(4, 2.5, 4, 0, H, -d * 0.2, TM); caja(4, 2.5, 4, w * 0.3, H, -d * 0.2, TM); }
-        caja(w * 0.5, 1.2, 4, w * 0.1, 1, d / 2 + 2, [0.55, 0.55, 0.55]);                             // muelle de carga
-        caja(4.5, 4.5, 0.5, -w * 0.02, 1, d / 2 + 0.2, TD); caja(4.5, 4.5, 0.5, w * 0.22, 1, d / 2 + 0.2, TD);   // dos portones
-        caja(2, 2.6, 0.5, -w * 0.3, 1, d / 2 + 0.2, TD);                                             // la puerta de la oficina
-      }
+      var p = [], K = piezas(p, e.tono, 1);
+      if (e.kind === 'towers') cuerpoTorre(K, e.w, e.d, e.h, e.v, e.v2, e.h > 150);
+      else if (e.kind === 'blocks') cuerpoBloque(K, e.w, e.d, e.h, e.v);
+      else if (e.kind === 'villas') cuerpoVilla(K, e.w, e.d, e.h);
+      else cuerpoNave(K, e.w, e.d, e.h, e.v, p);
       return p;
     }
     /**
      * El plano de los barrios: dónde va cada edificio, cuánto mide y cómo se
      * orienta. Se calcula una vez; las mallas se levantan aparte (buildClusters)
-     * porque la calidad cambia cuántos se dibujan, no cuáles hay.
+     * porque la calidad cambia cuántos se dibujan, no cuáles hay. Cada edificio
+     * aceptado se da de alta en el catastro al momento, para que el siguiente no
+     * se plante encima de él ni de un hito.
      */
     function planificarBarrios(meta) {
-      var cl = meta.clusters || [], kinds = ['towers', 'blocks', 'villas', 'warehouses'], i, j;
-      S.edificios = [];
+      var cl = meta.clusters || [], i, j;
+      S.edificios = []; S.rechazadosPorHuella = 0;
       for (i = 0; i < cl.length; i++) {
         var c = cl[i], rnd = lcg(c.seed || (i + 1) * 7919), cw = S.geo.toWorld(c.lat, c.lon);
-        var kind = kinds.indexOf(c.kind) >= 0 ? c.kind : 'blocks', lista = [], tries = 0;
+        var kind = TIPOS_BARRIO.indexOf(c.kind) >= 0 ? c.kind : 'blocks', lista = [], tries = 0;
         for (j = 0; j < c.count && tries < c.count * 4; tries++) {
           var ang = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * c.radius_m;
           var x = cw.x + Math.cos(ang) * rr, z = cw.z + Math.sin(ang) * rr;
@@ -2444,27 +2569,31 @@
           // se queda donde queda sitio, que es exactamente como crece una ciudad.
           if (enCalle(x, z, Math.max(fw, fd) * 0.5)) continue;
           var yawLibre = rnd() * Math.PI, tono = rnd();
+          // Ni sobre otro edificio ni sobre un hito (v0.10.15).
+          if (!huellaLibre(S.catastro, x, z, Math.sqrt(fw * fw + fd * fd) * 0.5)) { S.rechazadosPorHuella++; continue; }
           var ori = orientaEnTrama(x, z, yawLibre);
           // La planta y sus detalles salen de la POSICIÓN, no de la serie del
           // barrio: canal 11 de la morfología, el mismo número en toda máquina.
           var r2 = lcg(semillaMorfologia(Math.round(x), Math.round(z), 11));
           var tl = TONOS_BARRIO[kind][Math.floor(tono * TONOS_BARRIO[kind].length)], m = 0.9 + 0.2 * hash2(j, i);
-          lista.push({ x: x, y: hg - 1, z: z, h: h + 1, w: fw, d: fd, yaw: ori.yaw, alineado: ori.alineado, kind: kind,
-                       tono: [tl[0] * m, tl[1] * m, tl[2] * m], barrio: c.name || '', v: r2(), v2: r2() });
+          var it = { x: x, y: hg - 1, z: z, h: h + 1, w: fw, d: fd, yaw: ori.yaw, alineado: ori.alineado, kind: kind,
+                     tono: [tl[0] * m, tl[1] * m, tl[2] * m], barrio: c.name || '', v: r2(), v2: r2() };
+          it.solido = { x: x, z: z, hw: fw * 0.5, hd: fd * 0.5, yaw: ori.yaw, y0: it.y, h: it.h, tipo: kind, id: kind + ':' + i + ':' + j, nombre: it.barrio };
+          catastroAlta(S.catastro, it.solido);
+          lista.push(it);
           j++;
-        }
-        for (j = 0; j < lista.length; j++) {
-          var it = lista[j];
-          catastroAlta(S.catastro, { x: it.x, z: it.z, hw: it.w * 0.5, hd: it.d * 0.5, yaw: it.yaw,
-            y0: it.y, h: it.h, tipo: kind, id: kind + ':' + i + ':' + j, nombre: it.barrio });
         }
         S.edificios.push(lista);
       }
     }
-    /** Las mallas de los barrios, una por tesela, con la fracción de la calidad. */
+    /**
+     * Las mallas de los barrios, una por tesela, con la fracción de la calidad; y
+     * el catastro con exactamente esos edificios, ni uno más: en calidad «baja»
+     * no se choca con lo que no se ve.
+     */
     function buildClusters(meta) {
       if (meta) planificarBarrios(meta);
-      var i, j, clave, teselas = {}, total = 0, f = Q.clusters;
+      var i, j, clave, teselas = {}, total = 0, f = Q.clusters, dibujados = [];
       if (S.barrios) {
         scene.remove(S.barrios);
         for (i = 0; i < S.barrios.children.length; i++) S.barrios.children[i].geometry.dispose();
@@ -2480,6 +2609,7 @@
           pushParts(T.acc, edificioPartes(e), _m4b);
           var sinVentanas = (e.kind === 'villas' || e.kind === 'warehouses') ? 1 : 0;
           while (T.abase.length * 3 < T.acc.pos.length) { T.abase.push(e.y); T.aflags.push(sinVentanas); }
+          dibujados.push(e.solido);
           total++;
         }
       }
@@ -2494,8 +2624,10 @@
         S.barrios.add(mesh); S.trozosBarrio++;
       }
       scene.add(S.barrios); S.clusterTotal = total;
+      // El catastro se queda con los dibujados: fuera los de barrio, y de vuelta solo estos.
+      catastroQuita(S.catastro, function (so) { return TIPOS_BARRIO.indexOf(so.tipo) >= 0; });
+      for (i = 0; i < dibujados.length; i++) catastroAlta(S.catastro, dibujados[i]);
     }
-
     // --- Tráfico ambiente por las vías -------------------------------------------
     // --- Las palmeras dejan de enviarse enteras (v0.10.10) -------------------------
     // Las palmeras iban en dos mallas instanciadas marcadas «no las descartes
@@ -4443,7 +4575,7 @@
       stats: function () {
         var env = null;
         try { var px = new Uint8Array(4 * 4 * 4); renderer.readRenderTargetPixels(envRT, 0, 0, 4, 4, px, 2); var sum = 0; for (var i = 0; i < 64; i++) sum += px[i]; env = Math.round(sum / 64); } catch (e) { env = -1; }
-        return { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame, landmarks: S.landmarks.length, skyline: S.clusterTotal, solidos: S.catastro ? S.catastro.items.length : 0, trozosBarrio: S.trozosBarrio, avatars: S.avatarOrder.length, quality: qualityName, mode: S.xr ? 'vr' : S.mode, env: env };
+        return { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame, landmarks: S.landmarks.length, skyline: S.clusterTotal, solidos: S.catastro ? S.catastro.items.length : 0, trozosBarrio: S.trozosBarrio, trozosParcela: S.trozosParcela, avatars: S.avatarOrder.length, quality: qualityName, mode: S.xr ? 'vr' : S.mode, env: env };
       },
       bench: bench, gpu: gpuName,
       latLonToCell: latLonToCell,
