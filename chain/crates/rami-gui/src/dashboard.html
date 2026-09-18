@@ -2201,7 +2201,7 @@
     } else {
       var cuentas = dubai ? "<br><span style='color:var(--muted)'>"+t("cobrado del fondo")+" <b>"+ramShort(p.ingresos)+"</b> RAMI · "+t("último bloque")+" "+ramShort(p.ultimo_ingreso)+" ("+fmtNum(p.ultimo_bloque)+") · "+t("cobrado como proveedor")+" "+ramShort(p.ventas)+" · "+t("pagado a proveedores")+" "+ramShort(p.insumos_pagados)+" · "+t("importado (quemado)")+" "+ramShort(p.importado)+"</span>" : "";
       info.innerHTML = "<b>"+esc(p.name)+"</b> · "+sectorName(p.kind)+" · "+t("parcela")+" ("+x+","+y+")<br>"+
-        "<span style='color:var(--muted)'>"+t("dueño ")+(mine?"<b style='color:var(--accent)'>"+t("tú")+"</b>":esc(shortAddr(p.owner)))+
+        "<span style='color:var(--muted)'>"+t("dueño ")+(mine?"<b style='color:var(--accent)'>"+t("tú")+"</b>":"")+(p.handle?(mine?" · ":"")+"<b>@"+esc(p.handle)+"</b>":"")+(mine?"":(p.handle?" · ":"")+esc(shortAddr(p.owner)))+
         t(" · desde bloque ")+fmtNum(p.since)+" · "+p.assets+t(" activo(s) · ")+p.harvests+t(" cosecha(s)")+
         (p.last_harvest? t(" · última: ")+ramFmt(p.last_harvest[1])+t(" RAMI en bloque ")+fmtNum(p.last_harvest[0]) : "")+"</span>"+cuentas+
         (p.sale ? "<br>💰 <b>"+t("En venta por")+" "+ramShort(p.sale)+" RAMI</b>" : "");

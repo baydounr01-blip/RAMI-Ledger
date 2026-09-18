@@ -1,3 +1,58 @@
+## Novedades de v0.10.14 — la manzana y la fachada
+
+Empieza la entrega 4 del plan del metaverso (`docs/METAVERSO.md`, «TRAMA: la
+manzana y la fachada»). **No toca el consenso, la red ni el formato de los
+ficheros**; la vista de la ciudad que sirve el nodo gana un campo.
+
+Las 3.106 cajas anónimas del skyline pasan a ser edificios:
+
+- **Planta.** Cada edificio sale de un catálogo según su tipo de barrio: las
+  torres son lámina, podio y torre, escalonada, en L o gemelas sobre podio; los
+  bloques, barra, en L, en U con el patio a la calle o con ático retranqueado;
+  las villas, casa con losa de tejado y tapia con cancela; las naves, con bóveda
+  o planas con casetones en la cubierta. Cuál le toca a cada uno sale **solo de
+  su posición** (`semillaMorfologia`, canal 11): dos máquinas deducen el mismo
+  edificio. La posición, la altura y la huella siguen saliendo de la misma serie
+  que en la v0.10.6, así que el skyline no se mueve.
+- **Coronación.** Peto que sobresale, cuarto de máquinas y, en las torres de
+  más de 150 m, antena.
+- **Portal hacia la calle.** Dentro de una trama de barrio la fachada se pone
+  **paralela a la calle más cercana** y el portal —vidriera del vestíbulo,
+  puerta y marquesina— mira a ella; 2.344 de los 3.106 quedan así alineados y
+  las manzanas se leen como manzanas. Las naves llevan muelle de carga con dos
+  portones. Villas y naves ya no llevan la retícula de ventanas de oficina.
+- **Cómo se dibuja.** Ya no son mallas instanciadas de una caja escalada: un
+  portal de tres metros no puede escalar con la torre. Cada edificio se escribe
+  en metros en la malla de su tesela de ocho kilómetros (19 teselas), con esfera
+  envolvente, como la calzada y las palmeras; el sombreador de edificios recibe
+  la cota del pie de cada uno para contar las ventanas desde su planta baja.
+- **El rótulo.** El nodo añade a cada parcela el **nombre único de su dueño**
+  (`handle`, el de `SetProfile`; vacío sin perfil), la ficha del panel lo
+  muestra y el cliente 3D lo cuelga sobre la coronación del edificio de la
+  parcela, en el color de acento si es el tuyo. Sin perfil no hay rótulo: una
+  dirección en hexadecimal no es un nombre.
+
+**Lo que cuesta.** Medido con los mismos encuadres en el binario publicado de la
+v0.10.13 y en este: de cerca y a pie, entre −1,5 % y +4,7 % de triángulos
+(torres de cerca 897.962 → 925.438; a pie en una manzana 928.100 → 952.312; ante
+una torre 805.296 → 806.004); la ciudad entera de golpe, +19,5 % (1.467.752 →
+1.753.464) y 15 llamadas más, una por tesela. Las mallas de los barrios suman
+332.944 triángulos frente a los 37.000 de las cajas.
+
+**Cómo se ha comprobado.** Panel real en Chromium sin pantalla, cero errores:
+recuento por tipo y por planta (720 torres, 837 bloques, 830 villas, 720 naves,
+las cinco variantes repartidas), fotos desde arriba de las plantas, ante el
+portal de una torre, de un bloque en L, de una villa y del muelle de una nave, y
+una ciudad sintética de tres parcelas: dos rótulos («@rami_dxb» en blanco a
+176 m, «@karim» en el color de acento por ser del jugador) y ninguno para la
+parcela sin perfil. `cargo test` (137), compatibilidad v0.7.0, inventario, i18n,
+panel y léxico.
+
+**Lo que sigue faltando** de esta entrega: el portal no se abre (eso es la
+entrega 5); los edificios de las parcelas —los del jugador— siguen siendo los
+arquetipos por sector, sin planta ni portal deducidos; y la calidad «baja» sigue
+dibujando el 40 % de los edificios mientras el catastro los tiene todos.
+
 ## Novedades de v0.10.13 — pasos de peatones, coches que esquivan y la medida de fluidez
 
 Sigue la entrega 5 del plan del metaverso (`docs/METAVERSO.md`). **No toca el
@@ -637,6 +692,60 @@ altura sin romperse.
   con los binarios de la v0.7.0 y la v0.7.3. Un binario v0.8.0 que abra un
   `chain.jsonl` escrito por la 0.9.0 con transacciones de mercado no lo lee
   (por red nunca las recibe): la salida es volver a la 0.9.0.
+
+## What's new in v0.10.14 — the block and the facade
+
+Delivery 4 of the metaverse plan begins (`docs/METAVERSO.md`, "TRAMA: the block
+and the facade"). **It does not touch consensus, the network or the file
+formats**; the city view served by the node gains one field.
+
+The 3,106 anonymous skyline boxes become buildings:
+
+- **Floor plan.** Each building comes from a catalogue by neighbourhood kind:
+  towers are a slab, podium and tower, stepped, L-shaped or twin towers on a
+  podium; blocks are a bar, L-shaped, U-shaped with the courtyard to the street,
+  or with a set-back attic; villas are a house with a roof slab and a walled
+  compound with a gate; warehouses are vaulted or flat with rooftop units. Which
+  one each gets comes **only from its position** (`semillaMorfologia`, channel
+  11): two machines deduce the same building. Position, height and footprint
+  still come from the same series as in v0.10.6, so the skyline does not move.
+- **Crown.** A projecting parapet, a plant room and, on towers above 150 m, an
+  antenna.
+- **Entrance facing the street.** Inside a neighbourhood grid the facade is set
+  **parallel to the nearest street** and the entrance — lobby glazing, door and
+  canopy — faces it; 2,344 of the 3,106 are aligned this way and the blocks read
+  as blocks. Warehouses get a loading dock with two gates. Villas and warehouses
+  no longer carry the office window grid.
+- **How it is drawn.** No longer instanced meshes of one scaled box: a
+  three-metre entrance cannot scale with the tower. Each building is written in
+  metres into the mesh of its eight-kilometre tile (19 tiles), with a bounding
+  sphere, like the roads and the palms; the building shader receives each
+  building's base height so windows count from its ground floor.
+- **The name sign.** The node adds to each parcel its **owner's unique name**
+  (`handle`, the one from `SetProfile`; empty without a profile), the panel card
+  shows it and the 3D client hangs it above the crown of the parcel's building,
+  in the accent colour when it is yours. No profile, no sign: a hexadecimal
+  address is not a name.
+
+**What it costs.** Measured with the same framings on the published v0.10.13
+binary and on this one: up close and on foot, between −1.5 % and +4.7 %
+triangles (towers up close 897,962 → 925,438; on foot in a block 928,100 →
+952,312; in front of a tower 805,296 → 806,004); the whole city at once, +19.5 %
+(1,467,752 → 1,753,464) and 15 more draw calls, one per tile. The neighbourhood
+meshes total 332,944 triangles against the boxes' 37,000.
+
+**How it was checked.** Real dashboard in headless Chromium, zero errors: counts
+by kind and by plan (720 towers, 837 blocks, 830 villas, 720 warehouses, the five
+variants evenly spread), photos from above of the plans, in front of a tower's
+entrance, an L-shaped block, a villa and a warehouse dock, and a synthetic city
+of three parcels: two signs ("@rami_dxb" in white at 176 m, "@karim" in the
+accent colour as the player's own) and none for the parcel without a profile.
+`cargo test` (137), v0.7.0 compatibility, inventory, i18n, panel and lexicon.
+
+**Still missing** from this delivery: the entrance does not open (that is
+delivery 5); the parcel buildings — the players' — are still the per-sector
+archetypes, with no deduced plan or entrance; and "low" quality still draws 40 %
+of the buildings while the cadastre holds them all.
 
 ## What's new in v0.10.13 — zebra crossings, cars that swerve and the frame-rate measure
 
