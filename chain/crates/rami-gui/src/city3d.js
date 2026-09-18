@@ -29,7 +29,7 @@
  *      del Futuro, Dubai Frame, Ain Dubai, Atlantis, Cayan, Emirates Towers,
  *      Palm…) en UNA geometría con ventanas que se encienden de noche;
  *      skylines por barrio y edificios de las parcelas deducidos de la posición
- *      —planta, coronación y portal— en una malla por tesela; tráfico ambiente por las vías;
+ *      —planta, fachada, coronación y portal— en una malla por tesela; tráfico ambiente por las vías;
  *      la cuadrícula de parcelas (64×64, drapeada) con un edificio por sector,
  *      coches de los concesionarios, carteles de venta y avatares de otros
  *      visitantes (presencia efímera de la red).
@@ -1024,8 +1024,11 @@
     // fundidas por tesela, para que las ventanas cuenten desde su planta baja y
     // no desde el nivel del mar. Las mallas sin el atributo leen 0: como antes.
     'attribute float abase;',
-    // `aflags` (v0.10.14): 1 = sin ventanas (villas y naves; la retícula de 4,5 por
-    // 3,6 m es la de una oficina). Las mallas sin el atributo leen 0: con ventanas.
+    // `aflags` (v0.10.14–16): el tipo de fachada del catálogo. 0 = retícula de
+    // oficina (huecos de 4,5 por 3,6 m), 1 = lisa, sin ventanas (villas, naves,
+    // granjas, depósitos), 2 = muro cortina (paños de 1,5 m con montantes finos),
+    // 3 = ventana corrida (una cinta de fachada a fachada por planta). Las mallas
+    // sin el atributo leen 0.
     'attribute float aflags;',
     'varying vec3 vNormalW; varying vec3 vWorld; varying float vLocalY; varying float vFlags;',
     'void main(){',
@@ -1058,7 +1061,9 @@
     'float hash21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }',
     'void main(){',
     '  #include <logdepthbuf_fragment>',
-    '  float uWin = uWindows * (1.0 - step(0.5, vFlags));',
+    '  float tipo = floor(vFlags + 0.5);',
+    '  float lisa = step(0.5, tipo) * step(tipo, 1.5), cortina = step(1.5, tipo) * step(tipo, 2.5), cinta = step(2.5, tipo);',
+    '  float uWin = uWindows * (1.0 - lisa);',
     '  vec3 base = vec3(0.8);',
     '  #if defined(USE_COLOR) || defined(USE_INSTANCING_COLOR)', '  base = vColor.rgb;', '  #endif',
     '  vec3 n = normalize(vNormalW);',
@@ -1068,17 +1073,20 @@
     '  float glassy = smoothstep(0.02, 0.16, base.b - base.r) * uWin;',
     '  float facade = clamp(1.0 - abs(n.y) * 1.2, 0.0, 1.0);',
     '  vec2 uvw = vec2(dot(vWorld.xz, vec2(n.z, -n.x)), vWorld.y);',
-    '  vec2 cellSz = vec2(4.5, 3.6);',
-    '  vec2 cell = floor(uvw / cellSz); vec2 f = fract(uvw / cellSz);',
-    '  float win = step(0.16, f.x) * step(f.x, 0.84) * step(0.22, f.y) * step(f.y, 0.86);',
+    '  vec2 cellSz = vec2(mix(4.5, 1.5, cortina), 3.6);',
+    '  vec2 cell = floor(uvw / vec2(4.5, 3.6)); vec2 f = fract(uvw / cellSz);',
+    '  float winRet = step(0.16, f.x) * step(f.x, 0.84) * step(0.22, f.y) * step(f.y, 0.86);',   // retícula: hueco por hueco
+    '  float winCor = step(0.04, f.x) * step(f.x, 0.96) * step(0.05, f.y) * step(f.y, 0.95);',   // muro cortina: el paño casi entero
+    '  float winCin = step(0.30, f.y) * step(f.y, 0.86);',                                          // cinta: de fachada a fachada
+    '  float win = mix(mix(winRet, winCor, cortina), winCin, cinta);',
     '  float glass = win * facade * step(5.0, vLocalY) * uWin;',
-    '  float slab = (1.0 - smoothstep(0.0, 0.07, f.y)) * facade * uWin * step(5.0, vLocalY);',
+    '  float slab = (1.0 - smoothstep(0.0, 0.07, f.y)) * facade * uWin * step(5.0, vLocalY) * (1.0 - 0.6 * cortina);',
     '  float rnd = hash21(cell + floor(vWorld.xz * 0.002));',
     '  float lit = step(0.55, rnd);',
     '  float ao = mix(0.6, 1.0, smoothstep(0.0, 16.0, vLocalY));',
     '  vec3 amb = mix(uGroundColor, uSkyColor, 0.5 + 0.5 * n.y) * ao;',
     '  vec3 albedo = base;',
-    '  albedo = mix(albedo, albedo * 0.45 + vec3(0.015, 0.04, 0.07), glass * 0.65);',
+    '  albedo = mix(albedo, albedo * 0.45 + vec3(0.015, 0.04, 0.07), glass * mix(0.65, 0.85, max(cortina, cinta)));',   // cortina y cinta: más cristal, menos pared
     '  albedo *= 1.0 - slab * 0.4;',
     '  albedo *= mix(1.0, 0.82, step(0.9, n.y) * uWin);',
     '  vec3 col = albedo * (amb * 0.85 + uSunColor * ndl * 1.15);',
@@ -1554,6 +1562,27 @@
   // lo largo de la calle, +z hacia ella; el suelo está en y = `suelo` (el cuerpo
   // arranca en 0, por debajo, para que ninguna pendiente deje hueco).
   var TONO_MAQUINAS = [0.5, 0.52, 0.56], TONO_PUERTA = [0.06, 0.07, 0.09], TONO_MARQUESINA = [0.9, 0.88, 0.82], TONO_VIDRIERA = [0.5, 0.66, 0.86], TONO_ANTENA = [0.55, 0.55, 0.58];
+  // ---- El catálogo de fachadas (v0.10.16) ------------------------------------------
+  // Cuatro fachadas; el número va en el atributo `aflags` de cada vértice y lo lee
+  // el sombreador de edificios. Cuál lleva cada edificio sale de su morfología.
+  var FACHADA_RETICULA = 0, FACHADA_LISA = 1, FACHADA_CORTINA = 2, FACHADA_CINTA = 3;
+  /** La fachada de un edificio de barrio: por tipo y por el sorteo `u` de su morfología. */
+  function fachadaBarrio(kind, u) {
+    if (kind === 'towers') return u < 0.4 ? FACHADA_CORTINA : (u < 0.8 ? FACHADA_RETICULA : FACHADA_CINTA);
+    if (kind === 'blocks') return u < 0.65 ? FACHADA_RETICULA : FACHADA_CINTA;
+    return FACHADA_LISA;                                                                       // villas y naves
+  }
+  /** La fachada del edificio de una parcela: por arquetipo del sector y el sorteo `u` de la celda. */
+  function fachadaParcela(arch, u) {
+    switch (arch) {
+      case 'torre': return u < 0.5 ? FACHADA_CORTINA : FACHADA_RETICULA;
+      case 'hotel': case 'clinica': return u < 0.5 ? FACHADA_CINTA : FACHADA_RETICULA;
+      case 'comercio': case 'gimnasio': return u < 0.5 ? FACHADA_CINTA : FACHADA_LISA;
+      case 'concesionario': return FACHADA_CORTINA;
+      case 'industria': case 'solar': case 'agua': case 'granja': case 'taxi': return FACHADA_LISA;
+      default: return FACHADA_RETICULA;                                                      // escuela, turismo, seguridad
+    }
+  }
   /** Los ayudantes de un edificio: escriben en `p` con el tono `T` y el suelo en `suelo`. */
   function piezas(p, T, suelo) {
     var TC = [Math.min(1, T[0] * 0.9 + 0.08), Math.min(1, T[1] * 0.9 + 0.07), Math.min(1, T[2] * 0.9 + 0.05)];   // coronación: un punto más clara y cálida
@@ -1659,7 +1688,7 @@
     var Hf = function (k, lo, hi) { return suelo + clamp(c * k, lo || 8, hi || 400) * e.sy; };
     var K = piezas(p, e.T, suelo), caja = K.caja, v = e.v, v2 = e.v2;
     switch (key) {
-      case 'torre': { var Ht = Hf(0.18); cuerpoTorre(K, f * 0.6, f * 0.6, Ht, v, v2, Ht - suelo > 150); top = Ht + 6; hw = f * 0.3; hd = f * 0.3; break; }
+      case 'torre': { var Ht = Hf(0.32); cuerpoTorre(K, f * 0.38, f * 0.38, Ht, v, v2, Ht - suelo > 150); top = Ht + 6; hw = f * 0.19; hd = f * 0.19; break; }   // v0.10.16: esbelta (69 × 208 m con la celda de 650)
       case 'hotel': { var Hh = Hf(0.14); cuerpoBloque(K, f * 1.1, f * 0.45, Hh, v * 0.8);
         caja(f * 1.12, 1.6, f * 0.47, 0, Hh - 0.4, 0, GOLD);                                         // la banda dorada de la coronación
         caja(f * 0.5, 1.2, f * 0.3, 0, suelo, f * 0.5, WATER); caja(f * 1.2, 0.6, f * 1.3, 0, suelo - 0.3, f * 0.3, [0.95, 0.9, 0.75]);   // piscina y terraza
@@ -1794,7 +1823,7 @@
     'void main(){',
     '  vec3 on = normal; vec4 wp = vec4(position, 1.0);',
     '  #ifdef USE_INSTANCING', '  on = mat3(instanceMatrix) * on; wp = instanceMatrix * wp;', '  #endif',
-    '  vC = vec3(1.0);', '  #ifdef USE_INSTANCING_COLOR', '  vC = instanceColor;', '  #endif',
+    '  vC = vec3(1.0);', '  #ifdef USE_COLOR', '  vC = color;', '  #endif', '  #ifdef USE_INSTANCING_COLOR', '  vC = instanceColor;', '  #endif',
     '  vN = normalize(mat3(modelMatrix) * on); wp = modelMatrix * wp; vW = wp.xyz;',
     '  gl_Position = projectionMatrix * viewMatrix * wp;',
     '  #include <logdepthbuf_vertex>',
@@ -1814,7 +1843,7 @@
     '  #include <encodings_fragment>',
     '}'].join('\n');
   function makeGhostMaterial(timeUniform) {
-    return new THREE.ShaderMaterial({ uniforms: { uTime: timeUniform }, vertexShader: GHOST_VS, fragmentShader: GHOST_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+    return new THREE.ShaderMaterial({ uniforms: { uTime: timeUniform }, vertexShader: GHOST_VS, fragmentShader: GHOST_FS, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
   }
 
   /** Mueve la etiqueta i-ésima de un conjunto sin reconstruir el atlas. */
@@ -1935,7 +1964,7 @@
       sel: null, hover: null, frame: 0, fps: 0, fpsN: 0, fpsT: 0, lastT: 0, raf: 0,
       mode: 'orbit', hour: null, night: 0, landmarks: [], lmIndex: {}, clusterTotal: 0,
       avatars: {}, avatarOrder: [], traffic: null, gridShown: false, catastro: null, tramas: [], glorietas: [], nCruces: 0, trozosVia: 0,
-      edificios: [], barrios: null, trozosBarrio: 0, parcelas: null, trozosParcela: 0, rechazadosPorHuella: 0
+      edificios: [], barrios: null, trozosBarrio: 0, parcelas: null, trozosParcela: 0, rechazadosPorHuella: 0, ocultos: 0, fantasmas: null, trozosFantasma: 0
     };
     var gridGroup = new THREE.Group(); scene.add(gridGroup);
     var pending = null, pendingFlight = null;
@@ -2118,7 +2147,7 @@
       C[name] = inst(geometry, material, cap, name, shadow);
       return C[name];
     }
-    var ARCH_GEO = {}, PALMA_GEO = null;
+    var PALMA_GEO = null;
     // El color del cuerpo de cada sector, en sRGB, para las piezas (pushPart lo linealiza).
     var SECTOR_SRGB = [];
     for (var ks = 0; ks < SECTOR_COLORS.length; ks++) {
@@ -2127,11 +2156,6 @@
     }
     var ghostTime = { value: 0 }, ghostMat = makeGhostMaterial(ghostTime);
     function buildCityMeshes() {
-      var k;
-      for (k = 0; k < ARCH_KEYS.length; k++) {
-        // Solo para los fantasmas del multiverso: una morfología neutra por sector.
-        var acc = newAcc(); pushParts(acc, parcelaPartes(ARCH_KEYS[k], CELL, { v: 0.1, v2: 0.5, sy: 1, T: WHITE }).p); ARCH_GEO[ARCH_KEYS[k]] = accGeometry(acc);
-      }
       var a = ASSET;
       var cone = new THREE.ConeGeometry(a * 0.45, a * 1.3, 7); cone.translate(0, a * 0.65, 0);
       var crate = new THREE.BoxGeometry(a * 0.7, a * 0.7, a * 0.7); crate.translate(0, a * 0.35, 0);
@@ -2147,8 +2171,6 @@
       for (st = 0; st < 4; st++) { C['avBody' + st] = inst(avatarBodyGeometry(st), plainMat, 16, 'avBody' + st, true); C['avArm' + st] = inst(avatarLimbGeometry('arm', st), plainMat, 32, 'avArm' + st, true); }
       C.avLeg = inst(avatarLimbGeometry('leg', 0), plainMat, 32, 'avLeg', true);
       PALMA_GEO = palmGeometry();
-      var gk;
-      for (gk = 0; gk < ARCH_KEYS.length; gk++) C['ghost_' + ARCH_KEYS[gk]] = inst(ARCH_GEO[ARCH_KEYS[gk]], ghostMat, 8, 'ghost_' + ARCH_KEYS[gk]);
       C.ghostLabels = new LabelSet(viewportUniform, false); scene.add(C.ghostLabels.mesh);
       C.selLabel = new LabelSet(viewportUniform, false); scene.add(C.selLabel.mesh);
       C.saleLabels = new LabelSet(viewportUniform, true); scene.add(C.saleLabels.mesh);
@@ -2217,9 +2239,9 @@
         var TT = teselas[clave] || (teselas[clave] = { acc: newAcc(), abase: [], aflags: [] });
         _m4b.compose(_pv.set(w.x, y0, w.z), _q.setFromEuler(_e.set(0, rotR, 0)), _sv.set(1, 1, 1));
         pushParts(TT.acc, ed.p, _m4b);
-        var conVentanas = (arch === 'industria' || arch === 'solar' || arch === 'agua' || arch === 'granja' || arch === 'taxi') ? 1 : 0;
-        while (TT.abase.length * 3 < TT.acc.pos.length) { TT.abase.push(y0 + ed.suelo - 1); TT.aflags.push(conVentanas); }
-        parcelasSolidas.push({ x: w.x, z: w.z, hw: ed.hw, hd: ed.hd, yaw: rotR, y0: y0, h: ed.top, tipo: 'parcela', id: 'parcela:' + x + ':' + y, nombre: pc.name || '' });
+        var fachada = fachadaParcela(arch, real01(semillaMorfologia(x, y, 15)));
+        while (TT.abase.length * 3 < TT.acc.pos.length) { TT.abase.push(y0 + ed.suelo - 1); TT.aflags.push(fachada); }
+        parcelasSolidas.push({ x: w.x, z: w.z, hw: ed.hw, hd: ed.hd, yaw: rotR, y0: y0, h: ed.top, tipo: 'parcela', id: 'parcela:' + x + ':' + y, nombre: pc.name || '', celda: ci });
         cnt.arch[arch]++;
         // El rótulo (v0.10.14): el nombre único del dueño —`SetProfile` garantiza
         // que no hay dos iguales en toda la cadena— sobre la coronación de su
@@ -2235,6 +2257,21 @@
         }
       }
       C.tiles.geometry.attributes.cellColor.needsUpdate = true;
+      // El plano de los barrios se hizo sin conocer las parcelas (v0.10.16): el
+      // edificio de barrio que se monta sobre el de una parcela comprada se oculta
+      // —y sale del catastro— mientras esa parcela tenga edificio. Basta mirar la
+      // celda en la que cae: el radio del de la parcela más el suyo no llega a la
+      // celda vecina. Las mallas solo se rehacen si cambia alguno.
+      var porCelda = {}, cambio = false, ocultos = 0, eb, ps, dxo, dzo, ra, rp, oc;
+      for (i = 0; i < parcelasSolidas.length; i++) porCelda[parcelasSolidas[i].celda] = parcelasSolidas[i];
+      for (i = 0; i < S.edificios.length; i++) for (k = 0; k < S.edificios[i].length; k++) {
+        eb = S.edificios[i][k]; ps = eb.celda >= 0 ? porCelda[eb.celda] : null; oc = false;
+        if (ps) { dxo = ps.x - eb.x; dzo = ps.z - eb.z; ra = Math.sqrt(eb.w * eb.w + eb.d * eb.d) * 0.5; rp = Math.sqrt(ps.hw * ps.hw + ps.hd * ps.hd); oc = dxo * dxo + dzo * dzo < (ra + rp) * (ra + rp) * 0.64; }
+        if (oc !== eb.oculto) { eb.oculto = oc; cambio = true; }
+        if (oc) ocultos++;
+      }
+      S.ocultos = ocultos;
+      if (cambio && S.barrios) buildClusters();
       // Las mallas de las parcelas, una por tesela; y sus sólidos en el catastro,
       // en lugar de los de la ciudad anterior.
       if (S.parcelas) {
@@ -2574,10 +2611,14 @@
           var ori = orientaEnTrama(x, z, yawLibre);
           // La planta y sus detalles salen de la POSICIÓN, no de la serie del
           // barrio: canal 11 de la morfología, el mismo número en toda máquina.
-          var r2 = lcg(semillaMorfologia(Math.round(x), Math.round(z), 11));
+          var r2 = lcg(semillaMorfologia(Math.round(x), Math.round(z), 11)), v1 = r2(), v2 = r2(), v3 = r2();
           var tl = TONOS_BARRIO[kind][Math.floor(tono * TONOS_BARRIO[kind].length)], m = 0.9 + 0.2 * hash2(j, i);
+          // La celda de la cuadrícula en la que cae (o −1): si una parcela comprada
+          // le pone su edificio encima, este se oculta (v0.10.16, applyCity).
+          var cel = worldToCell(x, z);
           var it = { x: x, y: hg - 1, z: z, h: h + 1, w: fw, d: fd, yaw: ori.yaw, alineado: ori.alineado, kind: kind,
-                     tono: [tl[0] * m, tl[1] * m, tl[2] * m], barrio: c.name || '', v: r2(), v2: r2() };
+                     tono: [tl[0] * m, tl[1] * m, tl[2] * m], barrio: c.name || '', v: v1, v2: v2, fachada: fachadaBarrio(kind, v3),
+                     celda: cel ? cel.y * N + cel.x : -1, oculto: false };
           it.solido = { x: x, z: z, hw: fw * 0.5, hd: fd * 0.5, yaw: ori.yaw, y0: it.y, h: it.h, tipo: kind, id: kind + ':' + i + ':' + j, nombre: it.barrio };
           catastroAlta(S.catastro, it.solido);
           lista.push(it);
@@ -2603,12 +2644,12 @@
         var lista = S.edificios[i], n = Math.round(lista.length * f);
         for (j = 0; j < n; j++) {
           var e = lista[j];
+          if (e.oculto) continue;                                                              // debajo del edificio de una parcela
           clave = Math.floor(e.x / TESELA_VIA) + ':' + Math.floor(e.z / TESELA_VIA);
           var T = teselas[clave] || (teselas[clave] = { acc: newAcc(), abase: [], aflags: [] });
           _m4b.compose(_pv.set(e.x, e.y, e.z), _q.setFromEuler(_e.set(0, e.yaw, 0)), _sv.set(1, 1, 1));
           pushParts(T.acc, edificioPartes(e), _m4b);
-          var sinVentanas = (e.kind === 'villas' || e.kind === 'warehouses') ? 1 : 0;
-          while (T.abase.length * 3 < T.acc.pos.length) { T.abase.push(e.y); T.aflags.push(sinVentanas); }
+          while (T.abase.length * 3 < T.acc.pos.length) { T.abase.push(e.y); T.aflags.push(e.fachada); }
           dibujados.push(e.solido);
           total++;
         }
@@ -2958,21 +2999,37 @@
     function setGhosts(list) {
       S.ghosts = list || [];
       if (!S.ready) return;
-      var per = {}, k, i, labels = [];
-      for (k = 0; k < ARCH_KEYS.length; k++) per[ARCH_KEYS[k]] = [];
+      var i, j, clave, labels = [], teselas = {};
+      if (S.fantasmas) {
+        scene.remove(S.fantasmas);
+        for (i = 0; i < S.fantasmas.children.length; i++) S.fantasmas.children[i].geometry.dispose();
+      }
+      S.fantasmas = new THREE.Group(); S.fantasmas.name = 'fantasmas'; S.trozosFantasma = 0;
       for (i = 0; i < S.ghosts.length; i++) {
         var g = S.ghosts[i];
         if (!(g.x >= 0 && g.x < N && g.y >= 0 && g.y < N) || g.estado === 'solo_aqui') continue;
         var kind = clamp(g.kind | 0, 0, SECTOR_COLORS.length - 1), arch = SECTOR_ARCH[kind] || 'torre', w = cellWorld(g.x, g.y), ci = g.y * N + g.x;
-        var sy = 0.85 + 0.3 * hash2(g.x + 3, g.y + 7);
-        per[arch].push({ x: w.x, y: S.cellH[ci] + 0.5, z: w.z, sy: sy, c: g.estado === 'distinta' ? [1.0, 0.45, 0.9] : [0.25, 0.9, 1.0] });
-        labels.push({ x: w.x, y: S.cellH[ci] + LIFT * 2 + clamp(CELL * 0.22, 20, 180), z: w.z, text: '⟂ ' + (g.name || '') + (g.tip ? ' · ' + g.tip : ''), color: g.estado === 'distinta' ? '#ffb3ec' : '#9df3ff', size: 11, bold: true, pin: true, maxDist: S.L * 0.7, priority: 3 });
+        var sy = 0.85 + 0.3 * hash2(g.x + 3, g.y + 7), tinte = g.estado === 'distinta' ? [1.0, 0.45, 0.9] : [0.25, 0.9, 1.0];
+        // La misma planta que tendría el edificio real de esa celda (canales 13 y
+        // 14, v0.10.16): el fantasma ES ese edificio, en otra rama del árbol.
+        var ed = parcelaPartes(arch, CELL, { v: real01(semillaMorfologia(g.x, g.y, 13)), v2: real01(semillaMorfologia(g.x, g.y, 14)), sy: sy, T: WHITE });
+        var y0 = S.cellH[ci] + 0.5 - ed.suelo;
+        clave = Math.floor(w.x / TESELA_VIA) + ':' + Math.floor(w.z / TESELA_VIA);
+        var TT = teselas[clave] || (teselas[clave] = newAcc()), desde = TT.col.length;
+        _m4b.compose(_pv.set(w.x, y0, w.z), _q.setFromEuler(_e.set(0, rotR, 0)), _sv.set(1.02, 1, 1.02));
+        pushParts(TT, ed.p, _m4b);
+        for (j = desde; j < TT.col.length; j += 3) { TT.col[j] = tinte[0]; TT.col[j + 1] = tinte[1]; TT.col[j + 2] = tinte[2]; }   // el edificio entero del color de su estado
+        labels.push({ x: w.x, y: y0 + ed.top + 8, z: w.z, text: '⟂ ' + (g.name || '') + (g.tip ? ' · ' + g.tip : ''), color: g.estado === 'distinta' ? '#ffb3ec' : '#9df3ff', size: 11, bold: true, pin: true, maxDist: S.L * 0.7, priority: 3 });
       }
-      for (k = 0; k < ARCH_KEYS.length; k++) {
-        var lst = per[ARCH_KEYS[k]], m = ensureCap('ghost_' + ARCH_KEYS[k], ARCH_GEO[ARCH_KEYS[k]], ghostMat, Math.max(lst.length, 1));
-        for (i = 0; i < lst.length; i++) { tmpColor.setRGB(lst[i].c[0], lst[i].c[1], lst[i].c[2]); place(m, i, lst[i].x, lst[i].y, lst[i].z, 1.02, lst[i].sy, 1.02, tmpColor); }
-        finish(m, lst.length);
+      for (clave in teselas) {
+        if (!Object.prototype.hasOwnProperty.call(teselas, clave)) continue;
+        var gp = accGeometry(teselas[clave]);
+        gp.boundingSphere.radius += 5;
+        var mp = new THREE.Mesh(gp, ghostMat);
+        mp.frustumCulled = true; mp.name = 'fantasma_' + clave;
+        S.fantasmas.add(mp); S.trozosFantasma++;
       }
+      scene.add(S.fantasmas);
       C.ghostLabels.set(labels.slice(0, 200));
     }
 
@@ -4575,7 +4632,7 @@
       stats: function () {
         var env = null;
         try { var px = new Uint8Array(4 * 4 * 4); renderer.readRenderTargetPixels(envRT, 0, 0, 4, 4, px, 2); var sum = 0; for (var i = 0; i < 64; i++) sum += px[i]; env = Math.round(sum / 64); } catch (e) { env = -1; }
-        return { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame, landmarks: S.landmarks.length, skyline: S.clusterTotal, solidos: S.catastro ? S.catastro.items.length : 0, trozosBarrio: S.trozosBarrio, trozosParcela: S.trozosParcela, avatars: S.avatarOrder.length, quality: qualityName, mode: S.xr ? 'vr' : S.mode, env: env };
+        return { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame, landmarks: S.landmarks.length, skyline: S.clusterTotal, solidos: S.catastro ? S.catastro.items.length : 0, trozosBarrio: S.trozosBarrio, trozosParcela: S.trozosParcela, ocultos: S.ocultos, trozosFantasma: S.trozosFantasma, avatars: S.avatarOrder.length, quality: qualityName, mode: S.xr ? 'vr' : S.mode, env: env };
       },
       bench: bench, gpu: gpuName,
       latLonToCell: latLonToCell,

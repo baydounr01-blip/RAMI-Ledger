@@ -1,10 +1,10 @@
-# PENDIENTE v0.10.15 (estado de la rama; borrar al publicar el release)
+# PENDIENTE v0.10.16 (estado de la rama; borrar al publicar el release)
 
-Sigue la entrega 4 del plan del metaverso (`docs/METAVERSO.md`, «TRAMA: la
-manzana y la fachada»): los edificios de las parcelas —los del jugador— salen
-del mismo catálogo que los de los barrios, ningún edificio de barrio se planta
-sobre otro ni sobre un hito, y la calidad «baja» choca solo con lo que dibuja.
-Sin cambios de consenso, de red, de nodo ni de formato: todo en `city3d.js`.
+Cierra la entrega 4 del plan del metaverso (`docs/METAVERSO.md`, «TRAMA: la
+manzana y la fachada»): el catálogo de fachadas en el sombreador, el plano de
+los barrios que oculta lo que queda debajo del edificio de una parcela, la torre
+de parcela esbelta y los fantasmas del multiverso con la planta de su celda. Sin
+cambios de consenso, de red, de nodo ni de formato: todo en `city3d.js`.
 
 ## Verificado en esta rama (Linux, Rust estable)
 
@@ -16,11 +16,12 @@ Sin cambios de consenso, de red, de nodo ni de formato: todo en `city3d.js`.
 
   | Prueba | Resultado |
   |---|---|
-  | Barrios | 3.052 edificios en 19 teselas (3.106 en la v0.10.14): 695 posiciones rechazadas por huella ocupada, cero solapes con el criterio de `huellaLibre`; 328.388 triángulos de barrio |
-  | Calidad | «baja»: 1.221 dibujados y 1.221 sólidos de barrio en el catastro; «media»: 3.052 y 3.052; los 56 hitos siempre |
-  | Ciudad sintética de 30 parcelas (una por sector, dos filas) | 2 teselas, 5.044 triángulos, 30 sólidos `parcela`; `solidoEn` bajo la torre devuelve «Empresa 0» (132,8 m, media huella 54,6 m) y bajo el hotel «Empresa 5»; rótulos «@rami_dxb» a 148 m y «@karim» a 121 m |
-  | Mismos encuadres, binario v0.10.14 → este | Torres de cerca 925.438 → 920.678; manzana de bloques 789.410 → 790.042; naves 1.014.894 → 1.014.414; a pie en la manzana 952.312 → 952.544; ante una torre 806.004 → 802.440; villas 926.780 → 959.508 (una tesela más en el encuadre: 14 → 15 llamadas); ciudad entera 1.753.464 → 1.748.908 (las mismas 86 llamadas); centro 1.533.338 → 1.532.854 |
-  | Fotos | La fila de los treinta sectores; la torre con ventanas, coronación y rótulo; el hotel con la piscina y la banda dorada; la nave con chimenea y grúa; escuela y clínica; a pie ante el portal de la torre (vidriera, puerta, marquesina) y mirando arriba por la fachada |
+  | Fachadas de barrio | Torres: 285 muro cortina, 271 retícula, 131 cinta; bloques: 532 retícula, 283 cinta; 830 villas y 720 naves lisas; 2.825 edificios saben su celda (227 caen fuera de la cuadrícula) |
+  | Tres parcelas sobre las celdas con más edificios de barrio (33, 27, 25) | 6 ocultos (los que chocan), 0 montados; catastro «media» 3.046 = dibujados, «baja» 1.220 = dibujados; sin las parcelas, 3.052 de vuelta y 0 ocultos |
+  | Fantasmas (tres, uno `solo_aqui`) | 1 malla, 228 triángulos, color del estado en los vértices, rótulos «⟂ Otra rama · #4412» a 243 m y «⟂ Hotel ajeno» a 122 m |
+  | Torre de parcela | 221,3 m de alto, media huella 34,6 m (esbeltez 3,1) |
+  | Mismos encuadres, binario v0.10.15 → este | Los ocho encuadres idénticos en triángulos y llamadas (920.678, 790.042, 959.508, 1.014.414, 952.544, 802.440, 1.748.908 con 86 llamadas, 1.532.854): sin parcelas en la ciudad real, nada cambia |
+  | Fotos | La torre entre las villas que la rodean, sin ninguna dentro; el fantasma rosa con su rótulo; la torre esbelta junto al hotel; a pie ante un muro cortina (gemelas sobre podio), una retícula y una ventana corrida |
 
 - Para fotografiar una ciudad sintética hay que bloquear el `setCity` del panel,
   que sondea `/api/city` y vuelve a poner la ciudad real (vacía) a los pocos
@@ -66,9 +67,21 @@ Sin cambios de consenso, de red, de nodo ni de formato: todo en `city3d.js`.
 - **La parcela mira a +y de la cuadrícula**: el edificio se gira `rotR`
   (`−rotationDeg`), que es el mismo giro que la cuadrícula; su +z local cae en
   la dirección `rotOff(0, +)`, por donde arranca el paseo a pie.
-- **Los fantasmas del multiverso** (`ghost_*`) usan `parcelaPartes` con una
-  morfología neutra (`v = 0,1`, `v2 = 0,5`, `sy = 1`) y siguen instanciados.
-  Las mallas instanciadas `arch_*` han desaparecido.
+- **Los fantasmas del multiverso** (`setGhosts`) usan `parcelaPartes` con la
+  morfología de la celda (canales 13 y 14) y van en una malla por tesela con
+  `ghostMat` (`vertexColors: true`; el color del estado se escribe en los
+  vértices después de `pushParts`, sin linealizar, para conservar el tono de
+  antes). No queda ninguna malla instanciada de arquetipo.
+- **El catálogo de fachadas** (`FACHADA_*`, `fachadaBarrio`, `fachadaParcela`)
+  viaja en `aflags`: 0 retícula, 1 lisa, 2 muro cortina, 3 cinta. El sombreador
+  saca tres máscaras (`lisa`, `cortina`, `cinta`) con `step` y mezcla los tres
+  patrones de hueco; la celda del sorteo de luces encendidas es siempre la de
+  4,5 × 3,6 m para que el muro cortina no parpadee paño a paño.
+- **Los ocultos**: cada edificio de barrio lleva `celda` (índice de la
+  cuadrícula o −1) desde el plano; `applyCity` mira el sólido de parcela de esa
+  celda y marca `oculto` con el criterio de `huellaLibre`; si algún estado
+  cambió, `buildClusters()` rehace las mallas saltándose los ocultos y el
+  catastro se queda con los dibujados. `S.ocultos` está en `stats()`.
 - **`huellaLibre(cat, x, z, r)`** mira las celdas vecinas del catastro (256 m)
   y rechaza si dos círculos envolventes se montan más de un quinto de la suma
   de radios. `planificarBarrios` da de alta cada edificio aceptado al momento;
@@ -78,27 +91,23 @@ Sin cambios de consenso, de red, de nodo ni de formato: todo en `city3d.js`.
 
 ## Queda por hacer
 
-1. **El plano de los barrios no conoce las parcelas compradas**: se hace al
-   cargar el mapa, antes de la ciudad, así que un edificio de barrio puede caer
-   dentro de una parcela con edificio. Rechazar también las celdas con parcela
-   cuando llegue la ciudad, o replanificar el barrio afectado.
-2. **Las proporciones del edificio de la parcela** son las heredadas de los
-   arquetipos: la torre es tan ancha como alta (109 × 133 m con la celda de
-   650 m). Dar a la torre una huella menor y más altura sin mover el resto.
-3. **Los fantasmas del multiverso** siguen con la morfología neutra de su
-   sector, no con la deducida de la celda.
-4. **Los avatares ajenos no se apartan.** Van donde dice su cliente; solo se
+1. **El portal no se abre**: es la entrega 5 («el umbral y el apartamento»),
+   la siguiente del plan.
+2. **Los avatares ajenos no se apartan.** Van donde dice su cliente; solo se
    empuja al jugador local.
-5. **Los coches cruzan el agua.** Donde el terreno baja de 0,6 m la cinta se
+3. **Los coches cruzan el agua.** Donde el terreno baja de 0,6 m la cinta se
    corta (Ras Al Khor, la costa) y la ruta de tráfico sigue.
-6. **La mitad real de las calles** espera un extracto de OpenStreetMap que
+4. **La mitad real de las calles** espera un extracto de OpenStreetMap que
    aporte quien la quiera (`tools/geo/osm_roads.py`).
-7. **El experimento de la profundidad.** Quitar `logarithmicDepthBuffer`. Con
+5. **El experimento de la profundidad.** Quitar `logarithmicDepthBuffer`. Con
    el botón de fluidez ya se puede medir antes y después en una tarjeta de
    verdad.
-8. **Relieve por texel en bordillo y acera**, **la pasada de sombra en una
+6. **Relieve por texel en bordillo y acera**, **la pasada de sombra en una
    tarjeta de verdad** y **cifras de fluidez de una tarjeta real**: el botón
    existe; falta que alguien lo pulse en una máquina con tarjeta.
+7. **Los 227 edificios de barrio fuera de la cuadrícula** (celda −1) no pueden
+   quedar bajo ninguna parcela, así que no hay nada que ocultar; se anota para
+   que nadie lo tome por un fallo.
 
 ## El arco de la esquina, para quien lo toque después
 

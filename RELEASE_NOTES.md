@@ -1,3 +1,56 @@
+## Novedades de v0.10.16 — el catálogo de fachadas, y la entrega 4 cerrada
+
+Termina la entrega 4 del plan del metaverso (`docs/METAVERSO.md`, «TRAMA: la
+manzana y la fachada»). **No toca el consenso, la red, el nodo ni el formato de
+los ficheros**: todo el cambio está en el cliente 3D.
+
+- **El catálogo de fachadas.** Cuatro fachadas en el sombreador de edificios:
+  la **retícula** de oficina (huecos de 4,5 por 3,6 m, la única que había), la
+  **lisa** sin ventanas (villas, naves, granjas, depósitos, paneles, taxis), el
+  **muro cortina** (paños de cristal de 1,5 m con montantes finos, forjado
+  apenas marcado, más reflejo) y la **ventana corrida** (una cinta de cristal
+  de fachada a fachada por planta). Cuál lleva cada edificio sale de su
+  morfología —el tercer sorteo del canal 11 en los barrios, el canal 15 de la
+  celda en las parcelas—, así que dos máquinas ven la misma fachada. En Dubái:
+  285 torres de muro cortina, 271 de retícula y 131 de cinta; 532 bloques de
+  retícula y 283 de cinta; 830 villas y 720 naves lisas. En las parcelas, la
+  torre es cortina o retícula, el hotel y la clínica cinta o retícula, el
+  concesionario siempre cortina, el comercio y el gimnasio cinta o liso.
+- **El plano de los barrios ya conoce las parcelas.** Se hacía al cargar el
+  mapa, antes de la ciudad, y un edificio de barrio podía quedar dentro del de
+  una parcela comprada. Ahora cada edificio de barrio sabe en qué celda cae, y
+  cuando llega la ciudad los que se montan sobre el edificio de una parcela se
+  ocultan —y salen del catastro— mientras esa parcela tenga edificio; si la
+  parcela desaparece, vuelven. Las mallas solo se rehacen cuando cambia
+  alguno. Probado con tres parcelas puestas en las tres celdas con más
+  edificios de barrio (33, 27 y 25): se ocultan 6, los que chocan, y no queda
+  ninguno montado; sin las parcelas, los 3.052 de vuelta.
+- **La torre de la parcela es esbelta.** Pasa de 109 m de lado y 133 de alto a
+  69 m de lado y unos 220 m de alto (esbeltez 3,1), sin mover el resto de los
+  sectores. El rótulo y el catastro siguen la nueva altura.
+- **Los fantasmas del multiverso** tienen la planta que tendría el edificio
+  real de esa celda (los mismos canales 13 y 14) y van en una malla por tesela
+  del color de su estado; las catorce mallas instanciadas de arquetipo
+  desaparecen del todo. El rótulo «⟂» cuelga sobre su coronación.
+
+**Lo que cuesta.** Medido con los mismos encuadres en el binario de la v0.10.15
+y en este: los ocho encuadres —torres de cerca, manzana de bloques, villas, naves, a pie en la manzana, ante una torre, la ciudad entera y el centro— dan exactamente los mismos triángulos y las mismas llamadas (920.678, 790.042, 959.508, 1.014.414, 952.544, 802.440, 1.748.908 y 1.532.854): la ciudad real no tiene parcelas y los barrios no cambian. El catálogo de fachadas es un cambio de sombreador: ningún
+triángulo más.
+
+**Cómo se ha comprobado.** Panel real en Chromium sin pantalla, cero errores:
+recuento de fachadas por tipo de barrio; tres parcelas sobre las celdas con más
+edificios de barrio (6 ocultos, 0 montados, catastro con exactamente los
+dibujados en «baja» —1.220— y en «media» —3.046—, y los 3.052 de vuelta al
+quitarlas); tres fantasmas, uno de ellos `solo_aqui` que no se dibuja (una
+malla, 228 triángulos, color del estado en los vértices, dos rótulos); la torre
+esbelta (221 m, media huella 34,6 m) junto al hotel; y fotos a pie, de frente y
+a 38 m, de una torre de muro cortina, otra de retícula y un bloque de cinta.
+`cargo test` (137), compatibilidad v0.7.0, inventario, i18n, panel y léxico.
+
+**Con esto se cierra la entrega 4** (planta, fachada, coronación, portal y
+rótulo). Lo que sigue es la entrega 5, «el umbral y el apartamento»: cruzar el
+portal sin pantalla de carga.
+
 ## Novedades de v0.10.15 — los edificios de las parcelas, y ninguno sobre otro
 
 Sigue la entrega 4 del plan del metaverso (`docs/METAVERSO.md`, «TRAMA: la

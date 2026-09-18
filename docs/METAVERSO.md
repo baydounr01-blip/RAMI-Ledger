@@ -262,7 +262,7 @@ de forma determinista, con el color en sRGB y la altura en el alfa. No arrastran
 licencia de nadie y la descarga sube 1,6 MB, no 3–4. Si algún día entra un juego
 fotográfico CC0, se sustituyen esos cuatro ficheros: el sombreador no cambia.
 
-### Entrega 4 — TRAMA: la manzana y la fachada · 6–8 sesiones · **empezada en la v0.10.14, sigue en la v0.10.15**
+### Entrega 4 — TRAMA: la manzana y la fachada · 6–8 sesiones · **hecha en las v0.10.14–16**
 
 El genotipo entero y el catálogo de fachadas. Las 3.124 cajas anónimas del
 skyline pasan a ser edificios con planta, coronación, entrada y **rótulo con el
@@ -288,9 +288,17 @@ cada sector (piscina, chimenea y grúa, paneles, depósitos, silo, cruz, cúpula
 cono y bandera, taxis, mástil) sin teñir; en una malla por tesela y en el
 catastro con el nombre de la empresa. Ningún edificio de barrio se planta ya
 sobre otro ni sobre un hito (3.106 → 3.052 edificios, cero solapes), y la
-calidad «baja» choca solo con lo que dibuja. Queda de esta entrega que el plano
-de los barrios no conoce las parcelas compradas, así que un edificio de barrio
-puede caer dentro de una.
+calidad «baja» choca solo con lo que dibuja. Quedaba que el plano de los barrios
+no conocía las parcelas compradas.
+
+**Hecho en la v0.10.16, y con ello la entrega:** el catálogo de fachadas
+—retícula, lisa, muro cortina y ventana corrida— en el sombreador, elegida por
+la morfología de cada edificio y de cada celda; el plano de los barrios oculta
+(y saca del catastro) los edificios que se montan sobre el de una parcela
+comprada, y los devuelve si la parcela desaparece; la torre de la parcela es
+esbelta (69 × 220 m); y los fantasmas del multiverso tienen la planta del
+edificio real de su celda, en una malla por tesela. Lo que la entrega no ha
+tocado, y no estaba en ella: el portal sigue cerrado (entrega 5).
 
 ### Entrega 5 — el umbral y el apartamento · 8–10 sesiones
 
