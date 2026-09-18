@@ -28,7 +28,8 @@
  *   3. Dubái: hitos icónicos procedurales (Burj Khalifa, Burj Al Arab, Museo
  *      del Futuro, Dubai Frame, Ain Dubai, Atlantis, Cayan, Emirates Towers,
  *      Palm…) en UNA geometría con ventanas que se encienden de noche;
- *      skylines por barrio con InstancedMesh; tráfico ambiente por las vías;
+ *      skylines por barrio deducidos de la posición —planta, coronación y
+ *      portal— en una malla por tesela; tráfico ambiente por las vías;
  *      la cuadrícula de parcelas (64×64, drapeada) con un edificio por sector,
  *      coches de los concesionarios, carteles de venta y avatares de otros
  *      visitantes (presencia efímera de la red).
@@ -1019,14 +1020,22 @@
     '#include <fog_pars_vertex>',
     '#include <logdepthbuf_pars_vertex>',
     '#include <shadowmap_pars_vertex>',
-    'varying vec3 vNormalW; varying vec3 vWorld; varying float vLocalY;',
+    // `abase` (v0.10.14): la cota del pie de cada edificio en las mallas
+    // fundidas por tesela, para que las ventanas cuenten desde su planta baja y
+    // no desde el nivel del mar. Las mallas sin el atributo leen 0: como antes.
+    'attribute float abase;',
+    // `aflags` (v0.10.14): 1 = sin ventanas (villas y naves; la retícula de 4,5 por
+    // 3,6 m es la de una oficina). Las mallas sin el atributo leen 0: con ventanas.
+    'attribute float aflags;',
+    'varying vec3 vNormalW; varying vec3 vWorld; varying float vLocalY; varying float vFlags;',
     'void main(){',
+    '  vFlags = aflags;',
     '  #include <color_vertex>',
     '  vec3 on = normal;',
     '  #ifdef USE_INSTANCING', '  on = mat3(instanceMatrix) * on;', '  #endif',
     '  vec3 transformedNormal = normalMatrix * on;',
     '  vNormalW = normalize(mat3(modelMatrix) * on);',
-    '  vec4 wp = vec4(position, 1.0); float lh = position.y;',
+    '  vec4 wp = vec4(position, 1.0); float lh = position.y - abase;',
     '  #ifdef USE_INSTANCING', '  wp = instanceMatrix * wp; lh = wp.y - instanceMatrix[3].y;', '  #endif',
     '  vec4 worldPosition = modelMatrix * wp; vWorld = worldPosition.xyz; vLocalY = lh;',
     '  vec4 mvPosition = viewMatrix * worldPosition;',
@@ -1045,24 +1054,25 @@
     '#include <shadowmap_pars_fragment>',
     '#include <shadowmask_pars_fragment>',
     'uniform vec3 uSun, uSunColor, uSkyColor, uGroundColor; uniform float uNight, uDusk, uWindows; uniform samplerCube uEnv;',
-    'varying vec3 vNormalW; varying vec3 vWorld; varying float vLocalY;',
+    'varying vec3 vNormalW; varying vec3 vWorld; varying float vLocalY; varying float vFlags;',
     'float hash21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }',
     'void main(){',
     '  #include <logdepthbuf_fragment>',
+    '  float uWin = uWindows * (1.0 - step(0.5, vFlags));',
     '  vec3 base = vec3(0.8);',
     '  #if defined(USE_COLOR) || defined(USE_INSTANCING_COLOR)', '  base = vColor.rgb;', '  #endif',
     '  vec3 n = normalize(vNormalW);',
     '  vec3 v = normalize(cameraPosition - vWorld);',
     '  float shadow = getShadowMask();',
     '  float ndl = max(dot(n, uSun), 0.0) * shadow;',
-    '  float glassy = smoothstep(0.02, 0.16, base.b - base.r) * uWindows;',
+    '  float glassy = smoothstep(0.02, 0.16, base.b - base.r) * uWin;',
     '  float facade = clamp(1.0 - abs(n.y) * 1.2, 0.0, 1.0);',
     '  vec2 uvw = vec2(dot(vWorld.xz, vec2(n.z, -n.x)), vWorld.y);',
     '  vec2 cellSz = vec2(4.5, 3.6);',
     '  vec2 cell = floor(uvw / cellSz); vec2 f = fract(uvw / cellSz);',
     '  float win = step(0.16, f.x) * step(f.x, 0.84) * step(0.22, f.y) * step(f.y, 0.86);',
-    '  float glass = win * facade * step(5.0, vLocalY) * uWindows;',
-    '  float slab = (1.0 - smoothstep(0.0, 0.07, f.y)) * facade * uWindows * step(5.0, vLocalY);',
+    '  float glass = win * facade * step(5.0, vLocalY) * uWin;',
+    '  float slab = (1.0 - smoothstep(0.0, 0.07, f.y)) * facade * uWin * step(5.0, vLocalY);',
     '  float rnd = hash21(cell + floor(vWorld.xz * 0.002));',
     '  float lit = step(0.55, rnd);',
     '  float ao = mix(0.6, 1.0, smoothstep(0.0, 16.0, vLocalY));',
@@ -1070,7 +1080,7 @@
     '  vec3 albedo = base;',
     '  albedo = mix(albedo, albedo * 0.45 + vec3(0.015, 0.04, 0.07), glass * 0.65);',
     '  albedo *= 1.0 - slab * 0.4;',
-    '  albedo *= mix(1.0, 0.82, step(0.9, n.y) * uWindows);',
+    '  albedo *= mix(1.0, 0.82, step(0.9, n.y) * uWin);',
     '  vec3 col = albedo * (amb * 0.85 + uSunColor * ndl * 1.15);',
     '  vec3 r = reflect(-v, n);',
     '  float mirror = max(glass, glassy * 0.6);',
@@ -1796,7 +1806,8 @@
       gridCenter: new THREE.Vector3(), counts: null, inflatePath: null,
       sel: null, hover: null, frame: 0, fps: 0, fpsN: 0, fpsT: 0, lastT: 0, raf: 0,
       mode: 'orbit', hour: null, night: 0, landmarks: [], lmIndex: {}, clusterTotal: 0,
-      avatars: {}, avatarOrder: [], traffic: null, gridShown: false, catastro: null, tramas: [], glorietas: [], nCruces: 0, trozosVia: 0
+      avatars: {}, avatarOrder: [], traffic: null, gridShown: false, catastro: null, tramas: [], glorietas: [], nCruces: 0, trozosVia: 0,
+      edificios: [], barrios: null, trozosBarrio: 0
     };
     var gridGroup = new THREE.Group(); scene.add(gridGroup);
     var pending = null, pendingFlight = null;
@@ -1979,12 +1990,13 @@
       C[name] = inst(geometry, material, cap, name, shadow);
       return C[name];
     }
-    var ARCH_GEO = {}, PALMA_GEO = null;
+    var ARCH_GEO = {}, ARCH_TOP = {}, PALMA_GEO = null;
     var ghostTime = { value: 0 }, ghostMat = makeGhostMaterial(ghostTime);
     function buildCityMeshes() {
       var k;
       for (k = 0; k < ARCH_KEYS.length; k++) {
         var acc = newAcc(); pushParts(acc, archetypeParts(ARCH_KEYS[k], CELL)); ARCH_GEO[ARCH_KEYS[k]] = accGeometry(acc);
+        ARCH_GEO[ARCH_KEYS[k]].computeBoundingBox(); ARCH_TOP[ARCH_KEYS[k]] = ARCH_GEO[ARCH_KEYS[k]].boundingBox.max.y;
         ensureCap('arch_' + ARCH_KEYS[k], ARCH_GEO[ARCH_KEYS[k]], buildMat, 64, true);
       }
       var a = ASSET;
@@ -2007,6 +2019,7 @@
       C.ghostLabels = new LabelSet(viewportUniform, false); scene.add(C.ghostLabels.mesh);
       C.selLabel = new LabelSet(viewportUniform, false); scene.add(C.selLabel.mesh);
       C.saleLabels = new LabelSet(viewportUniform, true); scene.add(C.saleLabels.mesh);
+      C.ownerLabels = new LabelSet(viewportUniform, true); scene.add(C.ownerLabels.mesh);
       C.avatarLabels = new LabelSet(viewportUniform, false); scene.add(C.avatarLabels.mesh);
     }
     var sectorColors = [], sectorRGB = [], ownRGB = [];
@@ -2039,7 +2052,7 @@
       var me = d.me || null, col = C.tiles.geometry.attributes.cellColor.array, state = S.cellState;
       var perArch = {}, k;
       for (k = 0; k < ARCH_KEYS.length; k++) perArch[ARCH_KEYS[k]] = [];
-      var saleItems = [];
+      var saleItems = [], signItems = [];
       for (y = 0; y < n; y++) for (x = 0; x < n; x++) {
         var ci = y * n + x, pi = parcelAt[ci];
         if (pi < 0) {
@@ -2062,6 +2075,14 @@
         var sy = (pend ? 0.3 : 1) * (0.85 + 0.3 * real01(semillaMorfologia(x, y, 2)) + Math.min(pc.assets | 0, 6) * 0.03);
         var arch = SECTOR_ARCH[kind] || 'torre';
         perArch[arch].push({ x: w.x, y: S.cellH[ci] + 0.5, z: w.z, sy: sy, c: tmpColor.clone().copy(sectorColors[kind]).multiplyScalar(v) });
+        // El rótulo (v0.10.14): el nombre único del dueño —`SetProfile` garantiza
+        // que no hay dos iguales en toda la cadena— sobre la coronación de su
+        // edificio. Es ropaje: cambia cuando cambia el dueño, y sin perfil no hay
+        // rótulo (una dirección en hexadecimal no es un nombre).
+        if (pc.handle) {
+          signItems.push({ x: w.x, y: S.cellH[ci] + 0.5 + (ARCH_TOP[arch] || 40) * sy + 10, z: w.z, text: '@' + pc.handle,
+            color: own ? colors.accent : '#ffffff', size: 12, bold: true, pin: true, maxDist: S.L * 0.4, priority: 2 });
+        }
         if (pc.sale) {
           saleItems.push({ x: w.x, y: w.y + LIFT * 2 + clamp(CELL * 0.2, 20, 160), z: w.z, text: '💰 ' + (pc.sale / 1e8).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + ' RAMI', color: colors.sale, size: 12, bold: true, pin: true, maxDist: S.L * 0.6, priority: 4 });
           cnt.sale++;
@@ -2115,6 +2136,7 @@
       var saleRingCount = 0; for (i = 0; i < assets.length; i++) if (assets[i].sale) saleRingCount++;
       finish(C.saleRings, saleRingCount);
       C.saleLabels.set(saleItems.slice(0, 200));
+      C.ownerLabels.set(signItems.slice(0, 300));
       S.counts = cnt;
       refreshSelection();
     }
@@ -2281,12 +2303,133 @@
       }
       S.lmLabels = new LabelSet(viewportUniform, true); S.lmLabels.set(labels); scene.add(S.lmLabels.mesh);
     }
-    var CLUSTER_GEO = {};
-    function buildClusters(meta) {
-      var cl = meta.clusters || [], kinds = ['towers', 'blocks', 'villas', 'warehouses'], per = { towers: [], blocks: [], villas: [], warehouses: [] }, i, j;
+    // --- TRAMA: la manzana y la fachada (v0.10.14) -----------------------------------
+    // Las 3.124 cajas anónimas del skyline pasan a ser edificios: planta (lámina,
+    // podio y torre, escalonada, en L, gemelas sobre podio; barra, en L, en U,
+    // con ático; villa con tapia; nave con bóveda o plana), coronación (peto,
+    // cuarto de máquinas, antena en las altas) y portal —vidriera, puerta y
+    // marquesina— hacia la calle más cercana, con la fachada paralela a ella.
+    // La forma sale SOLO de la posición (semillaMorfologia), así que dos
+    // máquinas deducen el mismo edificio; la posición, la altura y la huella
+    // siguen saliendo de la misma serie que en la v0.10.6, así que el skyline no
+    // se mueve. Ya no son mallas instanciadas de una caja escalada: un portal de
+    // tres metros no puede escalar con la torre. Cada edificio se escribe en
+    // metros en la malla de su tesela de ocho kilómetros, con esfera envolvente,
+    // como la calzada y las palmeras.
+    var TONOS_BARRIO = { towers: [[0.62, 0.74, 0.86], [0.55, 0.62, 0.72], [0.82, 0.78, 0.7], [0.7, 0.8, 0.9]], blocks: [[0.88, 0.84, 0.76], [0.8, 0.8, 0.82], [0.9, 0.87, 0.8]], villas: [[0.95, 0.92, 0.85], [0.9, 0.84, 0.72]], warehouses: [[0.85, 0.85, 0.86], [0.75, 0.75, 0.78], [0.9, 0.9, 0.9]] };
+    /**
+     * Cómo se orienta un edificio: dentro de una trama de barrio, con la fachada
+     * paralela a la calle más cercana y el portal mirando a ella; fuera, con el
+     * giro libre que traía. Devuelve el yaw con el que el +z local del edificio
+     * (donde va el portal) apunta a la calle.
+     */
+    function orientaEnTrama(wx, wz, yawLibre) {
+      var i, t, dx, dz, cs, sn, lx, lz, ex, ez, fx, fz;
+      for (i = 0; i < S.tramas.length; i++) {
+        t = S.tramas[i]; dx = wx - t.x; dz = wz - t.z;
+        if (dx * dx + dz * dz > t.R * t.R) continue;
+        cs = Math.cos(-t.ang); sn = Math.sin(-t.ang);
+        lx = dx * cs - dz * sn; lz = dx * sn + dz * cs;
+        ex = lx - Math.round(lx / t.paso) * t.paso;          // distancia con signo a la calle que corre por z local
+        ez = lz - Math.round(lz / t.paso) * t.paso;          // y a la que corre por x local
+        if (Math.abs(ex) <= Math.abs(ez)) { fx = ex > 0 ? -1 : 1; fz = 0; } else { fx = 0; fz = ez > 0 ? -1 : 1; }
+        var wxd = fx * Math.cos(t.ang) - fz * Math.sin(t.ang), wzd = fx * Math.sin(t.ang) + fz * Math.cos(t.ang);
+        return { yaw: Math.atan2(wxd, wzd), alineado: true };
+      }
+      return { yaw: yawLibre, alineado: false };
+    }
+    /**
+     * Las piezas de un edificio en su marco local: el origen en el centro de la
+     * huella, un metro por debajo del suelo (la caja va hundida para que ninguna
+     * pendiente deje un hueco), x a lo largo de la calle, +z hacia ella.
+     */
+    function edificioPartes(e) {
+      var w = e.w, d = e.d, H = e.h, T = e.tono, k = e.kind, v = e.v, p = [];
+      var TC = [Math.min(1, T[0] * 0.9 + 0.08), Math.min(1, T[1] * 0.9 + 0.07), Math.min(1, T[2] * 0.9 + 0.05)];   // coronación: un punto más clara y cálida
+      var TP = [T[0] * 0.82, T[1] * 0.82, T[2] * 0.82];                                                              // podio: más oscuro
+      var TM = [0.5, 0.52, 0.56], TD = [0.06, 0.07, 0.09], TCa = [0.9, 0.88, 0.82], TG = [0.5, 0.66, 0.86], TA = [0.55, 0.55, 0.58];
+      function caja(sx, sy, sz, x, y, z, c) { p.push({ sx: sx, sy: sy, sz: sz, x: x || 0, y: y || 0, z: z || 0, c: c || T }); }
+      function peto(sx, sz, x, y, z) { caja(sx + 1.4, 1.4, sz + 1.4, x, y - 1.2, z, TC); }        // el remate sobresale 70 cm y sube 20
+      function corona(sx, sz, x, y, z, alta) {
+        peto(sx, sz, x, y, z);
+        caja(sx * 0.42, 4.5, sz * 0.42, x - sx * 0.14, y, z - sz * 0.14, TM);                        // cuarto de máquinas
+        if (alta) p.push({ g: 'cyl', a: 6, sx: 1.4, sy: Math.max(8, H * 0.1), sz: 1.4, x: x + sx * 0.24, y: y, z: z + sz * 0.2, c: TA });
+      }
+      // El portal en la cara z = zf, mirando a +z. El suelo local está en y = 1.
+      function portal(x, zf, ancho) {
+        var g = Math.min(ancho - 2, 14);
+        caja(g, 4.4, 0.4, x, 1, zf, TG);                                                             // vidriera del vestíbulo
+        caja(3.4, 3.2, 0.6, x, 1, zf + 0.3, TD);                                                     // el hueco de la puerta
+        caja(Math.min(8, g), 0.35, 3.2, x, 4.8, zf + 1.4, TCa);                                      // marquesina
+      }
+      if (k === 'towers') {
+        var alta = H > 150;
+        if (v < 0.25) {                                                                              // lámina
+          caja(w, H, d); corona(w, d, 0, H, 0, alta); portal(0, d / 2, w);
+        } else if (v < 0.5) {                                                                        // podio y torre
+          caja(w, 14, d, 0, 0, 0, TP); peto(w, d, 0, 14, 0);
+          var tw = w * 0.66, td = d * 0.66, tx = (e.v2 - 0.5) * w * 0.2, tz = -d * 0.1;
+          caja(tw, H, td, tx, 0, tz); corona(tw, td, tx, H, tz, alta); portal(0, d / 2, w);
+        } else if (v < 0.7) {                                                                        // escalonada
+          caja(w, H * 0.6, d); peto(w, d, 0, H * 0.6, 0);
+          caja(w * 0.78, H * 0.82, d * 0.78, -w * 0.08, 0, -d * 0.08); peto(w * 0.78, d * 0.78, -w * 0.08, H * 0.82, -d * 0.08);
+          caja(w * 0.55, H, d * 0.55, -w * 0.16, 0, -d * 0.16); corona(w * 0.55, d * 0.55, -w * 0.16, H, -d * 0.16, alta);
+          portal(0, d / 2, w);
+        } else if (v < 0.85) {                                                                       // en L
+          caja(w, H, d * 0.45, 0, 0, -d * 0.275); corona(w, d * 0.45, 0, H, -d * 0.275, alta);
+          caja(w * 0.45, H * 0.8, d, -w * 0.275, 0, 0); peto(w * 0.45, d, -w * 0.275, H * 0.8, 0);
+          portal(w * 0.15, -d * 0.05, w * 0.5);
+        } else {                                                                                     // gemelas sobre podio
+          caja(w, 9, d, 0, 0, 0, TP); peto(w, d, 0, 9, 0);
+          caja(w * 0.36, H, d * 0.72, -w * 0.3, 0, -d * 0.1); corona(w * 0.36, d * 0.72, -w * 0.3, H, -d * 0.1, alta);
+          caja(w * 0.36, H, d * 0.72, w * 0.3, 0, -d * 0.1); peto(w * 0.36, d * 0.72, w * 0.3, H, -d * 0.1);
+          caja(w * 0.3, 4, d * 0.3, 0, H * 0.55, -d * 0.1, TM);                                      // la pasarela
+          portal(0, d / 2, w);
+        }
+      } else if (k === 'blocks') {
+        if (v < 0.35) {                                                                              // barra
+          caja(w, H, d); corona(w, d, 0, H, 0, false); portal(0, d / 2, w);
+        } else if (v < 0.6) {                                                                        // en L
+          caja(w, H, d * 0.45, 0, 0, -d * 0.275); corona(w, d * 0.45, 0, H, -d * 0.275, false);
+          caja(w * 0.42, H, d, -w * 0.29, 0, 0); peto(w * 0.42, d, -w * 0.29, H, 0);
+          portal(w * 0.15, -d * 0.05, w * 0.5);
+        } else if (v < 0.8) {                                                                        // en U, con el patio a la calle
+          caja(w, H, d * 0.42, 0, 0, -d * 0.29); corona(w, d * 0.42, 0, H, -d * 0.29, false);
+          caja(w * 0.28, H, d, -w * 0.36, 0, 0); peto(w * 0.28, d, -w * 0.36, H, 0);
+          caja(w * 0.28, H, d, w * 0.36, 0, 0); peto(w * 0.28, d, w * 0.36, H, 0);
+          portal(0, -d * 0.08, w * 0.4);
+        } else {                                                                                     // con ático retranqueado
+          caja(w, H * 0.88, d); peto(w, d, 0, H * 0.88, 0);
+          caja(w * 0.84, H, d * 0.84, 0, 0, -d * 0.05, TC); peto(w * 0.84, d * 0.84, 0, H, -d * 0.05);
+          portal(0, d / 2, w);
+        }
+      } else if (k === 'villas') {
+        caja(w, H, d); caja(w * 1.08, 0.8, d * 1.08, 0, H, 0, [0.9, 0.85, 0.78]);                   // la casa y la losa del tejado
+        var mw = w + 7, md = d + 7, hueco = 3.5, tr = (mw - hueco) / 2;                              // la tapia, a 3,5 m de la casa
+        caja(0.3, 2.2, md, -mw / 2, 1, 0, TCa); caja(0.3, 2.2, md, mw / 2, 1, 0, TCa); caja(mw, 2.2, 0.3, 0, 1, -md / 2, TCa);
+        caja(tr, 2.2, 0.3, -(hueco + tr) / 2, 1, md / 2, TCa); caja(tr, 2.2, 0.3, (hueco + tr) / 2, 1, md / 2, TCa);   // el frente, con la cancela
+        caja(2.4, 2.6, 0.5, 0, 1, d / 2 + 0.2, TD); caja(4, 0.3, 2.2, 0, 3.6, d / 2 + 0.9, TCa);      // puerta y marquesina
+      } else {                                                                                       // naves
+        var hv = Math.min(d * 0.5, 6);
+        if (v < 0.5) { caja(w, H - hv, d); p.push({ g: 'halfcyl', sx: hv * 2, sy: w, sz: d, x: w / 2, y: H - hv, rz: Math.PI / 2, c: TC }); }   // bóveda
+        else { caja(w, H, d); peto(w, d, 0, H, 0); caja(4, 2.5, 4, -w * 0.3, H, -d * 0.2, TM); caja(4, 2.5, 4, 0, H, -d * 0.2, TM); caja(4, 2.5, 4, w * 0.3, H, -d * 0.2, TM); }
+        caja(w * 0.5, 1.2, 4, w * 0.1, 1, d / 2 + 2, [0.55, 0.55, 0.55]);                             // muelle de carga
+        caja(4.5, 4.5, 0.5, -w * 0.02, 1, d / 2 + 0.2, TD); caja(4.5, 4.5, 0.5, w * 0.22, 1, d / 2 + 0.2, TD);   // dos portones
+        caja(2, 2.6, 0.5, -w * 0.3, 1, d / 2 + 0.2, TD);                                             // la puerta de la oficina
+      }
+      return p;
+    }
+    /**
+     * El plano de los barrios: dónde va cada edificio, cuánto mide y cómo se
+     * orienta. Se calcula una vez; las mallas se levantan aparte (buildClusters)
+     * porque la calidad cambia cuántos se dibujan, no cuáles hay.
+     */
+    function planificarBarrios(meta) {
+      var cl = meta.clusters || [], kinds = ['towers', 'blocks', 'villas', 'warehouses'], i, j;
+      S.edificios = [];
       for (i = 0; i < cl.length; i++) {
         var c = cl[i], rnd = lcg(c.seed || (i + 1) * 7919), cw = S.geo.toWorld(c.lat, c.lon);
-        var list = per[c.kind] || per.blocks, tries = 0;
+        var kind = kinds.indexOf(c.kind) >= 0 ? c.kind : 'blocks', lista = [], tries = 0;
         for (j = 0; j < c.count && tries < c.count * 4; tries++) {
           var ang = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * c.radius_m;
           var x = cw.x + Math.cos(ang) * rr, z = cw.z + Math.sin(ang) * rr;
@@ -2300,34 +2443,58 @@
           // posiciones que pisan la trama, las MANZANAS salen solas: el edificio
           // se queda donde queda sitio, que es exactamente como crece una ciudad.
           if (enCalle(x, z, Math.max(fw, fd) * 0.5)) continue;
-          list.push({ x: x, y: hg - 1, z: z, h: h + 1, w: fw, d: fd, yaw: rnd() * Math.PI, tone: rnd(), barrio: c.name || '' });
+          var yawLibre = rnd() * Math.PI, tono = rnd();
+          var ori = orientaEnTrama(x, z, yawLibre);
+          // La planta y sus detalles salen de la POSICIÓN, no de la serie del
+          // barrio: canal 11 de la morfología, el mismo número en toda máquina.
+          var r2 = lcg(semillaMorfologia(Math.round(x), Math.round(z), 11));
+          var tl = TONOS_BARRIO[kind][Math.floor(tono * TONOS_BARRIO[kind].length)], m = 0.9 + 0.2 * hash2(j, i);
+          lista.push({ x: x, y: hg - 1, z: z, h: h + 1, w: fw, d: fd, yaw: ori.yaw, alineado: ori.alineado, kind: kind,
+                       tono: [tl[0] * m, tl[1] * m, tl[2] * m], barrio: c.name || '', v: r2(), v2: r2() });
           j++;
         }
-      }
-      var unit = new THREE.BoxGeometry(1, 1, 1); unit.translate(0, 0.5, 0);
-      var villa = newAcc(); pushParts(villa, [{ sx: 1, sy: 1, sz: 1, c: [1, 1, 1] }, { sx: 1.1, sy: 0.08, sz: 1.1, y: 1, c: [0.9, 0.85, 0.78] }]); var villaGeo = accGeometry(villa);
-      var TONES = { towers: [[0.62, 0.74, 0.86], [0.55, 0.62, 0.72], [0.82, 0.78, 0.7], [0.7, 0.8, 0.9]], blocks: [[0.88, 0.84, 0.76], [0.8, 0.8, 0.82], [0.9, 0.87, 0.8]], villas: [[0.95, 0.92, 0.85], [0.9, 0.84, 0.72]], warehouses: [[0.85, 0.85, 0.86], [0.75, 0.75, 0.78], [0.9, 0.9, 0.9]] };
-      S.clusterTotal = 0;
-      for (i = 0; i < kinds.length; i++) {
-        var k = kinds[i], items = per[k];
-        if (!items.length) continue;
-        var m = new THREE.InstancedMesh(k === 'villas' ? villaGeo : unit, buildMat, items.length);
-        m.frustumCulled = false; m.castShadow = k !== 'villas'; m.receiveShadow = true; m.name = 'cluster_' + k;
-        for (j = 0; j < items.length; j++) {
-          var it = items[j], tone = TONES[k][Math.floor(it.tone * TONES[k].length)];
+        for (j = 0; j < lista.length; j++) {
+          var it = lista[j];
           catastroAlta(S.catastro, { x: it.x, z: it.z, hw: it.w * 0.5, hd: it.d * 0.5, yaw: it.yaw,
-            y0: it.y, h: it.h, tipo: k, id: k + ':' + j, nombre: it.barrio });
-          dummy.position.set(it.x, it.y, it.z); dummy.rotation.set(0, it.yaw, 0); dummy.scale.set(it.w, it.h, it.d); dummy.updateMatrix();
-          m.setMatrixAt(j, dummy.matrix);
-          var tl = lin3(tone);
-          m.setColorAt(j, tmpColor.setRGB(tl[0], tl[1], tl[2]).multiplyScalar(0.9 + 0.2 * hash2(j, i)));
+            y0: it.y, h: it.h, tipo: kind, id: kind + ':' + i + ':' + j, nombre: it.barrio });
         }
-        m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true;
-        m.userData.total = items.length; m.count = Math.round(items.length * Q.clusters);
-        scene.add(m); CLUSTER_GEO[k] = m; S.clusterTotal += items.length;
+        S.edificios.push(lista);
       }
     }
-    function applyClusterFraction(f) { for (var k in CLUSTER_GEO) { var m = CLUSTER_GEO[k]; m.count = Math.round(m.userData.total * f); } }
+    /** Las mallas de los barrios, una por tesela, con la fracción de la calidad. */
+    function buildClusters(meta) {
+      if (meta) planificarBarrios(meta);
+      var i, j, clave, teselas = {}, total = 0, f = Q.clusters;
+      if (S.barrios) {
+        scene.remove(S.barrios);
+        for (i = 0; i < S.barrios.children.length; i++) S.barrios.children[i].geometry.dispose();
+      }
+      S.barrios = new THREE.Group(); S.barrios.name = 'barrios'; S.trozosBarrio = 0;
+      for (i = 0; i < S.edificios.length; i++) {
+        var lista = S.edificios[i], n = Math.round(lista.length * f);
+        for (j = 0; j < n; j++) {
+          var e = lista[j];
+          clave = Math.floor(e.x / TESELA_VIA) + ':' + Math.floor(e.z / TESELA_VIA);
+          var T = teselas[clave] || (teselas[clave] = { acc: newAcc(), abase: [], aflags: [] });
+          _m4b.compose(_pv.set(e.x, e.y, e.z), _q.setFromEuler(_e.set(0, e.yaw, 0)), _sv.set(1, 1, 1));
+          pushParts(T.acc, edificioPartes(e), _m4b);
+          var sinVentanas = (e.kind === 'villas' || e.kind === 'warehouses') ? 1 : 0;
+          while (T.abase.length * 3 < T.acc.pos.length) { T.abase.push(e.y); T.aflags.push(sinVentanas); }
+          total++;
+        }
+      }
+      for (clave in teselas) {
+        if (!Object.prototype.hasOwnProperty.call(teselas, clave)) continue;
+        var g = accGeometry(teselas[clave].acc);
+        g.setAttribute('abase', new THREE.Float32BufferAttribute(teselas[clave].abase, 1));
+        g.setAttribute('aflags', new THREE.Float32BufferAttribute(teselas[clave].aflags, 1));
+        g.boundingSphere.radius += 5;
+        var mesh = new THREE.Mesh(g, buildMat);
+        mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = true; mesh.name = 'barrio_' + clave;
+        S.barrios.add(mesh); S.trozosBarrio++;
+      }
+      scene.add(S.barrios); S.clusterTotal = total;
+    }
 
     // --- Tráfico ambiente por las vías -------------------------------------------
     // --- Las palmeras dejan de enviarse enteras (v0.10.10) -------------------------
@@ -3072,8 +3239,7 @@
       renderer.setPixelRatio(Math.min(dpr, Q.pr));
       renderer.shadowMap.enabled = !!Q.shadows; sun.castShadow = !!Q.shadows;
       sun.shadow.mapSize.set(Q.shadowMap, Q.shadowMap); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
-      applyClusterFraction(Q.clusters);
-      if (S.ready) { buildTraffic(Q.traffic); buildPalms(); }
+      if (S.ready) { buildTraffic(Q.traffic); buildPalms(); buildClusters(); }
       scene.traverse(function (o) { if (o.material && o.material.needsUpdate !== undefined) o.material.needsUpdate = true; });
       buildMat.needsUpdate = true; plainMat.needsUpdate = true; terrainMat.needsUpdate = true;
       resize();
@@ -3989,6 +4155,7 @@
       if (S.lmLabels) S.lmLabels.cull(camera, _cp, W, H, labelRects);
       S.towns.cull(camera, _cp, W, H, labelRects);
       C.saleLabels.cull(camera, _cp, W, H, labelRects);
+      C.ownerLabels.cull(camera, _cp, W, H, labelRects);
     }
     var lastSun = 0;
     function updateShadowFrame() {
@@ -4276,7 +4443,7 @@
       stats: function () {
         var env = null;
         try { var px = new Uint8Array(4 * 4 * 4); renderer.readRenderTargetPixels(envRT, 0, 0, 4, 4, px, 2); var sum = 0; for (var i = 0; i < 64; i++) sum += px[i]; env = Math.round(sum / 64); } catch (e) { env = -1; }
-        return { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame, landmarks: S.landmarks.length, skyline: S.clusterTotal, solidos: S.catastro ? S.catastro.items.length : 0, avatars: S.avatarOrder.length, quality: qualityName, mode: S.xr ? 'vr' : S.mode, env: env };
+        return { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame, landmarks: S.landmarks.length, skyline: S.clusterTotal, solidos: S.catastro ? S.catastro.items.length : 0, trozosBarrio: S.trozosBarrio, avatars: S.avatarOrder.length, quality: qualityName, mode: S.xr ? 'vr' : S.mode, env: env };
       },
       bench: bench, gpu: gpuName,
       latLonToCell: latLonToCell,
@@ -4326,6 +4493,7 @@
         if (S.lmLabels) S.lmLabels.dispose();
         if (C.selLabel) C.selLabel.dispose();
         if (C.saleLabels) C.saleLabels.dispose();
+        if (C.ownerLabels) C.ownerLabels.dispose();
         if (C.avatarLabels) C.avatarLabels.dispose();
         renderer.dispose();
         try { renderer.forceContextLoss(); } catch (e2) {}

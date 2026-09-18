@@ -681,6 +681,9 @@ pub struct ParcelView {
     pub x: u16,
     pub y: u16,
     pub owner: String,
+    /// v0.10.14: el nombre único del dueño (`SetProfile`), o vacío si no tiene
+    /// perfil. Es lo que el cliente 3D rotula en su edificio.
+    pub handle: String,
     pub name: String,
     pub kind: u8,
     pub since: u64,
@@ -839,6 +842,7 @@ fn city_view(st: &State, height: u64, firma: &FirmaCtx, dubai_desde: Option<u64>
             x: *x,
             y: *y,
             owner: hex::encode(p.owner),
+            handle: st.profiles.get(&p.owner).map(|pr| pr.handle.clone()).unwrap_or_default(),
             name: p.name.clone(),
             kind: p.kind,
             since: p.since,

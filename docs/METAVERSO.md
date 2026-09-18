@@ -262,13 +262,25 @@ de forma determinista, con el color en sRGB y la altura en el alfa. No arrastran
 licencia de nadie y la descarga sube 1,6 MB, no 3–4. Si algún día entra un juego
 fotográfico CC0, se sustituyen esos cuatro ficheros: el sombreador no cambia.
 
-### Entrega 4 — TRAMA: la manzana y la fachada · 6–8 sesiones
+### Entrega 4 — TRAMA: la manzana y la fachada · 6–8 sesiones · **empezada en la v0.10.14**
 
 El genotipo entero y el catálogo de fachadas. Las 3.124 cajas anónimas del
 skyline pasan a ser edificios con planta, coronación, entrada y **rótulo con el
 nombre del jugador** que compró esa parcela: `SetProfile` ya garantiza que un
 nombre es único en toda la cadena, y las etiquetas ya se fabrican con `canvas`
 en tiempo de ejecución, así que el rótulo no cuesta un solo byte de descarga.
+
+**Hecho en la v0.10.14:** las 3.106 cajas del skyline son edificios con planta
+(cinco por tipo de barrio: lámina, podio y torre, escalonada, en L, gemelas;
+barra, L, U, ático; villa con tapia; nave con bóveda o plana), coronación (peto,
+cuarto de máquinas, antena) y portal hacia la calle más cercana, con la fachada
+paralela a ella en 2.344 de ellos. La forma sale solo de la posición
+(`semillaMorfologia`); la serie que da posición, altura y huella no cambia. Van
+en una malla por tesela de ocho kilómetros, no instanciadas: a pie cuestan entre
+−1,5 % y +4,7 % de escena y la ciudad entera un 19,5 % más. El nodo añade a cada
+parcela el nombre único de su dueño y el cliente lo cuelga sobre su edificio.
+Quedan de esta entrega los edificios de las parcelas, que siguen siendo los
+arquetipos por sector.
 
 ### Entrega 5 — el umbral y el apartamento · 8–10 sesiones
 
