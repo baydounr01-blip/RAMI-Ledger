@@ -51,6 +51,7 @@ const CITY_UMBRAL_JS: &str = include_str!("city/umbral.js");
 const CITY_VIDA_JS: &str = include_str!("city/vida.js");
 const CITY_ESPEJISMO_JS: &str = include_str!("city/espejismo.js");
 const CITY_EXTRAS_JS: &str = include_str!("city/extras.js");
+const CITY_MEMORIA_JS: &str = include_str!("city/memoria.js");
 /// Terreno de Dubái (datos abiertos: Mapzen/AWS Terrain Tiles + islas
 /// artificiales dibujadas a mano; ver tools/geo/README.md). Mapa de alturas
 /// PNG de 16 bits + metadatos (hitos, barrios, carreteras, cuadrícula).
@@ -349,6 +350,7 @@ fn route(g: &Gui, req: Request) -> Response {
         ("GET", "/city/vida.js") => js_response(CITY_VIDA_JS),
         ("GET", "/city/espejismo.js") => js_response(CITY_ESPEJISMO_JS),
         ("GET", "/city/extras.js") => js_response(CITY_EXTRAS_JS),
+        ("GET", "/city/memoria.js") => js_response(CITY_MEMORIA_JS),
         ("GET", "/geo/dubai.hgt.png") => Response { status: 200, content_type: "image/png".into(), body: GEO_HGT.to_vec() },
         ("GET", "/tex/asfalto.png") => Response { status: 200, content_type: "image/png".into(), body: TEX_ASFALTO.to_vec() },
         ("GET", "/tex/hormigon.png") => Response { status: 200, content_type: "image/png".into(), body: TEX_HORMIGON.to_vec() },

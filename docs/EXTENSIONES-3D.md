@@ -12,7 +12,8 @@ el montaje del visor:
 | `umbral.js` | Entrega 5: el portal, el zaguán, el ascensor y el apartamento |
 | `vida.js` | Entrega 6: peatones con destino económico (los carriles y la cesión de paso de los coches van en el núcleo) |
 | `espejismo.js` | Entrega 7: oclusión ambiental, resplandor, curva de color y cascadas de sombra (los interiores por paralaje van en el sombreador de edificios del núcleo) |
-| `extras.js` | Secciones 6–8 del plan: sonido, modo foto, tormenta de arena, metro y barcos, la ciudad que recuerda, encargos y el día uno |
+| `extras.js` | Secciones 6–7 del plan: sonido sintetizado, modo foto, tormenta de arena, metro elevado y barcos |
+| `memoria.js` | Secciones 6–8 del plan: la ciudad que recuerda (placa y pátina), los encargos de la economía, el día uno y el aviso siempre a la vista |
 
 Un módulo que falla no tumba el visor: su gancho se salta y el error se anota
 una vez en la consola y en `handle._debug.extFallos()`. Un módulo que no carga
@@ -46,7 +47,7 @@ algo verdadero; el orden es el de carga.
 | Gancho | Cuándo | Devuelve |
 |---|---|---|
 | `listo()` | Al terminar de construir el mundo (tras aplicar la ciudad pendiente) | — |
-| `ciudad(d)` | Tras cada `applyCity` (datos de `/api/city`, con `parcels`, `assets`, `me`…) | — |
+| `ciudad(d)` | Tras cada `applyCity`: `d` es `S.city` (`parcels`, `assets`, `me`, `sectors`, `districts`, `height` y `datos`, la vista entera de `/api/city` tal como llegó) | — |
 | `cuadro(dt, now)` | Cada cuadro con el mundo listo (también en VR y en `_debug.paso`) | — |
 | `andar(dt)` | Al principio de cada paso a pie | `true` = el módulo movió a `walk.pos` (incluida la cota de los pies `walk.pos.y`) con su propia colisión; el visor solo coloca la cámara. **Consume** |
 | `tecla(k, e, abajo)` | `keydown` (`abajo = true`) y `keyup` (`false`); `k` en minúsculas | `true` en `keydown` = consumida (el visor no la usa). **Consume** |

@@ -4735,7 +4735,9 @@
         var h = fnv1a(JSON.stringify(data));
         if (h === S.cityHash) return;
         S.cityHash = h;
-        S.city = { parcels: data.parcels || [], assets: data.assets || [], me: data.me || null, size: data.size, sectors: data.sectors || null, districts: data.districts || null };
+        // `datos` es la vista entera tal como llega (altura, fondo, huecos, fechas de
+        // activación…): los módulos leen de ahí lo que el núcleo no necesita.
+        S.city = { parcels: data.parcels || [], assets: data.assets || [], me: data.me || null, size: data.size, sectors: data.sectors || null, districts: data.districts || null, height: data.height | 0, datos: data };
         if (data.districts && data.districts.length) S.districts = data.districts;
         if (S.ready) applyCity(S.city); else pending = S.city;
       },

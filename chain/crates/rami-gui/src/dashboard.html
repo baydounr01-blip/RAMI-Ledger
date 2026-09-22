@@ -1969,7 +1969,7 @@
     if(c3d.loading) return c3d.loading;
     txt("cyLoad", t("Cargando Dubái en 3D…"));
     // Módulos del visor (v0.11.0), en orden; uno que no carga no impide el resto.
-    var MODULOS_3D = ["/city/umbral.js", "/city/vida.js", "/city/espejismo.js", "/city/extras.js"];
+    var MODULOS_3D = ["/city/umbral.js", "/city/vida.js", "/city/espejismo.js", "/city/extras.js", "/city/memoria.js"];
     function cargaModulos(){
       return MODULOS_3D.reduce(function(p, src){
         return p.then(function(){ return loadScript(src).catch(function(e){ if(window.console) console.error(e); }); });

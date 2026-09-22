@@ -1,9 +1,8 @@
 /*
- * Dubái RAMI — módulo «extras»: sonido, foto, tiempo y memoria.
+ * Dubái RAMI — módulo «extras»: sonido, foto, tiempo, metro y barcos.
  *
- * Secciones 6 a 8 del plan del metaverso: sonido sintetizado, modo foto,
- * tormenta de arena, metro y barcos, la ciudad que recuerda, encargos de la
- * economía y el día uno de un jugador nuevo.
+ * Secciones 6 y 7 del plan del metaverso: sonido sintetizado, modo foto,
+ * tormenta de arena, metro elevado y barcos.
  *
  * Se registra con RamiCity3D.extend antes de montar el visor; el contrato de
  * los ganchos y del contexto está en docs/EXTENSIONES-3D.md.
