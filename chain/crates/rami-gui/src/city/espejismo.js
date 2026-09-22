@@ -54,7 +54,7 @@
 
     // Intensidades de cada efecto a 1. `ajuste` las multiplica (las pruebas las
     // ponen a 0 para el pase neutro).
-    var FUERZA_AO = 0.85, RESPLANDOR = 0.30, UMBRAL = 0.72, RODILLA = 0.18;
+    var FUERZA_AO = 0.9, RESPLANDOR = 0.55, UMBRAL = 0.70, RODILLA = 0.2;
     var P = ctx.Q().post || null;
     var ajuste = { activo: true, ao: 1, resplandor: 1, curva: 1, verAO: 0 };
     var T = null;                       // destinos del tamaño actual
@@ -134,7 +134,9 @@
       '    vec4 c = uProjM * vec4(s, 1.0);',
       '    vec2 uv = c.xy / c.w * 0.5 + 0.5;',
       '    float zs = distVista(texture2D(tProf, uv).r);',
-      '    float delante = step(zs, -s.z - R * 0.04 - z * 0.0008);',
+      // El margen crece con la distancia: a ras de suelo y de lejos la normal
+      // sacada de la profundidad se tuerce y el suelo se ocluiría a sí mismo.
+      '    float delante = step(zs, -s.z - R * 0.06 - z * 0.0015);',
       '    float rango = smoothstep(0.0, 1.0, R / max(abs(z - zs), 1e-3));',
       '    occ += delante * rango;',
       '  }',
@@ -160,16 +162,19 @@
 
     // --- Resplandor ---------------------------------------------------------------
     // Umbral suave en lineal de pantalla (lo que ya salió del tono ACES): pasan
-    // los brillos del sol en el vidrio, las ventanas encendidas y el cielo junto
-    // al sol. Cuatro lecturas bilineales cubren 4×4 píxeles: un píxel suelto no
-    // parpadea de un cuadro a otro.
+    // los brillos del sol en el vidrio, las ventanas encendidas y los rótulos.
+    // El cielo no: con la calima de Dubái es casi blanco a mediodía y, si
+    // entrara, todo el cuadro quedaría velado; se reconoce porque no escribe
+    // profundidad. Cuatro lecturas bilineales cubren 4×4 píxeles: un píxel suelto
+    // no parpadea de un cuadro a otro.
     var UMBRAL_FS = [
       GLSL_SRGB,
-      'uniform sampler2D tColor; uniform vec2 uTexel; uniform float uUmbral, uRodilla;',
+      'uniform sampler2D tColor, tProf; uniform vec2 uTexel; uniform float uUmbral, uRodilla;',
       'varying vec2 vUv;',
+      'vec3 toma(vec2 uv){ return aLin(texture2D(tColor, uv).rgb) * step(texture2D(tProf, uv).r, 0.99999); }',
       'void main(){',
-      '  vec3 c = aLin(texture2D(tColor, vUv + uTexel * vec2(-1.0, -1.0)).rgb) + aLin(texture2D(tColor, vUv + uTexel * vec2(1.0, -1.0)).rgb)',
-      '         + aLin(texture2D(tColor, vUv + uTexel * vec2(-1.0, 1.0)).rgb) + aLin(texture2D(tColor, vUv + uTexel * vec2(1.0, 1.0)).rgb);',
+      '  vec3 c = toma(vUv + uTexel * vec2(-1.0, -1.0)) + toma(vUv + uTexel * vec2(1.0, -1.0))',
+      '         + toma(vUv + uTexel * vec2(-1.0, 1.0)) + toma(vUv + uTexel * vec2(1.0, 1.0));',
       '  c *= 0.25;',
       '  float l = max(c.r, max(c.g, c.b));',
       '  float k = clamp(l - uUmbral + uRodilla, 0.0, 2.0 * uRodilla); k = k * k / (4.0 * uRodilla + 1e-4);',
@@ -222,7 +227,7 @@
       '    p = mix(p, p * p * (3.0 - 2.0 * p), 0.22 * uCurva);',
       '    float l2 = dot(p, vec3(0.2126, 0.7152, 0.0722));',
       '    p = mix(vec3(l2), p, 1.0 + 0.10 * uCurva);',
-      '    p += uCurva * (vec3(-0.010, 0.002, 0.016) * (1.0 - smoothstep(0.0, 0.45, l)) + vec3(0.018, 0.006, -0.014) * smoothstep(0.55, 1.0, l));',
+      '    p += uCurva * (vec3(-0.010, 0.002, 0.016) * (1.0 - smoothstep(0.0, 0.45, l)) + vec3(0.012, 0.004, -0.008) * smoothstep(0.55, 1.0, l));',
       '    p += uCurva * (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5) / 255.0;',
       '  }',
       // Para las pruebas y las notas: la máscara de oclusión sola, en grises.
@@ -234,7 +239,7 @@
       ao: THREE.UniformsUtils.merge([unifProf(), { tProf: { value: null }, uTexel: { value: new THREE.Vector2() }, uProy: { value: new THREE.Vector4() },
         uProjM: { value: new THREE.Matrix4() }, uNucleo: { value: nucleo(12) }, uRadio: { value: 1 } }]),
       blur: THREE.UniformsUtils.merge([unifProf(), { tAO: { value: null }, tProf: { value: null }, uPaso: { value: new THREE.Vector2() } }]),
-      umbral: { tColor: { value: null }, uTexel: { value: new THREE.Vector2() }, uUmbral: { value: UMBRAL }, uRodilla: { value: RODILLA } },
+      umbral: { tColor: { value: null }, tProf: { value: null }, uTexel: { value: new THREE.Vector2() }, uUmbral: { value: UMBRAL }, uRodilla: { value: RODILLA } },
       baja: { tFuente: { value: null }, uTexel: { value: new THREE.Vector2() } },
       sube: { tFuente: { value: null }, uTexel: { value: new THREE.Vector2() } },
       fin: THREE.UniformsUtils.merge([unifProf(), { tColor: { value: null }, tAO: { value: null }, tBrillo: { value: null }, tProf: { value: null },
@@ -342,7 +347,7 @@
         // 3. Resplandor.
         var nB = T.niveles.length;
         if (nB && f.resplandor > 0) {
-          U.umbral.tColor.value = T.escena.texture; U.umbral.uTexel.value.set(1 / T.w, 1 / T.h);
+          U.umbral.tColor.value = T.escena.texture; U.umbral.tProf.value = prof; U.umbral.uTexel.value.set(1 / T.w, 1 / T.h);
           pasa(M.umbral, T.niveles[0]);
           for (i = 1; i < nB; i++) {
             U.baja.tFuente.value = T.niveles[i - 1].texture; U.baja.uTexel.value.set(1 / T.niveles[i - 1].width, 1 / T.niveles[i - 1].height);
@@ -392,10 +397,10 @@
       },
       publico: {
         version: 1,
-        /** Pruebas: { activo, ao, resplandor, curva } multiplican lo de la calidad; `verAO: 1` pinta la máscara de oclusión; sin argumento, todo de vuelta. */
+        /** Pruebas: { activo, ao, resplandor, curva } multiplican lo de la calidad (lo que falta, a 1); `verAO: 1` pinta la máscara de oclusión; sin argumento, todo de vuelta. */
         ajusta: function (o) {
-          o = o || { activo: true, ao: 1, resplandor: 1, curva: 1, verAO: 0 };
-          for (var k in o) if (Object.prototype.hasOwnProperty.call(ajuste, k)) ajuste[k] = k === 'activo' ? !!o[k] : Number(o[k]);
+          ajuste = { activo: true, ao: 1, resplandor: 1, curva: 1, verAO: 0 };
+          for (var k in (o || {})) if (Object.prototype.hasOwnProperty.call(ajuste, k)) ajuste[k] = k === 'activo' ? !!o[k] : Number(o[k]);
           return ajuste;
         },
         /** Pruebas: un cuadro por el camino del posproceso, sin avanzar la simulación. */
