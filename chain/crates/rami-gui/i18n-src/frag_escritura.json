@@ -29,6 +29,12 @@
   "sw": "Mtandao huu hauna tarehe ya kuanzishwa kwa hati ya nyumba (regtest bila --vivienda-desde). ",
   "zh": "本网络没有住宅产权规则的启用日期（regtest 未设置 --vivienda-desde）。 "
  },
+ "Gestionar": {
+  "en": "Manage",
+  "ru": "Управлять",
+  "sw": "Simamia",
+  "zh": "管理"
+ },
  "Hasta entonces la parcela es una sola escritura: solo su dueño acuña en ella.": {
   "en": "Until then the parcel is a single deed: only its owner mints on it.",
   "ru": "До этого участок — одно право собственности: выпускать активы на нём может только его владелец.",

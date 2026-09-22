@@ -71,8 +71,10 @@ mide unos 220 m desde la v0.10.16: unas 62 plantas de 3,5 m. 64 es una vivienda
 por planta, redondeado a potencia de dos. Además acota el estado: 64 × 64
 celdas × 64 = **262 144 viviendas** como máximo en toda la ciudad, unos 48 bytes
 cada una en memoria (dueño y venta), unos 12,6 MB por estado de punta en el peor
-caso, y el `/api/city` de ese peor caso llevaría 262 144 `UnitView`. Llegar ahí
-exige reclamar las 4096 celdas (su precio se quema) y dividirlas todas.
+caso, y el `/api/city` de ese peor caso llevaría 262 144 `UnitView` (de 106 a
+113 bytes de JSON cada una, medido: unos 7 KB por parcela de 64 y unos 29 MB la
+ciudad entera). Llegar ahí exige reclamar las 4096 celdas (su precio se quema)
+y dividirlas todas.
 
 **Por cuenta: `MAX_UNIDADES_POR_CUENTA = 16` viviendas en parcelas de OTROS.**
 Las de una parcela propia no cuentan: el promotor que divide su parcela en 64
