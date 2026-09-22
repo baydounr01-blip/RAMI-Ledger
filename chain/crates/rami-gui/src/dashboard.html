@@ -233,6 +233,11 @@
   @media(max-width:560px){.profgrid{grid-template-columns:1fr}}
   .players tr{cursor:pointer} .players tr:hover td{background:rgba(255,255,255,.04)}
   .grade{font-family:var(--mono);font-weight:700;color:var(--accent)}
+  /* El aviso siempre a la vista (v0.11.0, docs/METAVERSO.md §8) y los encargos (§7) */
+  .cyaviso{font-size:12px;color:var(--warn);background:rgba(255,209,102,.07);border:1px solid rgba(255,209,102,.28);border-radius:8px;padding:5px 10px;margin-bottom:8px}
+  .cyaviso a{color:var(--warn)}
+  .encargos td{font-size:12.5px;vertical-align:top} .encargos .pill{display:inline-block;border:1px solid var(--c);color:var(--text);border-radius:999px;padding:1px 8px;font-size:12px;background:none}
+  .encargos tr[data-x]{cursor:pointer} .encargos tr[data-x]:hover td{background:rgba(255,255,255,.04)}
   .chatlog .msg{padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04)}
   .chatlog .msg.me .who{color:var(--accent)}
   .chatlog .who{font-weight:600;color:var(--blue)}
@@ -628,6 +633,7 @@
             <button class="btn small" id="cyVR" style="display:none">🥽 Gafas VR</button>
             <span class="muted" id="cyLoad" style="font-size:12px"></span>
           </div>
+          <div class="cyaviso" id="cyAviso">⚠️ Simulación en una red de pruebas: RAMI no tiene valor monetario, no se vende y no es una inversión. <a href="https://github.com/baydounr01-blip/RAMI-Ledger/blob/HEAD/NOTICE.md" target="_blank" rel="noopener">Aviso completo (NOTICE.md)</a></div>
           <div id="city3d"><div id="cyHint"><span>🖱️ Arrastra para girar y gira la rueda para acercarte. Haz clic en una parcela para abrir su ficha, «🚶 A pie» para caminar por la ciudad con WASD y «🥽 Gafas VR» para entrar con gafas.</span><button class="btn small" id="cyHintOk" style="margin-left:auto">Entendido</button></div></div>
           <canvas id="cityCanvas" width="960" height="560" class="hidden"></canvas>
           <div class="legend" id="cityLegend"></div>
@@ -638,6 +644,11 @@
             <span style="--c:#ffd166">💰 En venta</span>
             <span id="cityHover"></span>
             <span id="cityStats" style="margin-left:auto"></span>
+          </div>
+          <div class="card" style="margin-top:12px;padding:14px">
+            <div class="lbl" style="margin-bottom:6px">📋 Encargos: lo que la ciudad importa, por distrito</div>
+            <p class="note" style="margin-top:0">Cada bloque, el consenso calcula qué insumos necesita cada empresa y quema como importación lo que nadie ofrece en la ciudad. Esta lista lo reparte por el distrito de las empresas que lo necesitan. Es información de la economía de la simulación, en RAMI de prueba: no es una promesa de ingresos.</p>
+            <div id="cityEncargos" class="note" style="margin-top:0">—</div>
           </div>
           <div class="card" style="margin-top:12px;padding:14px">
             <div class="lbl" style="margin-bottom:6px">💬 Plaza: visitantes conectados y chat</div>
@@ -1994,7 +2005,12 @@
           }
           el2.textContent = txt;
         },
-        onMode:function(m){ document.getElementById("cyWalk").classList.toggle("on", m==="walk"); }
+        onMode:function(m){ document.getElementById("cyWalk").classList.toggle("on", m==="walk"); },
+        // La guía del día uno (módulo «memoria») lleva a las vistas del panel.
+        irA:function(destino){
+          if(destino === "perfil"){ var hEl = document.getElementById("cyHandle"); hEl.scrollIntoView({block:"center"}); hEl.focus(); return; }
+          if(views.indexOf(destino) >= 0) setView(destino);
+        }
       });
       c3d.handle = h; window.__ramiCity3D = h;   // (pruebas automáticas)
       document.getElementById("cyQuality").value = savedQuality();
@@ -2117,6 +2133,59 @@
     for(k=0;k<SECTOR_NAMES.length;k++){ if(!present[k] && k>3) continue; h += '<span style="--c:'+sectorColor(k)+'">'+esc(sectorName(k))+(present[k] ? ' ('+present[k]+')' : '')+'</span>'; }
     el.innerHTML = h;
   }
+  // Encargos (v0.11.0, docs/METAVERSO.md §7): los `huecos` de /api/city —lo que
+  // nadie ofrece y cuántas empresas lo importan— repartidos por el distrito de
+  // las empresas que lo necesitan. La misma cuenta que `encargos` en
+  // city/memoria.js (el visor la dibuja sobre los distritos): una empresa necesita
+  // el hueco si está entre los insumos de su sector.
+  function encargosDe(d){
+    if(!d || !d.huecos || !d.huecos.length || !d.parcels || !d.sectors) return [];
+    var hueco = {}, porD = {}, out = [], dist = {};
+    d.huecos.forEach(function(h){ hueco[h[0]] = true; });
+    (d.districts || []).forEach(function(x){ dist[x.id] = x; });
+    d.parcels.forEach(function(p){
+      if(p.pending) return;
+      var sec = d.sectors[p.kind|0], di = p.distrito|0, usa = false; if(!sec || !sec.insumos) return;
+      sec.insumos.forEach(function(h){
+        if(!hueco[h]) return;
+        var e = porD[di] || (porD[di] = { distrito:di, faltan:{}, empresas:0, sx:0, sy:0 });
+        e.faltan[h] = (e.faltan[h]||0) + 1; usa = true;
+      });
+      if(usa){ var e2 = porD[di]; e2.empresas++; e2.sx += p.x; e2.sy += p.y; }
+    });
+    Object.keys(porD).forEach(function(k){
+      var E = porD[k], D = dist[E.distrito] || {};
+      var fal = Object.keys(E.faltan).map(function(s){ return { sector:s|0, empresas:E.faltan[s] }; }).sort(function(a,b){ return (b.empresas-a.empresas) || (a.sector-b.sector); });
+      out.push({ distrito:E.distrito, nombre:D.nombre || ("#"+E.distrito), precio:D.precio||0, empresas:E.empresas, faltan:fal, cx:Math.round(E.sx/E.empresas), cy:Math.round(E.sy/E.empresas) });
+    });
+    return out.sort(function(a,b){ return (b.empresas-a.empresas) || (a.distrito-b.distrito); });
+  }
+  function renderEncargos(){
+    var el = document.getElementById("cityEncargos"), d = city.data; if(!el || !d) return;
+    if(!d.dubai){
+      el.innerHTML = "⏳ "+t("Los encargos salen de la economía de Dubái, que aún no rige en esta cadena: todavía no hay parcelas ni empresas.")+" "+
+        (d.dubai_desde ? t("Se activa el ")+esc(new Date(d.dubai_desde*1000).toLocaleString())+" · "+t("faltan")+" "+dhms(d.dubai_faltan_segundos)+"." : t("Esta red no tiene fecha de activación (regtest sin --dubai-desde). "));
+      return;
+    }
+    var L = encargosDe(d);
+    if(!L.length){ el.textContent = t("Hoy ninguna empresa importa nada: todos los insumos que se necesitan existen en la ciudad."); return; }
+    var h = '<div class="tbl-wrap"><table class="encargos"><thead><tr><th>'+t("Falta")+'</th><th>'+t("Distrito")+'</th><th>'+t("Empresas que lo necesitan")+'</th><th>'+t("Parcela libre en el distrito")+'</th></tr></thead><tbody>', n = 0;
+    L.forEach(function(e){
+      e.faltan.forEach(function(f){
+        if(n++ >= 24) return;
+        h += '<tr data-x="'+e.cx+'" data-y="'+e.cy+'"><td><span class="pill" style="--c:'+sectorColor(f.sector)+'">'+esc(sectorName(f.sector))+'</span></td><td>'+esc(e.nombre)+'</td><td>'+f.empresas+'</td><td>'+ramShort(e.precio)+' RAMI</td></tr>';
+      });
+    });
+    h += '</tbody></table></div>';
+    if(n > 24) h += '<div class="note">'+t("y {n} más.").replace("{n}", n-24)+'</div>';
+    el.innerHTML = h;
+  }
+  document.getElementById("cityEncargos").addEventListener("click", function(ev){
+    var tr = ev.target.closest("tr[data-x]"); if(!tr) return;
+    var x = +tr.getAttribute("data-x"), y = +tr.getAttribute("data-y");
+    city.sel = {x:x, y:y}; renderCityPanel(); if(c3d.mode==="2d") drawCity();
+    if(c3d.handle){ c3d.handle.select(x, y); c3d.handle.flyTo(x, y); }
+  });
   function loadCity(){
     fetch("/api/city", {headers:hdrs()}).then(function(r){ return r.text(); }).then(function(txtBody){
       if(txtBody === city.lastTxt) return;
@@ -2132,7 +2201,7 @@
           t("Hasta entonces sigue la ciudad de fase 0: 32×32 parcelas, 4 tipos, sin mercado.");
       } else cd.style.display = "none";
       document.getElementById("cityStats").textContent = d.parcels.length+" "+t("empresas")+" · "+d.assets.length+" "+t("activos")+(d.dubai ? " · "+t("fondo")+" "+ramShort(d.fund)+" RAMI · "+t("reparte")+" "+ramShort(d.pago_bloque)+"/"+t("bloque") : "")+" · "+t("altura")+" "+fmtNum(d.height);
-      renderLegend();
+      renderLegend(); renderEncargos();
       drawCity(); renderCityPanel();
     }).catch(function(){ document.getElementById("cityStatus").textContent = t("sin conexión con el nodo"); });
   }
@@ -2423,8 +2492,15 @@
     var fast = city.fastUntil && Date.now() < city.fastUntil;
     city.tick = (city.tick||0) + 1;
     if(fast || city.tick % 2 === 0) loadCity();
-    pullPresence();
+    pullPresence(); avisaMemoria();
   }, 2500);
+  // La guía del día uno (módulo «memoria» del visor) no ve el perfil ni el saldo:
+  // se los cuenta el panel.
+  function avisaMemoria(){
+    var m = c3d.handle && c3d.handle.ext && c3d.handle.ext.memoria; if(!m || typeof m.jugador !== "function") return;
+    var w = (state.status && state.status.wallet) || {};
+    m.jugador({ perfil: !!prof.me, saldo: parseFloat(w.balance) || 0 });
+  }
   setInterval(pushPresence, 1000);
 
   // ---------- Identidad del jugador y multiverso (v0.10.0) ----------
