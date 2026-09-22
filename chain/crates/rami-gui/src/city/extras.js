@@ -497,7 +497,7 @@
     function fechaDubai(tsec) { var d = new Date((tsec + 4 * 3600) * 1000); return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()) + ' ' + pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes()); }
     function horaDubai(tsec) { var d = new Date((tsec + 4 * 3600) * 1000); return pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes()); }
 
-    // Partículas: una caja de 90 m alrededor de la cámara; cada grano se mueve
+    // Partículas: una caja de 60 m alrededor de la cámara; cada grano se mueve
     // con el viento en el sombreador y se envuelve con mod(), así que la CPU no
     // toca un solo vértice por cuadro.
     var ARENA_VS = [
@@ -524,7 +524,7 @@
       '}'].join('\n');
     function creaArena(n) {
       if (tormenta.arena) { scene.remove(tormenta.arena); tormenta.arena.geometry.dispose(); }
-      var R = 45, pos = new Float32Array(n * 3), fase = new Float32Array(n), r = U.lcg(4101), i;
+      var R = 30, pos = new Float32Array(n * 3), fase = new Float32Array(n), r = U.lcg(4101), i;
       for (i = 0; i < n; i++) { pos[i * 3] = (r() * 2 - 1) * R; pos[i * 3 + 1] = (r() * 2 - 1) * R; pos[i * 3 + 2] = (r() * 2 - 1) * R; fase[i] = r(); }
       var g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('aFase', new THREE.BufferAttribute(fase, 1));
@@ -592,7 +592,7 @@
         u.uTime.value = (now / 1000) % 1000;
         var vv = 7 + 5 * k; u.uWind.value.set(Math.sin(rumbo) * vv, 0.4, -Math.cos(rumbo) * vv);
         u.uK.value = k; u.uColor.value.setRGB(0.62 * luz, 0.46 * luz, 0.29 * luz);
-        u.uSize.value = 0.16 * (renderer().domElement.height || 600) / Math.tan(camera.fov * Math.PI / 360) * 0.5;
+        u.uSize.value = 0.12 * (renderer().domElement.height || 600) / Math.tan(camera.fov * Math.PI / 360) * 0.5;
       }
     }
     var _col = new THREE.Color();
@@ -1143,7 +1143,7 @@
           return out;
         },
         rutas: function () { return barcos.info; },
-        foto: { entra: function () { entraFoto(); return foto.activo; }, sale: function () { saleFoto(); return !foto.activo; }, focal: function (mm) { if (mm) foto.focal = clamp(mm, 14, 200); return foto.focal; }, nivel: function (v) { foto.nivel = !!v; if (!v) camera.clearViewOffset(); return foto.nivel; }, travelling: function (v) { foto.travelling = !!v; return v; }, guardar: function () { foto.pendiente = true; return true; }, estado: function () { return { activo: foto.activo, capturas: foto.capturas, ultima: foto.ultima }; } },
+        foto: { entra: function () { entraFoto(); return foto.activo; }, sale: function () { saleFoto(); return !foto.activo; }, focal: function (mm) { if (mm) { foto.focal = clamp(mm, 14, 200); if (ui.focR) { ui.focR.value = String(rangoDeFocal(foto.focal)); ui.focT.textContent = Math.round(foto.focal) + ' mm'; } } return foto.focal; }, nivel: function (v) { foto.nivel = !!v; if (!v) camera.clearViewOffset(); return foto.nivel; }, travelling: function (v) { foto.travelling = !!v; return v; }, guardar: function () { foto.pendiente = true; return true; }, estado: function () { return { activo: foto.activo, capturas: foto.capturas, ultima: foto.ultima }; } },
         sonido: function () { return { activo: !!snd.activo, estado: snd.ac ? snd.ac.state : null, nodos: snd.nodos, volumen: snd.volumen, pasos: snd.pasoN }; },
         gasto: function () { return { triangulos: gasto.triangulos, llamadas: gasto.llamadas }; }
       }
