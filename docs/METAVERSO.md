@@ -160,7 +160,7 @@ lo toca a 830 m de altura y uno lateral a 825 m de distancia; en pleno desierto
 no hay nada. Queda fuera de esta entrega **la colisión con los coches y con
 otros avatares**, que son objetos que se mueven y necesitan otra estructura.
 
-### Entrega 2 — el suelo · **la calzada, hecha en la v0.10.4; las aceras de barrio, pendientes**
+### Entrega 2 — el suelo · **la calzada, hecha en la v0.10.4; las aceras de barrio, en la v0.10.6**
 
 Cierra el defecto que el propio
 proyecto arrastra desde la 0.9.0 como pendiente número uno: *a pie el suelo sigue siendo
@@ -242,6 +242,14 @@ que faltaba la mide quien tiene tarjeta) y la mitad real de las calles
 en la clave `vias` que el cliente lee con el ancho de su clase. El repositorio
 sigue sin distribuir datos de OSM.
 
+**Comprobado en la v0.11.0:** las calles de la trama llevan acera y bordillo
+desde la v0.10.6 —el mismo perfil de ocho puntos que las del mapa, con 3,5 m de
+acera en los barrios de torres, 3 en los de bloques y naves y 2,4 en los de
+villas—; lo que faltaba era pisarla: la cinta se nivela por la cota máxima de
+su sección y en ladera queda hasta dos metros por encima del terreno, y el
+jugador andaba por el terreno, con los ojos bajo la acera. Ahora anda por la
+cinta (`sueloCalle`).
+
 **Pendiente de esta entrega:** queda el experimento que decide el presupuesto de
 todo lo demás:
 **quitar el buffer de profundidad logarítmico**, que hoy obliga a todos los
@@ -315,6 +323,19 @@ Coches por carriles reales con cesión de paso y frenado; peatones con un
 esa parcela. Un bot no es una entidad de red sino una función del tiempo, así
 que cuesta cero bytes de protocolo y todos los jugadores ven al mismo peatón
 cruzando por el mismo sitio.
+
+**Hecho en la v0.11.0:** los coches van por los carriles pintados (seis por
+sentido en una troncal, tres en una arteria, dos en una secundaria y en las
+calles de barrio de 13 a 18 m, uno en las de 10), por todas las calles —las del
+mapa y las de la trama—, ceden en los 4.052 cruces con ruta a los dos lados
+según quién manda en resuelveCruces, dan la vuelta a las glorietas por el
+anillo y se paran ante los pasos de peatones ocupados; la ruta se corta donde
+se corta la cinta. Los peatones (`city/vida.js`) son una función pura del
+tiempo de Dubái: 28.470 personas con casa en las villas y los bloques, trabajo
+en las empresas de las parcelas (o, sin parcelas, en las torres y naves del
+barrio de oficinas más cercano), horario por semilla y camino por las aceras
+cruzando solo por los pasos; misma posición en dos navegadores para el mismo
+instante. Las cifras y lo que queda, en las notas de la versión.
 
 ### Entrega 7 — ESPEJISMO recortado · 8–10 sesiones
 

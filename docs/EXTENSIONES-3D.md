@@ -71,6 +71,18 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
   pie y en VR), `renderer`, `canvas`, `container`.
 - **Estado**: `S` (el estado del visor: `S.ready`, `S.mode`, `S.xr`, `S.city`,
   `S.meta`, `S.geo`, `S.edificios`, `S.tramas`, `S.traffic`, `S.catastro`…),
+  y desde la v0.11.0 las calles tal como se levantaron: `S.vias` (cada vía con
+  `muestras`, `arco`, `calzada`, `acera`, `rango`, `cortes`, `cajas`, `bocas`,
+  `vivos` —los tramos con cinta, que se corta en el agua—, `filasS`/`filasY` —la
+  cota de la calzada por fila— y, en las de la trama, `barrio`, `familia` y `k`),
+  `S.cruces` (cada cruce resuelto: quién manda, `lin` —la línea de detención—,
+  las cajas, o la glorieta), `S.cebras` (los pasos de peatones dibujados: `via`,
+  `s`, `x`, `z`, `tx`, `tz`, `w` —media calzada—, `aw` —media distancia de acera a
+  acera por la línea por la que se anda—, `y`), **`S.cebraOcupada`**
+  (`Uint8Array`, uno por paso: el módulo que tenga peatones pone 1 en los pasos
+  que alguien pisa o va a pisar; los coches se paran ante ellos) y
+  `S.trafficPaths` (las rutas de los coches). `S.tramas[i]` lleva además
+  `calzada`, `acera` y `kind`.
   `C` (mallas instanciadas y conjuntos de etiquetas), `cam` (órbita), `walk`
   (`pos`, `yaw`, `pitch`, `fly`, `speed`), `EYE` (1,7 m), `keys()`,
   `puntero()`, `Q()`, `calidad()`, `N()`, `CELL()`, `LIFT()`, `rotR()`.
@@ -86,18 +98,28 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
   `Math.random`, para que dos máquinas vean lo mismo.
 - **Geometría** (`ctx.geom`): `prim`, `newAcc`, `pushPart(s)`, `accGeometry`, el
   catálogo de cuerpos (`piezas`, `cuerpoTorre`, `cuerpoBloque`, `cuerpoNave`,
-  `cuerpoVilla`, `parcelaPartes`, `edificioPartes`), `carGeometry`,
-  `avatarBodyGeometry`, `avatarLimbGeometry`, `palmGeometry`, las mallas
-  instanciadas (`inst`, `place`, `finish`, `ensureCap`) y la paleta (`colores`).
+  `cuerpoVilla`, `parcelaPartes`, `edificioPartes`), `carGeometry(ligero)`,
+  `avatarBodyGeometry(estilo, ligero)`, `avatarLimbGeometry(tipo, estilo,
+  ligero)`, `palmGeometry`, las mallas instanciadas (`inst`, `place`, `finish`,
+  `ensureCap`) y la paleta (`colores`). Con `ligero` (v0.11.0) el coche pasa de
+  484 a 260 triángulos y el cuerpo de un avatar de unos mil a unos doscientos
+  (cabeza icosaédrica, media esfera `hemiL` de 70, brazos de seis caras).
 - **Mundo** (`ctx.mundo`): `surfaceH`, `groundH`, `coarseH`, `insideMap`, la
   cuadrícula (`cellWorld`, `cellLocal`, `worldToCell`, `localToWorld`,
   `worldToLocal`, `latLonToCell`, `cellLatLon`, `rotOff`, `gridYaw`),
   `districtOf`, `dubaiHour`, `parcelInfo`, `sectorName`, las tablas de sectores
   (`SECTOR_ARCH`, `SECTOR_COLORS`, `SECTOR_NAMES`, `ARCH_KEYS`), `TESELA_VIA`,
-  `TIPOS_BARRIO`, `fachadaBarrio`, `fachadaParcela`, `FACHADA`.
+  `TIPOS_BARRIO`, `fachadaBarrio`, `fachadaParcela`, `FACHADA`, y desde la
+  v0.11.0 `cotaVia(via, s)` (la cota de la calzada de una vía de `S.vias`),
+  `sueloCalle(x, z)` (la de la calzada o la acera bajo un punto, o −Infinity: la
+  cinta va nivelada y en ladera queda hasta dos metros por encima del terreno;
+  el jugador ya anda por ella), `ensancheBoca(d, R)` y `enTramo(tramos, s)`.
 - **Catastro** (`ctx.catastro`): `alta(solido)`, `quita(pred)`, `bajo(x, z)`,
   `rayo(o, dir, maxT)`, `empujarFuera(pos, r)`, `huellaLibre(x, z, r)`,
-  `aLocal(solido, x, z, out)`.
+  `aLocal(solido, x, z, out)`. El `yaw` de un sólido es el `rotation.y` de three
+  con el que se dibuja: el +x local va a (cos, −sen) y el +z local a (sen, cos).
+  Hasta la v0.10.16 `aLocal`, `empujarFuera` y el rayo giraban al revés y la caja
+  de un edificio girado era la de su reflejo; corregido en la v0.11.0.
 - **Entrada**: `pick(clientX, clientY)`, `rayoPantalla(clientX, clientY)`,
   `setMode(m)`.
 - **Reconstrucción**: `rehacerBarrios()`, `reaplicarCiudad()`.
@@ -120,3 +142,21 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
 - **Presupuesto**: cada módulo anota lo que cuesta (triángulos, llamadas de
   dibujo) en `estadisticas`, y las notas de versión lo miden con los mismos
   encuadres antes y después.
+
+## El tráfico y los peatones (v0.11.0)
+
+- `handle.stats().trafico`: coches, dibujados, cuántos ceden y cuántos esperan
+  ante un paso este cuadro, activaciones de la válvula de paciencia,
+  recolocados, rutas y pasos de peatones.
+- `handle._debug.trafico`: `estado()`, `rutas()`, `vivo(bool)` (recolocar los
+  coches lejanos), `paciencia(s)` (la válvula; `Infinity` la quita),
+  `escenario([{ ruta, t, dir, carril, vel, vmax }, …])` (deja solo esos coches)
+  y `normal()`; `pose(c)` y `puntoCarril(R, t, lateral)`.
+- Cada coche lleva `motivo`: lo que más lo frena en el cuadro (`fila`, `cede`,
+  `cajaOcupada`, `cajaTapada`, `salidaTapada`, `glorieta`, `peaton`,
+  `jugador`).
+- `handle.ext.vida` (los peatones): `reloj()`, `fijaReloj(T)`, `posicion(i, T)`
+  (función pura de los datos, `i` y `T`), `enLaCalle(T, x, z, radio)`,
+  `persona(i)`, `viaje(id)`, `ruta(id)`, `pasosDe(id)`, `zona(i)`,
+  `dibujados()`, `limpia()`, `reconstruye()`, `enCalzada(x, z)`,
+  `diagnostico()`; `stats().ext.vida` con las cifras.
