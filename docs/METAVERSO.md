@@ -327,7 +327,7 @@ cruzando por el mismo sitio.
 **Hecho en la v0.11.0:** los coches van por los carriles pintados (seis por
 sentido en una troncal, tres en una arteria, dos en una secundaria y en las
 calles de barrio de 13 a 18 m, uno en las de 10), por todas las calles —las del
-mapa y las de la trama—, ceden en los 4.052 cruces con ruta a los dos lados
+mapa y las de la trama—, ceden en los 4.049 cruces con ruta a los dos lados
 según quién manda en resuelveCruces, dan la vuelta a las glorietas por el
 anillo y se paran ante los pasos de peatones ocupados; la ruta se corta donde
 se corta la cinta. Los peatones (`city/vida.js`) son una función pura del

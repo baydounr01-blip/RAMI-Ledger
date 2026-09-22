@@ -153,8 +153,9 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
   `escenario([{ ruta, t, dir, carril, vel, vmax }, …])` (deja solo esos coches)
   y `normal()`; `pose(c)` y `puntoCarril(R, t, lateral)`.
 - Cada coche lleva `motivo`: lo que más lo frena en el cuadro (`fila`, `cede`,
-  `cajaOcupada`, `cajaTapada`, `salidaTapada`, `glorieta`, `peaton`,
-  `jugador`).
+  `cajaOcupada`, `cajaTapada`, `salidaTapada`, `glorieta`, `anillo`, `peaton`,
+  `jugador`), y `causa`: el coche que lo frena, si lo frena un coche. Un
+  bloqueo mutuo sería un ciclo de coches parados siguiendo `causa`.
 - `handle.ext.vida` (los peatones): `reloj()`, `fijaReloj(T)`, `posicion(i, T)`
   (función pura de los datos, `i` y `T`), `enLaCalle(T, x, z, radio)`,
   `persona(i)`, `viaje(id)`, `ruta(id)`, `pasosDe(id)`, `zona(i)`,

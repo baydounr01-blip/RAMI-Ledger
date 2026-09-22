@@ -2829,7 +2829,11 @@
     var RUTA_CELDA = 400;                        // rejilla para encontrar calles cerca de la cámara
     var TANGENTE_MIRA = 45;                      // la misma tangente suavizada que la cinta
     var ANILLO_V = 8, VUELTA_V = 3.5;            // velocidad en el anillo y al dar la vuelta
-    var CEDE_MARGEN = 0.8, CEDE_PACIENCIA = 45;  // segundos de margen en la ventana, y la válvula
+    // La válvula, 30 s: en diez minutos de hora punta con 800 coches, sin ella
+    // 163 coches pasaban de un minuto parados esperando un hueco en la preferente
+    // (ninguno en un ciclo de esperas: siempre había un coche en marcha al final
+    // de la cadena); con 45 s, 2; con 30 s, ninguno.
+    var CEDE_MARGEN = 0.8, CEDE_PACIENCIA = 30;  // segundos de margen en la ventana, y la válvula
     var COCHE_GEO = null;
     /** Los carriles de un sentido: el centro de cada hueco entre las líneas pintadas. */
     function carrilesDe(calzada) {
@@ -2845,13 +2849,27 @@
     /** La velocidad de crucero de una calle, en m/s, por su ancho. */
     function vmaxDe(calzada) { return calzada >= 40 ? 30 : (calzada >= 24 ? 21 : (calzada >= 15 ? 15 : 11)); }
     function buildTrafficPaths() {
-      var vias = S.vias || [], rutas = [], porVia = [], v, i, k, R;
+      var vias = S.vias || [], rutas = [], porVia = [], v, i, k, R, cr = S.cruces || [];
+      // Una ruta no acaba dentro de una glorieta: al final de la ruta el coche da
+      // la vuelta, y dentro de la cuerda la vuelta lo llevaba de un salto a la
+      // otra mitad del anillo, encima de quien estuviera allí. El tramo vivo que
+      // acaba (o empieza) dentro de la cuerda se recorta a dos metros de la entrada.
+      var cuerdas = {};
+      for (i = 0; i < cr.length; i++) if (cr[i].gl !== undefined) {
+        (cuerdas[cr[i].a] || (cuerdas[cr[i].a] = [])).push([cr[i].sa - cr[i].dA, cr[i].sa + cr[i].dA]);
+        (cuerdas[cr[i].b] || (cuerdas[cr[i].b] = [])).push([cr[i].sb - cr[i].dB, cr[i].sb + cr[i].dB]);
+      }
       for (v = 0; v < vias.length; v++) {
         porVia.push([]);
-        var V = vias[v], vv = V.vivos || [];
+        var V = vias[v], vv = V.vivos || [], cu = cuerdas[v] || [];
         for (i = 0; i < vv.length; i++) {
-          if (vv[i][1] - vv[i][0] < RUTA_MIN) continue;
-          R = { id: rutas.length, via: v, V: V, s0: vv[i][0], s1: vv[i][1], len: vv[i][1] - vv[i][0], total: V.arco[V.arco.length - 1],
+          var s0 = vv[i][0], s1 = vv[i][1];
+          for (k = 0; k < cu.length; k++) {
+            if (s1 > cu[k][0] && s1 < cu[k][1] + 2) s1 = cu[k][0] - 2;
+            if (s0 > cu[k][0] - 2 && s0 < cu[k][1]) s0 = cu[k][1] + 2;
+          }
+          if (s1 - s0 < RUTA_MIN) continue;
+          R = { id: rutas.length, via: v, V: V, s0: s0, s1: s1, len: s1 - s0, total: V.arco[V.arco.length - 1],
                 semi: V.calzada * 0.5, carriles: carrilesDe(V.calzada), vmax: vmaxDe(V.calzada), conf: [], cebras: [], anillos: [], trama: V.barrio >= 0 };
           rutas.push(R); porVia[v].push(R);
         }
@@ -2861,7 +2879,7 @@
         for (j = 0; j < l.length; j++) if (s >= l[j].s0 - 1 && s <= l[j].s1 + 1) return l[j];
         return null;
       }
-      var cr = S.cruces || [], RA, RB;
+      var RA, RB;
       for (i = 0; i < cr.length; i++) {
         var c = cr[i];
         if (c.gl !== undefined) {
@@ -2994,7 +3012,7 @@
       }
       var m = new THREE.InstancedMesh(COCHE_GEO, plainMat, cars.length); m.frustumCulled = false; m.receiveShadow = true; m.name = 'traffic';
       for (i = 0; i < cars.length; i++) m.setColorAt(i, cars[i].col);
-      m.instanceColor.needsUpdate = true; m.count = 0;
+      m.instanceColor.needsUpdate = true; m.count = 0; m.visible = false;
       scene.add(m);
       S.traffic = { cars: cars, mesh: m, rnd: rnd, vivo: true, turno: 0, cand: cand, candClave: null, porRuta: {}, anillos: {},
                     valvulas: 0, recolocados: 0, cediendo: 0, anteCebra: 0, dibujados: 0 };
@@ -3119,23 +3137,45 @@
       if (!l) return false;
       for (i = 0; i < l.length; i++) {
         var y = l[i], rel = cf.tOtra - y.t;
-        if (Math.abs(rel) < cf.cajaOtra + COCHE_HL + 1) return true;            // dentro
+        if (Math.abs(rel) < cf.cajaOtra + COCHE_HL + 1) return y;               // dentro
         var d = rel * y.dir - cf.cajaOtra - COCHE_HL;                           // lo que le falta para entrar
-        if (d > 0 && y.vel >= 0.5 && d / Math.max(y.vel, 2) < cf.ventana) return true;
+        if (d > 0 && y.vel >= 0.5 && d / Math.max(y.vel, 2) < cf.ventana) return y;
       }
-      return false;
+      return null;
     }
     /** ¿Tiene que ceder `c` a la entrada de la glorieta? Al que va por el anillo y pasará por su entrada. */
     function debeCederAnillo(c, cf, wE) {
       var l = S.traffic.anillos[cf.gl], g = S.glorietas[cf.gl], Rr = g.R - g.anillo * 0.5, i;
-      if (!l) return false;
+      if (!l) return null;
       for (i = 0; i < l.length; i++) {
         var y = l[i]; if (y === c) continue;
         var falta = giro(y.ang - wE), resta = giro(y.ang - y.angSal);
-        if (falta > Math.PI * 2 - 0.45) return true;                           // acaba de pasar: aún la tapa
-        if (falta < resta + 0.05 && falta * Rr / Math.max(y.vel, 2) < 4.5) return true;
+        if (falta > Math.PI * 2 - 0.45) return y;                              // acaba de pasar: aún la tapa
+        if (falta < resta + 0.05 && falta * Rr / Math.max(y.vel, 2) < 4.5) return y;
       }
-      return false;
+      return null;
+    }
+    /**
+     * El coche que `c` lleva delante en el anillo de su glorieta (de cualquier
+     * ruta) y a cuántos metros de arco, si está a menos de 30 m. El anillo se
+     * recorre con el ángulo decreciendo (poseCoche): va delante el de ángulo menor.
+     * Dos coches de vías distintas no son de la misma fila, así que sin esto el de
+     * detrás atravesaba al de delante si este frenaba en el anillo (al salir hacia
+     * un paso ocupado, por ejemplo). La cesión a la entrada ya deja hueco: en 132
+     * encuentros de prueba, ninguna caja se montó en otra.
+     */
+    var _ya = { y: null, arco: 0 };
+    function delanteEnAnillo(c) {
+      var l = S.traffic.anillos[c.anillo], g = S.glorietas[c.anillo], Rr = g.R - g.anillo * 0.5, i, mejor = null, md = 30;
+      if (!l) return null;
+      for (i = 0; i < l.length; i++) {
+        var y = l[i]; if (y === c || y.anillo !== c.anillo) continue;
+        var a = giro(c.ang - y.ang) * Rr;
+        if (a > 0.01 && a < md) { md = a; mejor = y; }
+      }
+      if (!mejor) return null;
+      _ya.y = mejor; _ya.arco = md;
+      return _ya;
     }
     /**
      * El paso de peatones que hay nada más salir del cruce está ocupado: quien
@@ -3154,7 +3194,7 @@
     /** El de delante está parado justo al otro lado del cruce: entrar sería quedarse dentro. */
     function cajaTapada(c, cf, cajaSalida) {
       var L = c.lider;
-      return !!L && L.vel < 3 && (L.t - cf.t) * c.dir < cajaSalida + 2 * COCHE_HL + 3;
+      return L && L.vel < 3 && (L.t - cf.t) * c.dir < cajaSalida + 2 * COCHE_HL + 3 ? L : null;
     }
     function updateTraffic(dt) {
       var tr = S.traffic; if (!tr || !tr.mesh) return;
@@ -3183,6 +3223,10 @@
         // la velocidad sigue el perfil de una deceleración constante.
         // `c.motivo`: lo que más lo frena este cuadro (para las pruebas y las cifras).
         var hueco = c.hueco, D = c.vmax * c.vmax / (2 * COCHE_DECEL), quiere = 0, enVentana = false, vlim = c.vmax, motivo = c.lider ? 'fila' : '';
+        // `c.causa`: el coche que lo frena, si es un coche (el de delante, el que
+        // tiene preferencia, el que ocupa la caja). Con ella las pruebas buscan
+        // ciclos de espera: un bloqueo mutuo es un ciclo de coches parados.
+        var causa = c.lider, yc;
         var mira2 = c.vel * c.vel / (2 * COCHE_DECEL) + 45;
         if (jug && c.fx !== undefined) {
           var dx = jug.x - c.x, dz = jug.z - c.z, al = dx * c.fx + dz * c.fz, la = -dx * c.fz + dz * c.fx;
@@ -3221,14 +3265,21 @@
             var dEnt = dC - cf.d;                                      // hasta la entrada del anillo
             if (dEnt < -2 * cf.d) continue;                            // ya la dejó atrás
             if (dEnt > mira2) break;
-            if (dEnt <= 0) { vlim = Math.min(vlim, ANILLO_V); continue; }   // dentro del anillo
+            if (dEnt <= 0) {                                           // dentro del anillo
+              vlim = Math.min(vlim, ANILLO_V);
+              // Por el anillo van coches de las dos vías: cada uno guarda la
+              // distancia con el que lleva delante, sea de la ruta que sea.
+              var ya = c.anillo === cf.gl ? delanteEnAnillo(c) : null;
+              if (ya && ya.arco < hueco) { hueco = ya.arco; motivo = 'anillo'; causa = ya.y; }
+              continue;
+            }
             vlim = Math.min(vlim, Math.sqrt(ANILLO_V * ANILLO_V + 2 * COCHE_DECEL * dEnt));
             if (dEnt - COCHE_HL > 0.3) {
               puntoCarril(P, cf.t - c.dir * cf.d, c.dir * c.off, _pe);
               var gg = S.glorietas[cf.gl];
-              if (debeCederAnillo(c, cf, Math.atan2(_pe.z - gg.z, _pe.x - gg.x)) || cajaTapada(c, cf, cf.d)) {
+              if ((yc = debeCederAnillo(c, cf, Math.atan2(_pe.z - gg.z, _pe.x - gg.x)) || cajaTapada(c, cf, cf.d))) {
                 var hg = dEnt - 1.2 - COCHE_HL + COCHE_FRENO;
-                if (hg < hueco) { hueco = hg; motivo = 'glorieta'; }
+                if (hg < hueco) { hueco = hg; motivo = 'glorieta'; causa = yc; }
                 cedeAqui = cf; break;
               }
             }
@@ -3244,10 +3295,10 @@
             // que frena por él) y ya no vuelve a ceder en ese cruce.
             if (c.espera > CEDE_PACIENCIA && c.conf === cf && c.forzado !== cf) { c.forzado = cf; tr.valvulas++; }
             var esperaVale = c.forzado === cf;
-            var mc = debeCeder(c, cf) ? 'cede' : (cajaTapada(c, cf, cf.caja) ? 'cajaTapada' : (salidaTapada(c, cf.t, cf.caja + 8) ? 'salidaTapada' : ''));
+            var mc = (yc = debeCeder(c, cf)) ? 'cede' : ((yc = cajaTapada(c, cf, cf.caja)) ? 'cajaTapada' : (salidaTapada(c, cf.t, cf.caja + 8) ? 'salidaTapada' : ''));
             if (!esperaVale && mc) {
               var hl = dLin - COCHE_HL - 0.5 + COCHE_FRENO;
-              if (hl < hueco) { hueco = hl; motivo = mc; }
+              if (hl < hueco) { hueco = hl; motivo = mc; causa = yc; }
               cedeAqui = cf; break;
             }
           } else {
@@ -3256,10 +3307,11 @@
             var dCaja = dC - cf.caja - COCHE_HL - 1;
             if (dCaja > mira2) break;
             if (dCaja < 0) continue;                                   // ya dentro
-            var lo = S.traffic.porRuta[cf.otra.id], ocupada = false, q;
-            if (lo) for (q = 0; q < lo.length; q++) if (Math.abs(lo[q].t - cf.tOtra) < cf.cajaOtra + COCHE_HL) { ocupada = true; break; }
-            var mm = ocupada ? 'cajaOcupada' : (cajaTapada(c, cf, cf.caja) ? 'cajaTapada' : (salidaTapada(c, cf.t, cf.caja + 8) ? 'salidaTapada' : ''));
-            if (mm) { if (dCaja + COCHE_FRENO < hueco) { hueco = dCaja + COCHE_FRENO; motivo = mm; } cedeAqui = cf; break; }
+            var lo = S.traffic.porRuta[cf.otra.id], ocupada = null, q;
+            if (lo) for (q = 0; q < lo.length; q++) if (Math.abs(lo[q].t - cf.tOtra) < cf.cajaOtra + COCHE_HL) { ocupada = lo[q]; break; }
+            yc = ocupada || cajaTapada(c, cf, cf.caja);
+            var mm = ocupada ? 'cajaOcupada' : (yc ? 'cajaTapada' : (salidaTapada(c, cf.t, cf.caja + 8) ? 'salidaTapada' : ''));
+            if (mm) { if (dCaja + COCHE_FRENO < hueco) { hueco = dCaja + COCHE_FRENO; motivo = mm; causa = yc; } cedeAqui = cf; break; }
           }
         }
         // Los pasos de peatones ocupados, si le da para parar antes.
@@ -3272,7 +3324,7 @@
             if (borde > mira2) break;
             if (!ocu[ceb[j].id]) continue;
             if (borde - 1.5 >= c.vel * c.vel / (2 * COCHE_DECEL * 1.5) - 1 || c.vel < 4) {
-              if (borde - 1.5 + COCHE_FRENO < hueco) { hueco = borde - 1.5 + COCHE_FRENO; motivo = 'peaton'; }
+              if (borde - 1.5 + COCHE_FRENO < hueco) { hueco = borde - 1.5 + COCHE_FRENO; motivo = 'peaton'; causa = null; }
               tr.anteCebra++; c.peaton = ceb[j].id;
             }
             break;
@@ -3281,8 +3333,9 @@
         // El final de la ruta: frena hasta la velocidad de dar la vuelta.
         var dFin = c.dir > 0 ? P.len - c.t : c.t;
         vlim = Math.min(vlim, Math.sqrt(VUELTA_V * VUELTA_V + 2 * COCHE_DECEL * Math.max(0, dFin - 2)));
-        if (hueco >= c.hueco && motivo === 'fila' && c.hueco > D + COCHE_FRENO) motivo = '';
-        c.motivo = motivo;
+        if (hueco >= c.hueco && motivo === 'fila' && c.hueco > D + COCHE_FRENO) { motivo = ''; causa = null; }
+        if (motivo === 'jugador' || motivo === 'salidaTapada' || motivo === '') causa = null;
+        c.motivo = motivo; c.causa = causa || null;
         if (cedeAqui) { tr.cediendo++; if (c.conf !== cedeAqui) { c.conf = cedeAqui; c.espera = 0; } c.cede = cedeAqui; }
         else { c.cede = null; if (c.vel > 1) c.conf = null; }
         var meta = Math.min(vlim, c.vmax * Math.sqrt(clamp((hueco - COCHE_FRENO) / D, 0, 1)));
@@ -3318,7 +3371,7 @@
         dummy.position.set(cd.x, cd.y, cd.z); dummy.rotation.set(0, cd.yaw, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix();
         m.setMatrixAt(n, dummy.matrix); m.setColorAt(n, cd.col); n++;
       }
-      m.count = n; tr.dibujados = n;
+      m.count = n; m.visible = n > 0; tr.dibujados = n;
       m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true;
     }
 

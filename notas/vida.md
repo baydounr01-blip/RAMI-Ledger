@@ -20,20 +20,24 @@ calles, catastro, avatares) y en el módulo `chain/crates/rami-gui/src/city/vida
    final de una ruta el coche frena a 3,5 m/s y da la vuelta al carril simétrico
    (antes reaparecía en el otro extremo de la vía).
 3. **Cesión de paso.** `resuelveCruces` apunta cada cruce en `S.cruces`; sobre
-   cada ruta quedan los cruces con otra ruta (4.052 con ruta a los dos lados) y
+   cada ruta quedan los cruces con otra ruta (4.049 con ruta a los dos lados) y
    si cede o manda. El que cede se para con el morro en la línea de detención si
    por la preferente viene alguien que alcanzaría la calzada antes de que él la
    haya dejado atrás desde parado (la ventana: √(2·d/3 m/s²) + 0,8 s, con d de la
    línea al otro lado de la calzada con el coche entero), o si hay alguien en la
    caja. La glorieta se recorre por el anillo, con la isla a la izquierda, y se
-   cede al que va por él y pasará por la entrada. Frenado con el perfil de
-   deceleración constante que ya existía.
+   cede al que va por él y pasará por la entrada; dentro del anillo cada coche
+   guarda la distancia con el que lleva delante, sea de la vía que sea. Una ruta
+   no acaba dentro de una glorieta: el coche da la vuelta antes de la entrada.
+   Frenado con el perfil de deceleración constante que ya existía.
 4. **Sin bloqueos.** Tres reglas y una válvula: un coche no entra en una caja si
    el de delante está parado justo al otro lado (`cajaTapada`) o si el paso de
    peatones de la salida está ocupado (`salidaTapada`); la preferente no entra en
    una caja ocupada; un coche PARADO en la preferente fuera de la caja no cuenta
-   como que llega. La válvula: tras 45 s parado ante el mismo cruce, el coche se
-   mete (la preferente frena por él). Pruebas abajo, con y sin válvula.
+   como que llega. La válvula: tras 30 s parado ante el mismo cruce, el coche se
+   mete (la preferente frena por él). Cada coche apunta en `causa` el coche que
+   lo frena; en 72.000 pasos de simulación con hasta 800 coches, con y sin
+   válvula, no apareció ni un ciclo de esperas (tabla abajo).
 5. **Pasos de peatones.** Los coches se paran ante un paso ocupado si les da
    para parar (`S.cebraOcupada`, que marca el módulo de los peatones). En los
    cruces de dos calles de barrio el paso va ahora también en la preferente: sin
@@ -54,8 +58,9 @@ calles, catastro, avatares) y en el módulo `chain/crates/rami-gui/src/city/vida
 8. **Colisión**: el jugador no atraviesa a los peatones (gancho `empujar`,
    círculo de 0,35 m).
 9. **Pendientes de la calle**: (a) la ruta de los coches se corta donde se corta
-   la cinta; (b) las aceras de barrio existían desde la v0.10.6, lo que faltaba
-   era pisarlas (ver «Arreglos»); (c) el avatar ajeno que se solapa con el
+   la cinta; (b) las aceras de barrio existían desde la v0.10.6 (con bordillo,
+   el mismo perfil de ocho puntos que las vías del mapa), así que no cuestan
+   ningún triángulo nuevo; lo que faltaba era pisarlas (ver «Arreglos»); (c) el avatar ajeno que se solapa con el
    jugador se aparta (solo al dibujarlo) hasta 0,9 m.
 
 ### Arreglos del núcleo que salieron por el camino
@@ -108,15 +113,26 @@ calles, catastro, avatares) y en el módulo `chain/crates/rami-gui/src/city/vida
   foco; `ordenaColas` da el de delante por ruta, sentido y carril (y las listas
   por ruta y por glorieta); por coche: el jugador (esquivar o frenar), los cruces
   por delante en orden (el primero en que haya que pararse corta la búsqueda),
-  los pasos ocupados, el final de la ruta; `c.motivo` guarda lo que más lo frena.
+  los pasos ocupados, el final de la ruta; `c.motivo` guarda lo que más lo frena
+  y `c.causa` el coche que lo frena (el de delante, el que tiene preferencia, el
+  que ocupa la caja o el que va delante en el anillo), o null si es un peatón,
+  el jugador o nada.
   `poseCoche` da la posición con la misma tangente suavizada a 45 m que la cinta
   (el carril cae en el pintado también en los codos) y, dentro de la cuerda de
   una glorieta, por el anillo (sentido horario visto desde arriba; el radio se
   funde con el del carril en los extremos; la velocidad por la ruta se escala por
   cuerda/arco para que por el anillo vaya a su velocidad). Se dibujan los coches
   a menos de 1,4·R_VIVO de la cámara (`mesh.count`).
-- **`debeCeder`**, **`debeCederAnillo`**, **`cajaTapada`**, **`salidaTapada`**:
-  las reglas de arriba. La ventana se precalcula por cruce.
+- **`debeCeder`**, **`debeCederAnillo`**, **`cajaTapada`** (devuelven el coche
+  que obliga, o null), **`salidaTapada`**, **`delanteEnAnillo`**: las reglas de
+  arriba. La ventana se precalcula por cruce. `CEDE_PACIENCIA` = 30 s.
+- **Rutas y glorietas**: `buildTrafficPaths` recorta el tramo vivo que acaba o
+  empieza dentro de la cuerda de una glorieta a 2 m de su entrada. Antes, el
+  coche que llegaba al final de la ruta dentro del anillo daba la vuelta y
+  `poseCoche` lo llevaba de un salto a la otra mitad del anillo, encima de quien
+  estuviera allí (4 de 64 encuentros de prueba). Con el recorte, las glorietas
+  que solo tocan el final de una vía no tienen tráfico por el anillo: de las
+  siete, dos tienen dos vías que las atraviesan.
 - **Avatares ajenos**: `empujarDeMoviles` decide cuánto se aparta el ajeno
   (`apTx`, `apTz`, hasta 0,9 m) y choca contra ese sitio; `updateAvatars` lo
   dibuja ahí con suavizado. Solo si hace falta más de 0,9 m se empuja al jugador.
@@ -151,7 +167,8 @@ calles, catastro, avatares) y en el módulo `chain/crates/rami-gui/src/city/vida
   los vecinos con `lcg(mezcla(semillaMorfologia(x, z, 21), k))`: villa 2–4,
   bloque 6–70 según plantas y huella. `agenda` pone los viajes con hora de
   salida en segundos enteros: ida, llegada, salida y vuelta (metro o taxi) o ida
-  y vuelta a pie; comida (55 % de los que trabajan); recados (quien no trabaja);
+  y vuelta a pie; comida (55 % de los que trabajan); recados (quien no trabaja:
+  uno de 9:00 a 14:00, otro de 15:00 a 20:30);
   paseo de noche (12 %); madrugada (2 %). Los destinos que dependen del grafo (la
   calle del metro, el sitio de la comida) se guardan como un sorteo entero y se
   resuelven al pedir el camino.
@@ -160,9 +177,18 @@ calles, catastro, avatares) y en el módulo `chain/crates/rami-gui/src/city/vida
   hacia un nodo a 150–450 m por la acera y desaparece; tras 15–40 min aparece en
   un nodo a 120–400 m de su trabajo y llega andando. Una parcela fuera de toda
   trama se alcanza desde la puerta del taxi, de 40 a 70 m delante del portal
-  (lo más lejos que esté libre).
-- **Turnos de los pasos**: cada paso tiene un ciclo de 60 s desfasado por paso
-  (`mezcla(id, 97) % 60`) y en sus primeros 15 s se empieza a cruzar; quien llega
+  (lo más lejos que esté libre) o en el bordillo de la calle que tenga delante;
+  si la fachada principal no tiene salida, por los costados y por detrás, con el
+  portal en esa fachada. Una parcela sin salida por ninguna (en el agua de la
+  ría o de la costa: las celdas de tierra del consenso no miran el relieve fino)
+  no entra en el sorteo de los puestos de trabajo.
+- **Sin parcelas nadie va andando al trabajo**: las torres y naves de oficinas
+  están en barrios de otro tipo que las villas y los bloques, y cada barrio es un
+  grafo aparte (no hay aceras entre barrios), así que todos los que trabajan van
+  en metro o taxi y andan los dos extremos. Con parcelas, andan de puerta a
+  puerta los que trabajan en una empresa de su propio barrio.
+- **Turnos de los pasos**: cada paso tiene un ciclo de 90 s desfasado por paso
+  (`mezcla(id, 97) % 90`) y en sus primeros 12 s se empieza a cruzar; quien llega
   fuera de turno espera en el bordillo. Es una función del tiempo (la llegada al
   paso lo es), así que la espera también. Sin esto, en hora punta un paso
   concurrido tenía gente encima minutos seguidos y los coches no pasaban.
@@ -183,6 +209,133 @@ calles, catastro, avatares) y en el módulo `chain/crates/rami-gui/src/city/vida
 ## Cifras medidas
 
 Panel real (binario base de la v0.10.16 + proxy con este JavaScript), Chromium
-sin pantalla con SwiftShader, calidad media salvo donde se dice.
+sin pantalla con SwiftShader, calidad media salvo donde se dice. Los scripts
+de prueba están fuera del repositorio (arnés de /tmp); sus resultados, en
+`/tmp/ramiverif/vida_*.json`.
 
-(las tablas, más abajo)
+### Lo que se construye
+
+| | cifra |
+|---|---|
+| Rutas de tráfico (tramos vivos de 120 m o más) | 852 (antes 21 vías) |
+| Rutas por calzada y carriles por sentido | 42 m: 9 con 6 · 26 m: 17 con 3 · 15/16/18 m: 319 con 2 · 13 m: 287 con 2 · 10 m: 220 con 1 |
+| Cruces resueltos por `resuelveCruces` | 4.505 (4.495 de dos calles y 10 parejas en 7 glorietas) |
+| Cruces con ruta a los dos lados (cede/manda) | 4.049 |
+| Glorietas con tráfico por el anillo (dos vías que la atraviesan) | 2 de 7 |
+| Pasos de peatones dibujados | 15.296 (7.908 antes); 15.206 sobre una ruta |
+| Grafo de aceras | 34 barrios, 38.468 aristas, 1.802 portales con acceso |
+| Población (sin parcelas) | 28.470 personas, 130.792 viajes al día |
+| Construcción de la población | 920–1.740 ms (una vez, al cargar y al cambiar las parcelas) |
+| Coste de un paso de simulación (tráfico + peatones, hora punta, media) | 1,29 ms |
+
+### Pruebas deterministas (`handle._debug.paso(dt)`)
+
+| Prueba | Resultado |
+|---|---|
+| Ceder: X por la que cede a 90 m de su línea, Y por la preferente a 100 m del cruce, los dos a 11 m/s (ruta 39 cede a la 44, calzadas de 16 m, ventana 5,15 s) | X se para con el morro a 0,47 m de la línea a los 8,8 s; Y cruza a los 10,1 s; X arranca a los 10,4 s y cruza. Nunca pasa la línea antes. |
+| Peatón en un paso: coche hacia el paso 834 (calzada 16 m) mientras lo cruza el peatón 24.142 | Se para con el morro a 1,47 m del borde del paso; el paso queda libre a los 17,7 s y arranca a los 17,9 s; el morro nunca pisa el paso ocupado. |
+| Glorietas: 88 encuentros (X entra, Y va por el anillo, cuatro sentidos, 11 desfases) | X cede en 42; ninguna caja (4,5 × 1,9 m, ejes separadores) se monta en otra; X sale siempre; espera máxima 4,4 s. |
+| Anillo con un coche parado y otro de la otra vía que entra detrás: 32 casos | El de detrás frena por el de delante en 20 (en los demás no se cruzan); 0 solapes (antes del recorte de rutas en las glorietas: 4 de 64, por el salto de la vuelta dentro del anillo). |
+| Mismo peatón en el mismo T: 1.200 posiciones (400 por instante a las 8:15, 12:40:30,5 y 18:05:07,25) | Iguales al bit tras borrar cachés, tras reconstruir la población entera y en otro Chromium. |
+| Suelo: cada 5 min de 5:00 a 24:00, todos los peatones en la calle (141.291 muestras) | 0 en el agua, 0 dentro de un edificio (`ctx.catastro.bajo`), 0 en la calzada fuera de un paso; 8.554 en un paso, a 0,7 m como mucho de su eje; 29.833 esperando turno en el bordillo. |
+| Agua (pendiente a): ejes de las rutas cada 10 m | 24 de 155.149 puntos sobre el agua (8 rutas, en el borde de un corte, entre dos filas de la cinta); con las vías del mapa de punta a punta, 1.201 de 46.553. 123 vías cortadas por el agua. |
+| Choque con un peatón (jugador de 0,42 m encima de uno) | Sale empujado por `peaton` a 0,77 m (0,42 + 0,35). |
+| Avatar ajeno encima del jugador (pendiente c) | Aparece a 0,10 m; se dibuja apartado 0,72 m, a 0,82 m del jugador; el jugador no se mueve; su posición de red no cambia. |
+| Economía: 12 parcelas sintéticas junto a barrios de viviendas | 19.996 de 27.700 personas trabajan en ellas; 2.105 andan de puerta a puerta, 17.891 en metro o taxi; los caminos acaban a 0,002 m del portal de su parcela; todas las parcelas con salida reciben su llegada (antes de buscar la puerta del taxi por las cuatro fachadas, 8.006 de 9.164 trabajadores de parcelas sueltas no llegaban). |
+
+### Atascos: 10 minutos simulados a las 8:15 (hora punta), `paso(0,1)` × 6.000
+
+Cada coche apunta en `causa` el coche que lo frena. Un bloqueo mutuo es un
+ciclo de coches parados siguiendo `causa`; la prueba lo busca en cada paso.
+
+| Sitio, calidad (coches) | Válvula | Parados más de 60 s | Máximo parado | Ciclos de espera | Válvulas | Parados más de 120 s al final |
+|---|---|---|---|---|---|---|
+| Barrio de torres, media (240) | sin | 16 | 109,8 s | 0 | 0 | 0 |
+| Barrio de torres, ultra (800) | sin | 113 | 212,2 s | 0 | 0 | 0 |
+| Glorieta 0, media (240) | sin | 0 | 48,7 s | 0 | 0 | 0 |
+| Glorieta 0, ultra (800) | sin | 82 | 170,8 s | 0 | 0 | 0 |
+| Barrio de torres, media (240) | 30 s | 0 | 49,5 s | 0 | 89 | 0 |
+| Barrio de torres, ultra (800) | 30 s | 0 | 45,8 s | 0 | 445 | 0 |
+| Glorieta 0, media (240) | 30 s | 0 | 44,7 s | 0 | 29 | 0 |
+| Glorieta 0, ultra (800) | 30 s | 0 | 51,6 s | 0 | 353 | 0 |
+
+Sin válvula, de los coches que pasan de un minuto parados, la cadena de
+`causa` acaba en un coche en marcha en 208 de 211 (y en un peatón en 3):
+esperan un hueco en una preferente con tráfico continuo, no a otro parado.
+Con 45 s de válvula quedaban 2 coches de más de 60 s en el barrio en ultra; con
+30 s, ninguno en los cuatro casos.
+
+### Presupuesto
+
+A pie junto al paso de las capturas, a las 8:18 (hora punta), por calidad:
+
+| Calidad | Triángulos | Llamadas | Peatones dibujados (en la calle cerca) | Sus triángulos | Coches (vivos) |
+|---|---|---|---|---|---|
+| baja | 797.354 | 12 | 0 (0: sin grafo) | 0 | 0 |
+| media | 980.824 | 24 | 43 (239) | 11.414 | 240 |
+| alta | 1.048.008 | 24 | 63 (240) | 15.990 | 480 |
+| ultra | 1.137.344 | 24 | 89 (239) | 22.126 | 800 |
+
+Un peatón cuesta de 249 a 265 triángulos en estas capturas (los que están a
+menos de 80 m llevan brazos y piernas); un coche, 260. Las siete mallas de los peatones son siete
+llamadas cuando hay alguien a la vista y ninguna cuando no (`visible = false`
+con cero instancias; three.js cuenta la llamada igual si no).
+
+A/B de los encuadres fijos (a las 11:00, `ab.mjs`) contra la referencia de la
+v0.10.16:
+
+| Encuadre | v0.10.16 | vida | Diferencia | Peatones / coches dibujados |
+|---|---|---|---|---|
+| torres_cerca | 920.678 · 21 | 896.498 · 21 | −24.180 · 0 | 0 / 88 |
+| bloques_manzana | 790.042 · 17 | 783.040 · 24 | −7.002 · +7 | 7 / 240 |
+| villas | 959.508 · 15 | 970.810 · 16 | +11.302 · +1 | 1 / 240 |
+| naves | 1.014.414 · 21 | 1.025.414 · 21 | +11.000 · 0 | 0 / 240 |
+| a_pie_manzana | 952.544 · 28 | 961.416 · 31 | +8.872 · +3 | 5 / 240 |
+| a_pie_torre | 802.440 · 17 | 810.408 · 17 | +7.968 · 0 | 0 / 240 |
+| ciudad_entera | 1.748.908 · 86 | 1.720.858 · 85 | −28.050 · −1 | 0 / 0 |
+| centro | 1.532.854 · 42 | 1.493.396 · 41 | −39.458 · −1 | 0 / 0 |
+
+Los coches se reparten ahora alrededor de quien mira y se dibujan a menos de
+1,4·R_VIVO de la cámara: en los encuadres de la ciudad entera y del centro no
+se dibuja ninguno (antes, de los 120 coches de 484 triángulos repartidos por
+las autovías, los que cayeran a la vista), y en los de barrio van 240 de 260
+triángulos (62.400, frente a 58.080 de los 120 de antes). La llamada de más en villas y las siete en
+bloques_manzana son las mallas de los peatones.
+
+## Capturas
+
+- `/tmp/ramiverif/vida_f_cruce_a_pie.png`: a pie en la acera, a las 8:18; dos
+  coches parados ante el paso y dos peatones cruzándolo.
+- `/tmp/ramiverif/vida_f_cruce_orbita.png`: el mismo cruce en órbita cercana
+  (40 m): los coches parados en sus carriles ante el paso, peatones en los pasos
+  y en las aceras.
+- `/tmp/ramiverif/vida_f_cruce_a_pie_2.png`: a pie en la calzada junto a los
+  coches parados.
+- `/tmp/ramiverif/vida_pr_a_pie_{baja,media,alta,ultra}.png`: el presupuesto.
+- `/tmp/ramiverif/vida_ab_*.png`: los encuadres fijos.
+
+## Lo que queda
+
+- **Las rutas no se enlazan entre sí.** Al final de cada una el coche da la
+  vuelta en el sitio (frena a 3,5 m/s y cruza al carril simétrico); en el borde
+  de cada barrio y del mapa se ve. En 5 de las 7 glorietas las vías del mapa
+  llegan partidas en dos y los coches dan la vuelta antes de la entrada, sin
+  pasar por el anillo. Enlazarlas es un grafo de rutas con giros en los cruces.
+- **Los coches no son deterministas** (ni lo eran): cada máquina ve su tráfico.
+  Los peatones sí lo son.
+- **Sin parcelas nadie va andando al trabajo** (ver «Metro o taxi»); tampoco hay
+  aceras entre barrios ni a lo largo de las vías del mapa: los peatones solo
+  existen en los 34 barrios con trama.
+- De los portales de los edificios de barrio, 522 no encuentran un camino recto
+  libre a la acera (145 sin lado de manzana con arista, 252 con un edificio en
+  medio, 105 a más de 120 m, 13 por agua, 7 por calzada): esos edificios no tienen
+  vecinos que salgan a la calle.
+- Un 1,2 % de los viajes se queda sin camino (en la muestra, 230 de 18.806: la
+  comida o el recado sin un portal entre 80 y 450 m, o el nodo del metro sin
+  nada a mano) y ese día no se ve.
+- 24 puntos de ruta sobre el agua en el borde de 8 cortes (arriba).
+- El semáforo no existe: la cesión es de ceda el paso en todos los cruces, con
+  la válvula de 30 s. En ultra, 445 válvulas en 10 minutos en el barrio de
+  torres: el coche que se mete obliga a frenar a la preferente.
+- Probado solo en Chromium con SwiftShader; sin cifras de fluidez de una
+  tarjeta real.

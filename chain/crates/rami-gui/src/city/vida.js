@@ -26,8 +26,10 @@
  *     llega andando. Una parcela fuera de toda trama se alcanza desde la puerta
  *     del taxi, a unas decenas de metros del portal.
  *   HORARIO: salida entre las 7:00 y las 9:30, comida para algo más de la mitad,
- *     vuelta entre las 17:00 y las 19:30, recados para quien no trabaja, un
- *     paseo de noche para uno de cada ocho y unos pocos de madrugada.
+ *     vuelta entre las 17:00 y las 19:30, recados para quien no trabaja (uno
+ *     entre las 9:00 y las 14:00 y otro entre las 15:00 y las 20:30: con la
+ *     tarde a partir de las 16:00, de 15:00 a 16:00 no había nadie en la calle),
+ *     un paseo de noche para uno de cada ocho y unos pocos de madrugada.
  *
  * Reglas de genotipo: todo lo que decide (quién vive dónde, dónde trabaja, a
  * qué hora sale, por qué calles va) sale de enteros —semillas, pesos enteros,
@@ -568,18 +570,39 @@
         var ztr = tramaDe(ppx, ppz), acp = ztr >= 0 ? acceso(V.zonas[ztr], ppx, ppz, ppy) : null;
         if (acp) nuevoAcceso(V.zonas[ztr], acp, { parcela: pcs[i], tipo: 'parcela', edificio: null });
         else {
-          // Fuera de trama: de 40 a 70 m delante del portal, lo más lejos que esté libre.
-          var dxp = Math.sin(so.yaw), dzp = Math.cos(so.yaw), lim = 10 + (mezcla(pcs[i].x, pcs[i].y) % 31) + 30, s2, libre = 0;
-          for (s2 = 0.6; s2 <= lim; s2 += MUESTRA) {
-            var qx = ppx + dxp * s2, qz = ppz + dzp * s2;
-            if (M.surfaceH(qx, qz) <= 0.6 || CAT.bajo(qx, qz) || enAsfalto(qx, qz, -2)) break;
-            libre = s2;
+          // Fuera de trama: la puerta del taxi, de 40 a 70 m delante del portal, lo
+          // más lejos que esté libre; si delante hay una calle, en su bordillo. Si
+          // la fachada principal no tiene salida (un edificio, el agua), se prueba
+          // por los costados y por detrás, con el portal en esa fachada. Solo con
+          // la fachada principal, 8.006 de 9.164 trabajadores de parcelas sueltas
+          // de la prueba se quedaban sin llegada: delante había calzada a menos de
+          // diez metros, que es justo donde para un taxi.
+          var lim = 10 + (mezcla(pcs[i].x, pcs[i].y) % 31) + 30, cara, T = null, Pp = [ppx, ppy, ppz];
+          for (cara = 0; cara < 4 && !T; cara++) {
+            var ang = so.yaw + [0, Math.PI * 0.5, -Math.PI * 0.5, Math.PI][cara], med = cara === 1 || cara === 2 ? so.hw : so.hd;
+            var dxp = Math.sin(ang), dzp = Math.cos(ang), ox = so.x + dxp * (med + 0.3), oz = so.z + dzp * (med + 0.3), s2, libre = 0, calle = false;
+            if (M.surfaceH(ox, oz) <= 0.6 || CAT.bajo(ox, oz)) { V.diag.taxiPortal = (V.diag.taxiPortal || 0) + 1; continue; }
+            for (s2 = 0.6; s2 <= lim; s2 += 0.5) {
+              var qx = ox + dxp * s2, qz = oz + dzp * s2;
+              if (enAsfalto(qx, qz, -2)) { calle = true; break; }
+              if (M.surfaceH(qx, qz) <= 0.6) { V.diag.taxiAgua = (V.diag.taxiAgua || 0) + 1; break; }
+              if (CAT.bajo(qx, qz)) { V.diag.taxiEdificio = (V.diag.taxiEdificio || 0) + 1; break; }
+              libre = s2;
+            }
+            if (libre >= 10 || (calle && libre >= 1)) {
+              T = [ox + dxp * libre, M.groundH(ox + dxp * libre, oz + dzp * libre), oz + dzp * libre];
+              Pp = [ox, ppy, oz];
+            }
           }
-          var Zs = { id: V.zonas.length, tipo: 'suelta', x: ppx, z: ppz, R: 80, accesos: [], viajes: [], arbol: {} };
+          if (!T) V.diag.sinPuertaDeTaxi = (V.diag.sinPuertaDeTaxi || 0) + 1;
+          var Zs = { id: V.zonas.length, tipo: 'suelta', x: Pp[0], z: Pp[2], R: 80, accesos: [], viajes: [], arbol: {} };
           V.zonas.push(Zs);
-          var acs = { P: [ppx, ppy, ppz], T: libre >= 10 ? [ppx + dxp * libre, M.groundH(ppx + dxp * libre, ppz + dzp * libre), ppz + dzp * libre] : null };
-          acp = nuevoAcceso(Zs, acs, { parcela: pcs[i], tipo: 'parcela', edificio: null });
+          acp = nuevoAcceso(Zs, { P: Pp, T: T }, { parcela: pcs[i], tipo: 'parcela', edificio: null });
         }
+        // Una parcela sin salida por ninguna fachada (en el agua de la ría o de la
+        // costa: las celdas de tierra del consenso no miran el relieve fino) no
+        // recibe a nadie que se vea llegar: su plantilla no entra en el sorteo.
+        if (acp.T === null) continue;
         empresas.push({ ac: acp, pc: pcs[i], peso: plantilla(pcs[i]) });
       }
       // Los barrios de oficinas, para quien trabaja sin parcelas: su centro.
@@ -684,12 +707,12 @@
         }
       } else {
         if (r() < 0.8) {
-          var t1 = 9 * 3600 + Math.floor(r() * 10800), e1 = 1200 + Math.floor(r() * 2400), sa = Math.floor(r() * 1e9);
+          var t1 = 9 * 3600 + Math.floor(r() * 18000), e1 = 1200 + Math.floor(r() * 2400), sa = Math.floor(r() * 1e9);
           viaje(per, zh, t1, H, { sitio: sa, lo: 15000, hi: 70000 }, false, 'recado');
           viaje(per, zh, t1 + e1, H, { sitio: sa, lo: 15000, hi: 70000 }, true, 'recado');
         }
         if (r() < 0.6) {
-          var t2 = 16 * 3600 + Math.floor(r() * 16200), e2 = 1200 + Math.floor(r() * 2400), sb2 = Math.floor(r() * 1e9);
+          var t2 = 15 * 3600 + Math.floor(r() * 19800), e2 = 1200 + Math.floor(r() * 2400), sb2 = Math.floor(r() * 1e9);
           viaje(per, zh, t2, H, { sitio: sb2, lo: 15000, hi: 70000 }, false, 'recado');
           viaje(per, zh, t2 + e2, H, { sitio: sb2, lo: 15000, hi: 70000 }, true, 'recado');
         }
@@ -828,7 +851,7 @@
       V.mallas = {};
       function hazla(nombre, geo, n) {
         var m = new THREE.InstancedMesh(geo, ctx.plainMat, n);
-        m.count = 0; m.frustumCulled = false; m.castShadow = tp.sombra; m.receiveShadow = true; m.name = 'peatones_' + nombre;
+        m.count = 0; m.visible = false; m.frustumCulled = false; m.castShadow = tp.sombra; m.receiveShadow = true; m.name = 'peatones_' + nombre;
         m.setColorAt(0, new THREE.Color(1, 1, 1)); ctx.scene.add(m); V.mallas[nombre] = m;
       }
       // Cuatro cuerpos (uno por estilo), dos brazos (el brazo solo cambia en el
@@ -879,7 +902,8 @@
         V.triangulos += mm.count * (g.index ? g.index.count : g.attributes.position.count) / 3;
       }
     }
-    function fin(m, n) { m.count = n; m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; }
+    // Una malla sin instancias no se envía: three.js cuenta la llamada igual.
+    function fin(m, n) { m.count = n; m.visible = n > 0; m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; }
 
     // ---- Cada cuadro ------------------------------------------------------------------
     function foco() {
