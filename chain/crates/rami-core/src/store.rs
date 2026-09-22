@@ -38,14 +38,25 @@ impl ChainDir {
     /// (apagón o cierre forzado durante un append), se ignora y se sigue con el
     /// prefijo válido — el bloque perdido se re-pedirá a la red. El archivo NO
     /// se modifica. Una línea ilegible en MEDIO sí es corrupción real y aborta.
+    ///
+    /// v0.11.0: un bloque BIEN FORMADO (JSON con una cabecera de bloque válida
+    /// y una lista de transacciones) que no se puede leer porque trae un tipo
+    /// de transacción que esta versión no conoce lo escribió una versión
+    /// posterior (volver atrás de versión sobre el mismo directorio). No es
+    /// corrupción: se salta, se avisa, y sus descendientes quedan huérfanos al
+    /// reconstruir el árbol. El nodo se queda en la altura anterior, que es lo
+    /// mismo que le pasa por red a un binario que no se actualiza. Hasta la
+    /// v0.10.16 esa línea abortaba la carga (docs/VIVIENDA.md, §7).
     pub fn load_blocks(&self) -> Result<Vec<Block>, String> {
         let text = fs::read_to_string(self.chain_path())
             .map_err(|e| format!("no se pudo leer chain.jsonl: {e}"))?;
         let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
         let mut blocks = Vec::new();
+        let mut de_otra_version = 0usize;
         for (i, line) in lines.iter().enumerate() {
             match serde_json::from_str::<Block>(line) {
                 Ok(b) => blocks.push(b),
+                Err(_) if es_bloque_de_otra_version(line) => de_otra_version += 1,
                 Err(e) if i + 1 == lines.len() => {
                     eprintln!(
                         "[cadena] última línea de chain.jsonl ilegible (escritura interrumpida): {e}; se ignora"
@@ -53,6 +64,11 @@ impl ChainDir {
                 }
                 Err(e) => return Err(format!("línea {}: bloque JSON inválido: {e}", i + 1)),
             }
+        }
+        if de_otra_version > 0 {
+            eprintln!(
+                "[cadena] {de_otra_version} bloque(s) de chain.jsonl con transacciones que esta versión no conoce (los escribió una versión posterior); se ignoran"
+            );
         }
         Ok(blocks)
     }
@@ -137,6 +153,16 @@ impl ChainDir {
     }
 }
 
+/// ¿Es `line` un bloque bien formado que esta versión no sabe leer? Lo es si
+/// es un objeto JSON con una cabecera que se lee como `BlockHeader` y una
+/// lista `txs`: lo que falla es una transacción (un tipo desconocido), no el
+/// fichero. Basura, JSON truncado o sin cabecera no lo son.
+fn es_bloque_de_otra_version(line: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { return false };
+    let (Some(header), Some(txs)) = (v.get("header"), v.get("txs")) else { return false };
+    txs.is_array() && serde_json::from_value::<crate::block::BlockHeader>(header.clone()).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +206,36 @@ mod tests {
             f.write_all(format!("{}\n", serde_json::to_string(&genesis).unwrap()).as_bytes()).unwrap();
         }
         assert!(chain.load_blocks().is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Un bloque bien formado con un tipo de transacción que esta versión no
+    /// conoce (lo escribió una versión posterior) se salta aunque esté en
+    /// MEDIO del fichero; la basura en medio sigue abortando.
+    #[test]
+    fn bloque_de_una_version_posterior_se_salta_sin_abortar() {
+        let dir = tmp_dir("futuro");
+        let _ = fs::remove_dir_all(&dir);
+        let chain = ChainDir::new(&dir);
+        let genesis = crate::genesis::testnet_genesis();
+        chain.init(&genesis).unwrap();
+        let linea = serde_json::to_string(&genesis).unwrap();
+        assert!(linea.contains("\"Coinbase\""));
+        let futura = linea.replace("\"Coinbase\"", "\"TxDeUnaVersionPosterior\"");
+        assert!(serde_json::from_str::<Block>(&futura).is_err(), "esta versión no la lee");
+        assert!(es_bloque_de_otra_version(&futura));
+        assert!(!es_bloque_de_otra_version("basura no json"));
+        assert!(!es_bloque_de_otra_version("{\"header\":{\"version\":1},\"txs\":[]}"), "cabecera incompleta");
+        {
+            let mut f = fs::OpenOptions::new().append(true).open(chain.chain_path()).unwrap();
+            f.write_all(format!("{futura}\n{linea}\n").as_bytes()).unwrap();
+        }
+        let bloques = chain.load_blocks().expect("un bloque de otra versión en medio no aborta");
+        assert_eq!(bloques.len(), 2, "génesis y su duplicado; el de otra versión, fuera");
+        let tree = chain.load_tree(Params::testnet()).unwrap();
+        assert_eq!(tree.len(), 1);
+        // El fichero no se toca.
+        assert!(fs::read_to_string(chain.chain_path()).unwrap().contains("TxDeUnaVersionPosterior"));
         let _ = fs::remove_dir_all(&dir);
     }
 

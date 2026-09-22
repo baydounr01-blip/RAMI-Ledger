@@ -11,6 +11,15 @@
 //!   rami-wallet unstake  --chain DIR --amount RAMI [--fee ram] [--label L]
 //!   rami-wallet commit   --chain DIR --payload JSON [--fee ram] [--label L]
 //!   rami-wallet reveal   --chain DIR --commit TXID [--fee ram] [--label L]
+//!   rami-wallet profile  --chain DIR --handle NOMBRE [--display A] [--bio B] [--avatar N] [--color N]
+//!   rami-wallet claim    --chain DIR --x X --y Y --name NOMBRE [--kind SECTOR]
+//!   rami-wallet divide   --chain DIR --x X --y Y --unidades N          (vivienda, v0.11.0)
+//!   rami-wallet unit-transfer --chain DIR --x X --y Y --n N --to HEXPUB
+//!   rami-wallet unit-sell     --chain DIR --x X --y Y --n N --price RAMI   (0 retira)
+//!   rami-wallet unit-buy      --chain DIR --x X --y Y --n N --max-price RAMI
+//!
+//! En regtest, `--firma-v2-desde`, `--dubai-desde` y `--vivienda-desde <unix>`
+//! fuerzan las activaciones (las mismas que se pasen al nodo).
 
 use std::process::ExitCode;
 
@@ -20,8 +29,9 @@ use rami_core::store::ChainDir;
 use rami_core::tx::{signer_of, txid, verify_tx_con, AccountId, FirmaCtx, Tx};
 
 use rami_wallet::{
-    build_commit, build_reveal, build_set_profile, build_stake, build_transfer, default_keystore_path, fmt_ram,
-    load_reveal, parse_pubkey, parse_ram, save_reveal, Keystore,
+    build_buy_unit, build_claim_parcel, build_commit, build_divide_parcel, build_reveal, build_sell_unit, build_set_profile,
+    build_stake, build_transfer, build_transfer_unit, default_keystore_path, fmt_ram, load_reveal, parse_pubkey, parse_ram,
+    save_reveal, Keystore,
 };
 
 fn die(msg: &str) -> ExitCode {
@@ -58,8 +68,13 @@ fn params_of(args: &[String]) -> Params {
         Some(t) => p.con_firma_v2_desde(Some(t)),
         None => p,
     };
-    match arg(args, "--dubai-desde").and_then(|s| s.parse::<u64>().ok()) {
+    let p = match arg(args, "--dubai-desde").and_then(|s| s.parse::<u64>().ok()) {
         Some(t) => p.con_dubai_desde(Some(t)),
+        None => p,
+    };
+    // Escritura de vivienda (v0.11.0): solo tiene efecto con Dubái.
+    match arg(args, "--vivienda-desde").and_then(|s| s.parse::<u64>().ok()) {
+        Some(t) => p.con_vivienda_desde(Some(t)),
         None => p,
     }
 }
@@ -331,6 +346,119 @@ fn cmd_reveal(args: &[String]) -> ExitCode {
     submit(&chain, &firma, &build_reveal(&firma, &kp, commit_txid, &payload, secret, fee_of(args), nonce))
 }
 
+// ---- Ciudad: parcela y escritura de vivienda (v0.11.0) ----
+//
+// Estas órdenes comprueban la transacción contra el ESTADO de la cabeza con
+// las pendientes del mempool ya aplicadas (las mismas reglas que el nodo al
+// admitirla): si no aplica, se dice aquí y no se escribe en el mempool.
+
+/// Firma y envía una tx de la ciudad tras simularla sobre el estado.
+fn enviar_ciudad(args: &[String], build: impl FnOnce(&FirmaCtx, &KeyPair, u64) -> Tx) -> ExitCode {
+    let Some(dir) = arg(args, "--chain") else { return die("falta --chain DIR") };
+    let kp = match keypair_from(args) {
+        Ok(k) => k,
+        Err(e) => return die(&e),
+    };
+    let chain = ChainDir::new(&dir);
+    let tree = match chain.load_tree(params_of(args)) {
+        Ok(t) => t,
+        Err(e) => return die(&e),
+    };
+    let ahora = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let firma = tree.firma_ctx(ahora);
+    let mut sim = match tree.head_state() {
+        Ok(s) => s,
+        Err(e) => return die(&e),
+    };
+    let altura = tree.get(&tree.head()).map(|n| n.block.header.height + 1).unwrap_or(1);
+    for t in chain.load_mempool() {
+        if verify_tx_con(&t, &firma).is_ok() {
+            let mut prueba = sim.clone();
+            if rami_core::state::apply_tx(&mut prueba, &t, altura, 1, &txid(&t), &firma).is_ok() {
+                sim = prueba;
+            }
+        }
+    }
+    let nonce = sim.nonce_of(&kp.public_bytes());
+    let tx = build(&firma, &kp, nonce);
+    if let Err(e) = verify_tx_con(&tx, &firma) {
+        return die(&e);
+    }
+    if let Err(e) = rami_core::state::apply_tx(&mut sim, &tx, altura, 1, &txid(&tx), &firma) {
+        return die(&format!("no aplica: {e}"));
+    }
+    submit(&chain, &firma, &tx)
+}
+
+/// Entero de un flag con su rango (un `--n 0` o un `--x 99` no se aceptan en silencio).
+fn entero(args: &[String], flag: &str, min: u64, max: u64) -> Result<u64, String> {
+    let v = arg(args, flag).ok_or_else(|| format!("falta {flag}"))?;
+    match v.trim().parse::<u64>() {
+        Ok(n) if (min..=max).contains(&n) => Ok(n),
+        _ => Err(format!("{flag} debe ser un número de {min} a {max}")),
+    }
+}
+
+fn coordenadas(args: &[String]) -> Result<(u16, u16), String> {
+    let max = rami_core::ciudad::CITY_SIZE_DUBAI as u64 - 1;
+    Ok((entero(args, "--x", 0, max)? as u16, entero(args, "--y", 0, max)? as u16))
+}
+
+fn cmd_claim(args: &[String]) -> ExitCode {
+    let (x, y) = match coordenadas(args) { Ok(c) => c, Err(e) => return die(&e) };
+    let Some(name) = arg(args, "--name") else { return die("falta --name NOMBRE (máx. 32 bytes)") };
+    let kind = match arg(args, "--kind") {
+        None => 0,
+        Some(_) => match entero(args, "--kind", 0, rami_core::ciudad::MAX_SECTOR as u64) { Ok(k) => k as u8, Err(e) => return die(&e) },
+    };
+    let fee = fee_of(args);
+    enviar_ciudad(args, move |firma, kp, nonce| {
+        let precio = if firma.dubai { rami_core::ciudad::precio_parcela(x, y) } else { rami_core::state::PARCEL_PRICE };
+        println!("parcela ({x},{y}) · si está libre, reclamarla quema {} RAMI", fmt_ram(precio));
+        build_claim_parcel(firma, kp, x, y, &name, kind, fee, nonce)
+    })
+}
+
+fn cmd_divide(args: &[String]) -> ExitCode {
+    let (x, y) = match coordenadas(args) { Ok(c) => c, Err(e) => return die(&e) };
+    let max = rami_core::tx::MAX_UNIDADES_POR_PARCELA as u64;
+    let unidades = match entero(args, "--unidades", 1, max) { Ok(n) => n as u16, Err(e) => return die(&e) };
+    let fee = fee_of(args);
+    println!("parcela ({x},{y}) · dividir en {unidades} viviendas (solo la comisión)");
+    enviar_ciudad(args, move |firma, kp, nonce| build_divide_parcel(firma, kp, x, y, unidades, fee, nonce))
+}
+
+fn numero_vivienda(args: &[String]) -> Result<u16, String> {
+    entero(args, "--n", 1, rami_core::tx::MAX_UNIDADES_POR_PARCELA as u64).map(|n| n as u16)
+}
+
+fn cmd_unit_transfer(args: &[String]) -> ExitCode {
+    let (x, y) = match coordenadas(args) { Ok(c) => c, Err(e) => return die(&e) };
+    let n = match numero_vivienda(args) { Ok(n) => n, Err(e) => return die(&e) };
+    let Some(to_s) = arg(args, "--to") else { return die("falta --to HEXPUB") };
+    let to = match parse_pubkey(&to_s) { Ok(p) => p, Err(e) => return die(&e) };
+    let fee = fee_of(args);
+    enviar_ciudad(args, move |firma, kp, nonce| build_transfer_unit(firma, kp, x, y, n, to, fee, nonce))
+}
+
+fn cmd_unit_sell(args: &[String]) -> ExitCode {
+    let (x, y) = match coordenadas(args) { Ok(c) => c, Err(e) => return die(&e) };
+    let n = match numero_vivienda(args) { Ok(n) => n, Err(e) => return die(&e) };
+    let Some(price_s) = arg(args, "--price") else { return die("falta --price RAMI (0 retira la venta)") };
+    let price = match parse_ram(&price_s) { Ok(a) => a, Err(e) => return die(&e) };
+    let fee = fee_of(args);
+    enviar_ciudad(args, move |firma, kp, nonce| build_sell_unit(firma, kp, x, y, n, price, fee, nonce))
+}
+
+fn cmd_unit_buy(args: &[String]) -> ExitCode {
+    let (x, y) = match coordenadas(args) { Ok(c) => c, Err(e) => return die(&e) };
+    let n = match numero_vivienda(args) { Ok(n) => n, Err(e) => return die(&e) };
+    let Some(max_s) = arg(args, "--max-price") else { return die("falta --max-price RAMI") };
+    let max_price = match parse_ram(&max_s) { Ok(a) => a, Err(e) => return die(&e) };
+    let fee = fee_of(args);
+    enviar_ciudad(args, move |firma, kp, nonce| build_buy_unit(firma, kp, x, y, n, max_price, fee, nonce))
+}
+
 // ---- firma de release (Ed25519, la misma criptografía de la cadena) ----
 //
 //   rami-wallet release-keygen                 → semilla (secreta) + clave pública
@@ -397,7 +525,7 @@ fn cmd_release_verify(args: &[String]) -> ExitCode {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let Some(cmd) = args.get(1) else {
-        eprintln!("uso: rami-wallet new|address|balance|send|stake|unstake|commit|reveal|profile [opciones]");
+        eprintln!("uso: rami-wallet new|address|balance|send|stake|unstake|commit|reveal|profile|claim|divide|unit-transfer|unit-sell|unit-buy [opciones]");
         eprintln!("⚠ TESTNET experimental — sin valor monetario, no es una inversión.");
         return ExitCode::FAILURE;
     };
@@ -415,6 +543,11 @@ fn main() -> ExitCode {
         "commit" => cmd_commit(&args[2..]),
         "reveal" => cmd_reveal(&args[2..]),
         "profile" => cmd_profile(&args[2..]),
+        "claim" => cmd_claim(&args[2..]),
+        "divide" => cmd_divide(&args[2..]),
+        "unit-transfer" => cmd_unit_transfer(&args[2..]),
+        "unit-sell" => cmd_unit_sell(&args[2..]),
+        "unit-buy" => cmd_unit_buy(&args[2..]),
         other => die(&format!("subcomando desconocido: {other}")),
     }
 }

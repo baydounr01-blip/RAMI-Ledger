@@ -139,11 +139,11 @@ pub fn tx_fee(tx: &Tx) -> u64 {
 /// candidato nunca admiten una tx que luego invalidaría el bloque minado (y
 /// dejaría al minero atascado). `height` = altura del bloque en que iría.
 /// Mutar `sim` permite encadenar varias en el mismo bloque candidato.
-fn try_apply(sim: &mut State, tx: &Tx, height: u64, dubai: bool) -> Result<(), String> {
+fn try_apply(sim: &mut State, tx: &Tx, height: u64, firma: &FirmaCtx) -> Result<(), String> {
     if matches!(tx, Tx::Coinbase { .. }) {
         return Err("coinbase no va en mempool".into());
     }
-    rami_core::state::apply_tx(sim, tx, height, 1, &txid(tx), dubai)
+    rami_core::state::apply_tx(sim, tx, height, 1, &txid(tx), firma)
 }
 
 /// Construye la CABECERA candidata (sin minar, nonce 0) y las tx de un bloque a
@@ -170,7 +170,7 @@ pub fn build_candidate(
         if verify_tx_con(tx, firma).is_err() {
             continue;
         }
-        if try_apply(&mut sim, tx, height, firma.dubai).is_ok() {
+        if try_apply(&mut sim, tx, height, firma).is_ok() {
             fees += tx_fee(tx) as u128;
             included.push(tx.clone());
         }
@@ -228,8 +228,12 @@ pub fn build_block(
 
 /// Regla más alta que entiende este binario (se anuncia en `Status.rule`):
 /// 1 firma v1, 2 firma v2 (v0.8.0), 3 firma v2 + Dubái (v0.9.0), 4 Dubái con
-/// identidad del jugador (v0.10.0; misma fecha de activación que Dubái).
-pub const REGLA_SOPORTADA: u32 = 4;
+/// identidad del jugador (v0.10.0; misma fecha de activación que Dubái), 5
+/// la escritura de vivienda (v0.11.0; su propia fecha, 2027-03-01).
+pub const REGLA_SOPORTADA: u32 = 5;
+/// Regla que anunciaba la v0.10.x (Dubái con perfiles, sin vivienda): sigue la
+/// cadena hasta el primer bloque con una transacción de vivienda.
+pub const REGLA_PERFIL: u32 = 4;
 /// Regla que anunciaba la v0.8.0 (firma v2 sin Dubái).
 pub const REGLA_V2: u32 = 2;
 /// Regla que anunciaba la v0.9.0 (Dubái sin perfiles): entiende presencia y
@@ -406,6 +410,12 @@ pub struct ConsensoInfo {
     pub pares_dubai: usize,
     /// Pares que anuncian la regla 4 (perfiles de jugador, v0.10.0).
     pub pares_perfil: usize,
+    /// Escritura de vivienda (v0.11.0): fecha de activación, si rige ya sobre
+    /// la cabeza, segundos que faltan y pares que anuncian entenderla (regla 5).
+    pub vivienda_desde: Option<u64>,
+    pub vivienda_vigente: bool,
+    pub vivienda_faltan_segundos: u64,
+    pub pares_vivienda: usize,
 }
 
 /// El hecho detrás del juicio «sincronizado»: alturas, no adjetivos.
@@ -671,6 +681,47 @@ fn tx_view(tx: &Tx) -> TxView {
                 if *node_pk == [0u8; 32] { String::new() } else { format!(" · nodo {}", fingerprint_of(node_pk)) }
             )),
         },
+        // Escritura de vivienda (v0.11.0).
+        Tx::DivideParcel { who, x, y, unidades, fee, .. } => TxView {
+            kind: "divide_parcel".into(),
+            txid: id,
+            from: Some(hex::encode(who)),
+            to: None,
+            amount: None,
+            fee: *fee,
+            memo: Some(format!("parcela ({x},{y}) dividida en {unidades} viviendas")),
+        },
+        Tx::TransferUnit { from, x, y, n, to, fee, .. } => TxView {
+            kind: "transfer_unit".into(),
+            txid: id,
+            from: Some(hex::encode(from)),
+            to: Some(hex::encode(to)),
+            amount: None,
+            fee: *fee,
+            memo: Some(format!("vivienda {n} de la parcela ({x},{y})")),
+        },
+        Tx::SellUnit { who, x, y, n, price, fee, .. } => TxView {
+            kind: "sell_unit".into(),
+            txid: id,
+            from: Some(hex::encode(who)),
+            to: None,
+            amount: Some(*price),
+            fee: *fee,
+            memo: Some(if *price == 0 {
+                format!("vivienda {n} de la parcela ({x},{y}): venta retirada")
+            } else {
+                format!("vivienda {n} de la parcela ({x},{y}) en venta")
+            }),
+        },
+        Tx::BuyUnit { who, x, y, n, max_price, fee, .. } => TxView {
+            kind: "buy_unit".into(),
+            txid: id,
+            from: Some(hex::encode(who)),
+            to: None,
+            amount: Some(*max_price),
+            fee: *fee,
+            memo: Some(format!("compra de la vivienda {n} de la parcela ({x},{y})")),
+        },
     }
 }
 
@@ -699,6 +750,24 @@ pub struct ParcelView {
     pub insumos_pagados: u64,
     pub importado: u64,
     pub ventas: u64,
+    /// Escritura de vivienda (v0.11.0): en cuántas viviendas está dividida (0
+    /// = sin dividir) y TODAS ellas, de la 1 a la `unidades`. Contrato fijo:
+    /// el cliente 3D (interiores) lo lee tal cual.
+    pub unidades: u16,
+    pub units: Vec<UnitView>,
+}
+
+/// Una vivienda de una parcela dividida (v0.11.0).
+#[derive(Clone, Debug, Serialize)]
+pub struct UnitView {
+    /// Número de la vivienda (1..=unidades).
+    pub n: u16,
+    /// Dirección del dueño (hex de 32 bytes).
+    pub owner: String,
+    /// Nombre único del dueño (`SetProfile`), o vacío si no tiene perfil.
+    pub handle: String,
+    /// Precio de venta publicado (unidades base de RAMI), si está en venta.
+    pub sale: Option<u64>,
 }
 
 /// Distrito para el panel (rectángulo de la cuadrícula y precio en unidades base).
@@ -782,6 +851,11 @@ pub struct CityView {
     /// Fecha de activación (Unix) si esta red la tiene, y segundos que faltan (0 si rige).
     pub dubai_desde: Option<u64>,
     pub dubai_faltan_segundos: u64,
+    /// Escritura de vivienda (v0.11.0): si rige ya sobre la cabeza, su fecha
+    /// de activación (si esta red la tiene) y los segundos que faltan (0 si rige).
+    pub vivienda: bool,
+    pub vivienda_desde: Option<u64>,
+    pub vivienda_faltan_segundos: u64,
     /// Fondo de la ciudad, lo que reparte el próximo bloque, lo que entra por
     /// bloque (parte de la emisión) y lo quemado en total.
     pub fund: u64,
@@ -810,9 +884,19 @@ pub struct PendingView {
     /// Precio (venta/compra) de la operación pendiente, si lo tiene.
     #[serde(default)]
     pub price: u64,
+    /// Vivienda (v0.11.0): número de la vivienda («unit_transfer»,
+    /// «unit_sell», «unit_buy»), viviendas en que se divide («divide») y
+    /// destino de una transferencia.
+    #[serde(default)]
+    pub n: u16,
+    #[serde(default)]
+    pub unidades: u16,
+    #[serde(default)]
+    pub to: String,
 }
 
-fn city_view(st: &State, height: u64, firma: &FirmaCtx, dubai_desde: Option<u64>, ahora: u64) -> CityView {
+fn city_view(st: &State, height: u64, firma: &FirmaCtx, dubai_desde: Option<u64>, vivienda_desde: Option<u64>, ahora: u64) -> CityView {
+    let handle_de = |cuenta: &AccountId| st.profiles.get(cuenta).map(|pr| pr.handle.clone()).unwrap_or_default();
     let assets: Vec<AssetView> = st
         .assets
         .iter()
@@ -842,7 +926,7 @@ fn city_view(st: &State, height: u64, firma: &FirmaCtx, dubai_desde: Option<u64>
             x: *x,
             y: *y,
             owner: hex::encode(p.owner),
-            handle: st.profiles.get(&p.owner).map(|pr| pr.handle.clone()).unwrap_or_default(),
+            handle: handle_de(&p.owner),
             name: p.name.clone(),
             kind: p.kind,
             since: p.since,
@@ -857,6 +941,13 @@ fn city_view(st: &State, height: u64, firma: &FirmaCtx, dubai_desde: Option<u64>
             insumos_pagados: p.insumos_pagados,
             importado: p.importado,
             ventas: p.ventas,
+            unidades: p.unidades,
+            units: p
+                .units
+                .iter()
+                .enumerate()
+                .map(|(i, u)| UnitView { n: i as u16 + 1, owner: hex::encode(u.owner), handle: handle_de(&u.owner), sale: u.sale })
+                .collect(),
         })
         .collect();
     let emision = block_reward(height + 1);
@@ -882,6 +973,9 @@ fn city_view(st: &State, height: u64, firma: &FirmaCtx, dubai_desde: Option<u64>
         dubai: firma.dubai,
         dubai_desde,
         dubai_faltan_segundos: if firma.dubai { 0 } else { dubai_desde.map(|d| d.saturating_sub(ahora)).unwrap_or(0) },
+        vivienda: firma.vivienda_rige(),
+        vivienda_desde,
+        vivienda_faltan_segundos: if firma.vivienda_rige() { 0 } else { vivienda_desde.map(|d| d.saturating_sub(ahora)).unwrap_or(0) },
         fund: st.city_fund,
         pago_bloque: ciudad::pago_del_bloque(st.city_fund),
         parte_ciudad_bloque: if firma.dubai { ciudad::parte_ciudad(emision) } else { 0 },
@@ -962,7 +1056,8 @@ pub struct TickerView {
 #[derive(Clone, Debug, Serialize)]
 pub struct OrderView {
     pub ticker_id: String,
-    /// "parcel" o "asset".
+    /// "parcel", "asset" o "unit" (vivienda, v0.11.0: `asset` lleva entonces
+    /// el número de la vivienda y `sector` el de la parcela).
     pub kind: String,
     pub x: u16,
     pub y: u16,
@@ -1026,6 +1121,9 @@ fn ticker_parcela(distrito: u8) -> String {
     let clave = ciudad::distritos().get(distrito as usize).map(|d| d.clave.to_uppercase()).unwrap_or_else(|| "X".into());
     format!("PARCELA-{clave}_RAMI")
 }
+/// Escritura de vivienda (v0.11.0): un solo par para todas las viviendas de
+/// la ciudad (no hay precio de protocolo: dividir no quema nada).
+const TICKER_VIVIENDA: &str = "VIVIENDA_RAMI";
 fn ticker_activo(kind: u8) -> String {
     let n = match kind {
         0 => "PLANTA",
@@ -1048,6 +1146,9 @@ fn market_view(st: &State, height: u64, firma: &FirmaCtx, network: &str, network
     for k in 0..=3u8 {
         let id = ticker_activo(k);
         tickers.insert(id.clone(), TickerView { ticker_id: id, base: ticker_activo(k).trim_end_matches("_RAMI").to_string(), target: "RAMI".into(), base_price: ciudad::precio_acunado(k), ..Default::default() });
+    }
+    if firma.vivienda_rige() {
+        tickers.insert(TICKER_VIVIENDA.into(), TickerView { ticker_id: TICKER_VIVIENDA.into(), base: "VIVIENDA".into(), target: "RAMI".into(), base_price: 0, ..Default::default() });
     }
     let mut orders = Vec::new();
     for ((x, y), p) in st.parcels.iter() {
@@ -1074,13 +1175,42 @@ fn market_view(st: &State, height: u64, firma: &FirmaCtx, network: &str, network
             orders.push(OrderView { ticker_id: id, kind: "asset".into(), x: a.x, y: a.y, asset: hex::encode(aid), sector: a.kind, distrito: ciudad::distrito(a.x, a.y).id, price, owner: hex::encode(a.owner), name: a.meta.clone() });
         }
     }
+    for ((x, y), p) in st.parcels.iter() {
+        for (i, u) in p.units.iter().enumerate() {
+            let Some(price) = u.sale else { continue };
+            // Las viviendas del dueño de una parcela en venta no se compran sueltas.
+            if p.sale.is_some() && u.owner == p.owner {
+                continue;
+            }
+            if let Some(t) = tickers.get_mut(TICKER_VIVIENDA) {
+                t.asks += 1;
+                t.low_ask = Some(t.low_ask.map_or(price, |l| l.min(price)));
+            }
+            orders.push(OrderView {
+                ticker_id: TICKER_VIVIENDA.into(),
+                kind: "unit".into(),
+                x: *x,
+                y: *y,
+                asset: format!("{}", i + 1),
+                sector: p.kind,
+                distrito: ciudad::distrito(*x, *y).id,
+                price,
+                owner: hex::encode(u.owner),
+                name: format!("{} · vivienda {}", p.name, i + 1),
+            });
+        }
+    }
     orders.sort_by(|a, b| a.price.cmp(&b.price).then(a.ticker_id.cmp(&b.ticker_id)));
     let mut trades = Vec::new();
     let mut suma_parcelas: u128 = 0;
     let mut n_parcelas = 0usize;
     let mut ultimo_parcela = None;
     for t in st.trades.iter() {
-        let id = if t.kind == 0 { ticker_parcela(t.distrito) } else { ticker_activo(t.sector) };
+        let id = match t.kind {
+            0 => ticker_parcela(t.distrito),
+            2 => TICKER_VIVIENDA.to_string(),
+            _ => ticker_activo(t.sector),
+        };
         if let Some(tk) = tickers.get_mut(&id) {
             tk.last_price = Some(t.price);
             tk.last_height = Some(t.height);
@@ -1094,7 +1224,12 @@ fn market_view(st: &State, height: u64, firma: &FirmaCtx, network: &str, network
             n_parcelas += 1;
             ultimo_parcela = Some(t.price);
         }
-        trades.push(TradeView { ticker_id: id, height: t.height, kind: if t.kind == 0 { "parcel".into() } else { "asset".into() }, x: t.x, y: t.y, sector: t.sector, distrito: t.distrito, price: t.price });
+        let kind = match t.kind {
+            0 => "parcel",
+            2 => "unit",
+            _ => "asset",
+        };
+        trades.push(TradeView { ticker_id: id, height: t.height, kind: kind.into(), x: t.x, y: t.y, sector: t.sector, distrito: t.distrito, price: t.price });
     }
     let m2 = 650u64 * 650;
     let precios: Vec<u64> = ciudad::distritos().iter().map(|d| d.precio_rami as u64).collect();
@@ -2868,9 +3003,9 @@ impl Node {
         let mut sim = self.tree.head_state().unwrap_or_default();
         let next_height = self.head_height() + 1;
         for t in &self.mempool {
-            let _ = try_apply(&mut sim, t, next_height, firma.dubai);
+            let _ = try_apply(&mut sim, t, next_height, &firma);
         }
-        try_apply(&mut sim, &tx, next_height, firma.dubai).map_err(|e| format!("no aplica: {e}"))?;
+        try_apply(&mut sim, &tx, next_height, &firma).map_err(|e| format!("no aplica: {e}"))?;
         self.mempool.push(tx.clone());
         self.seen_tx.insert(id);
         let _ = self.chain.append_mempool(&tx);
@@ -2974,7 +3109,7 @@ impl Node {
                 let st = self.tree.head_state().unwrap_or_default();
                 let ahora = now_secs();
                 let firma = self.firma_ctx(ahora);
-                let mut v = city_view(&st, self.head_height(), &firma, self.tree.params().dubai_desde, ahora);
+                let mut v = city_view(&st, self.head_height(), &firma, self.tree.params().dubai_desde, self.tree.params().vivienda_desde, ahora);
                 for t in &self.mempool {
                     let id = hex::encode(txid(t));
                     let who = signer_of(t).map(hex::encode).unwrap_or_default();
@@ -2982,6 +3117,7 @@ impl Node {
                         Tx::ClaimParcel { x, y, name, kind, .. } => PendingView {
                             op: "claim".into(), who, x: *x, y: *y,
                             name: String::from_utf8_lossy(name).to_string(), kind: *kind, asset: String::new(), txid: id, price: 0,
+                            ..Default::default()
                         },
                         Tx::MintAsset { x, y, kind, .. } => PendingView { op: "mint".into(), who, x: *x, y: *y, kind: *kind, txid: id, ..Default::default() },
                         Tx::TransferAsset { asset, .. } => PendingView { op: "transfer".into(), who, asset: hex::encode(asset), txid: id, ..Default::default() },
@@ -2993,6 +3129,10 @@ impl Node {
                         Tx::SellParcel { x, y, price, .. } => PendingView { op: "sell_parcel".into(), who, x: *x, y: *y, price: *price, txid: id, ..Default::default() },
                         Tx::BuyParcel { x, y, max_price, .. } => PendingView { op: "buy_parcel".into(), who, x: *x, y: *y, price: *max_price, txid: id, ..Default::default() },
                         Tx::SetProfile { handle, .. } => PendingView { op: "profile".into(), who, name: String::from_utf8_lossy(handle).to_string(), txid: id, ..Default::default() },
+                        Tx::DivideParcel { x, y, unidades, .. } => PendingView { op: "divide".into(), who, x: *x, y: *y, unidades: *unidades, txid: id, ..Default::default() },
+                        Tx::TransferUnit { x, y, n, to, .. } => PendingView { op: "unit_transfer".into(), who, x: *x, y: *y, n: *n, to: hex::encode(to), txid: id, ..Default::default() },
+                        Tx::SellUnit { x, y, n, price, .. } => PendingView { op: "unit_sell".into(), who, x: *x, y: *y, n: *n, price: *price, txid: id, ..Default::default() },
+                        Tx::BuyUnit { x, y, n, max_price, .. } => PendingView { op: "unit_buy".into(), who, x: *x, y: *y, n: *n, price: *max_price, txid: id, ..Default::default() },
                         _ => continue,
                     };
                     v.pending.push(pv);
@@ -3070,7 +3210,7 @@ impl Node {
                 let r = self.tree.tip_state_of(&tip).and_then(|st| {
                     let node = self.tree.get(&tip)?;
                     let firma = self.tree.firma_ctx_sobre(&tip, ahora);
-                    Some(city_view(st, node.block.header.height, &firma, self.tree.params().dubai_desde, ahora))
+                    Some(city_view(st, node.block.header.height, &firma, self.tree.params().dubai_desde, self.tree.params().vivienda_desde, ahora))
                 });
                 let _ = reply.send(r);
             }
@@ -3221,13 +3361,20 @@ impl Node {
                         "quedará fuera al activarse Dubái"
                     };
                     g.motivos.push(format!("anuncia la regla {regla_tx} sin Dubái (binario anterior a v0.9.0): {efecto}"));
-                } else if self.tree.params().dubai_desde.is_some() && regla_tx < REGLA_SOPORTADA {
+                } else if self.tree.params().dubai_desde.is_some() && regla_tx < REGLA_PERFIL {
                     let efecto = if ctx_ahora.dubai {
                         "se queda en su altura en el primer bloque con un perfil de jugador"
                     } else {
                         "desde la activación de Dubái se quedará en el primer bloque con un perfil"
                     };
                     g.motivos.push(format!("anuncia la regla {regla_tx} sin perfiles (binario anterior a v0.10.0): {efecto}"));
+                } else if self.tree.params().vivienda_desde.is_some() && regla_tx < REGLA_SOPORTADA {
+                    let efecto = if ctx_ahora.vivienda_rige() {
+                        "se queda en su altura en el primer bloque con una transacción de vivienda"
+                    } else {
+                        "desde la activación de la escritura de vivienda se quedará en el primer bloque que la use"
+                    };
+                    g.motivos.push(format!("anuncia la regla {regla_tx} sin vivienda (binario anterior a v0.11.0): {efecto}"));
                 }
                 PeerView {
                     addr: dial.clone().unwrap_or_else(|| addr.clone()),
@@ -3291,7 +3438,11 @@ impl Node {
                     dubai_vigente: ctx.dubai,
                     dubai_faltan_segundos: if ctx.dubai { 0 } else { dubai_desde.map(|d| d.saturating_sub(ahora)).unwrap_or(0) },
                     pares_dubai: self.peer_rule.values().filter(|r| **r >= REGLA_DUBAI).count(),
-                    pares_perfil: self.peer_rule.values().filter(|r| **r >= REGLA_SOPORTADA).count(),
+                    pares_perfil: self.peer_rule.values().filter(|r| **r >= REGLA_PERFIL).count(),
+                    vivienda_desde: self.tree.params().vivienda_desde,
+                    vivienda_vigente: ctx.vivienda_rige(),
+                    vivienda_faltan_segundos: if ctx.vivienda_rige() { 0 } else { self.tree.params().vivienda_desde.map(|d| d.saturating_sub(ahora)).unwrap_or(0) },
+                    pares_vivienda: self.peer_rule.values().filter(|r| **r >= REGLA_SOPORTADA).count(),
                 }
             },
             sync: SyncInfo {

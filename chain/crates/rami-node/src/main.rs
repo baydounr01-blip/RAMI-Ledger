@@ -60,11 +60,13 @@ fn params_of(args: &[String]) -> Params {
         Params::testnet()
     } else {
         // En regtest no hay activación salvo que se fuerce (pruebas y la
-        // comprobación de compatibilidad): `--firma-v2-desde <unix-utc>` y
-        // `--dubai-desde <unix-utc>`.
+        // comprobación de compatibilidad): `--firma-v2-desde <unix-utc>`,
+        // `--dubai-desde <unix-utc>` y `--vivienda-desde <unix-utc>` (esta
+        // última solo tiene efecto con Dubái).
         let desde = arg(args, "--firma-v2-desde").and_then(|s| s.parse::<u64>().ok());
         let dubai = arg(args, "--dubai-desde").and_then(|s| s.parse::<u64>().ok());
-        Params::regtest().con_firma_v2_desde(desde).con_dubai_desde(dubai)
+        let vivienda = arg(args, "--vivienda-desde").and_then(|s| s.parse::<u64>().ok());
+        Params::regtest().con_firma_v2_desde(desde).con_dubai_desde(dubai).con_vivienda_desde(vivienda)
     }
 }
 
