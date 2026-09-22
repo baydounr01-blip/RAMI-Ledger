@@ -1968,7 +1968,14 @@
     if(c3d.handle) return Promise.resolve(c3d.handle);
     if(c3d.loading) return c3d.loading;
     txt("cyLoad", t("Cargando Dubái en 3D…"));
-    c3d.loading = loadScript("/vendor/three.min.js").then(function(){ return loadScript("/city3d.js"); }).then(function(){
+    // Módulos del visor (v0.11.0), en orden; uno que no carga no impide el resto.
+    var MODULOS_3D = ["/city/umbral.js", "/city/vida.js", "/city/espejismo.js", "/city/extras.js"];
+    function cargaModulos(){
+      return MODULOS_3D.reduce(function(p, src){
+        return p.then(function(){ return loadScript(src).catch(function(e){ if(window.console) console.error(e); }); });
+      }, Promise.resolve());
+    }
+    c3d.loading = loadScript("/vendor/three.min.js").then(function(){ return loadScript("/city3d.js"); }).then(cargaModulos).then(function(){
       var el = document.getElementById("city3d"); el.style.display = "block";
       var h = window.RamiCity3D.mount(el, {
         heightUrl:"/geo/dubai.hgt.png", metaUrl:"/geo/dubai.json", gridSize:gridN(), anchor:CITY_ANCHOR, t:t, quality:savedQuality(),

@@ -45,6 +45,12 @@ const I18N_JS: &str = include_str!("i18n.js");
 /// binario: el panel no necesita internet para renderizar, ni para las gafas VR).
 const THREE_JS: &[u8] = include_bytes!("vendor/three.min.js");
 const CITY3D_JS: &str = include_str!("city3d.js");
+/// Módulos del cliente 3D (v0.11.0): cada uno se registra con
+/// `RamiCity3D.extend` antes de montar el visor (docs/EXTENSIONES-3D.md).
+const CITY_UMBRAL_JS: &str = include_str!("city/umbral.js");
+const CITY_VIDA_JS: &str = include_str!("city/vida.js");
+const CITY_ESPEJISMO_JS: &str = include_str!("city/espejismo.js");
+const CITY_EXTRAS_JS: &str = include_str!("city/extras.js");
 /// Terreno de Dubái (datos abiertos: Mapzen/AWS Terrain Tiles + islas
 /// artificiales dibujadas a mano; ver tools/geo/README.md). Mapa de alturas
 /// PNG de 16 bits + metadatos (hitos, barrios, carreteras, cuadrícula).
@@ -287,6 +293,11 @@ fn asset_id(b: &Value) -> Result<[u8; 32], String> {
     v.try_into().map_err(|_| "id de activo inválido".to_string())
 }
 
+/// Un módulo JavaScript empotrado en el binario.
+fn js_response(body: &str) -> Response {
+    Response { status: 200, content_type: "application/javascript; charset=utf-8".into(), body: body.as_bytes().to_vec() }
+}
+
 fn str_field<'a>(b: &'a Value, key: &str) -> &'a str {
     b.get(key).and_then(|v| v.as_str()).unwrap_or("").trim()
 }
@@ -334,6 +345,10 @@ fn route(g: &Gui, req: Request) -> Response {
             content_type: "application/javascript; charset=utf-8".into(),
             body: CITY3D_JS.as_bytes().to_vec(),
         },
+        ("GET", "/city/umbral.js") => js_response(CITY_UMBRAL_JS),
+        ("GET", "/city/vida.js") => js_response(CITY_VIDA_JS),
+        ("GET", "/city/espejismo.js") => js_response(CITY_ESPEJISMO_JS),
+        ("GET", "/city/extras.js") => js_response(CITY_EXTRAS_JS),
         ("GET", "/geo/dubai.hgt.png") => Response { status: 200, content_type: "image/png".into(), body: GEO_HGT.to_vec() },
         ("GET", "/tex/asfalto.png") => Response { status: 200, content_type: "image/png".into(), body: TEX_ASFALTO.to_vec() },
         ("GET", "/tex/hormigon.png") => Response { status: 200, content_type: "image/png".into(), body: TEX_HORMIGON.to_vec() },
