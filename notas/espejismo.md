@@ -327,6 +327,13 @@ paralaje, curva de color, resplandor · la ciudad entera 0,4 fps · el centro
 triángulos y llamadas), cero errores de consola, los cinco módulos cargados
 (`umbral`, `vida`, `espejismo`, `extras`, `memoria`) y ningún gancho fallido.
 
+### Tamaño y calidad sobre la marcha (`tamano.mjs`)
+
+Ventana de 1.280 × 800 a 1.000 × 700: lienzo y destino pasan juntos de
+644 × 560 a 364 × 560. Alta → media: 11 → 6 pasadas; → baja: sin destino y 0
+pasadas (se dibuja directo); → ultra: destino otra vez y 11 pasadas. Cero
+errores, ningún gancho fallido.
+
 ## Capturas (en `/tmp/ramiverif/`, miradas una a una)
 
 - `espejismo_v2_comp_dia_calle.png`: a pie en una calle ante una torre, 11 h —
