@@ -984,7 +984,7 @@
       if (E.muebles.length) rehazMuebles(E);
     }
     function cuentaTriangulos(ms) {
-      var n = 0; for (var i = 0; i < ms.length; i++) { var p = ms[i].geometry.attributes.position; n += p ? p.count / 3 : 0; } return n;
+      var n = 0; for (var i = 0; i < ms.length; i++) { var g = ms[i].geometry, p = g.attributes.position; n += g.index ? g.index.count / 3 : (p ? p.count / 3 : 0); } return n;
     }
     function rehazMuebles(E) {
       if (E.mMuebles) { E.grupo.remove(E.mMuebles); E.mMuebles.geometry.dispose(); E.mMuebles = null; }
