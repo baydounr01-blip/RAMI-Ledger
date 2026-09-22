@@ -1,0 +1,200 @@
+{
+ "Salir": {
+  "en": "Exit",
+  "zh": "离开",
+  "ru": "Выйти",
+  "sw": "Toka"
+ },
+ "Torre": {
+  "en": "Tower",
+  "zh": "塔楼",
+  "ru": "Башня",
+  "sw": "Mnara"
+ },
+ "Villa": {
+  "en": "Villa",
+  "zh": "别墅",
+  "ru": "Вилла",
+  "sw": "Jumba"
+ },
+ "Nave": {
+  "en": "Warehouse",
+  "zh": "仓库",
+  "ru": "Склад",
+  "sw": "Ghala"
+ },
+ "Edificio": {
+  "en": "Building",
+  "zh": "建筑",
+  "ru": "Здание",
+  "sw": "Jengo"
+ },
+ "Zaguán": {
+  "en": "Lobby",
+  "zh": "门厅",
+  "ru": "Вестибюль",
+  "sw": "Ukumbi"
+ },
+ "Ascensor": {
+  "en": "Lift",
+  "zh": "电梯",
+  "ru": "Лифт",
+  "sw": "Lifti"
+ },
+ "Recepción": {
+  "en": "Reception",
+  "zh": "前台",
+  "ru": "Стойка регистрации",
+  "sw": "Mapokezi"
+ },
+ "Sala de exposición": {
+  "en": "Showroom",
+  "zh": "展厅",
+  "ru": "Выставочный зал",
+  "sw": "Chumba cha maonyesho"
+ },
+ "coche": {
+  "en": "car",
+  "zh": "辆车",
+  "ru": "автомобиль",
+  "sw": "gari"
+ },
+ "coches": {
+  "en": "cars",
+  "zh": "辆车",
+  "ru": "автомобилей",
+  "sw": "magari"
+ },
+ "planta": {
+  "en": "floor",
+  "zh": "楼层",
+  "ru": "этаж",
+  "sw": "ghorofa"
+ },
+ "unidad": {
+  "en": "unit",
+  "zh": "单元",
+  "ru": "квартира",
+  "sw": "kitengo"
+ },
+ "Unidad": {
+  "en": "Unit",
+  "zh": "单元",
+  "ru": "Квартира",
+  "sw": "Kitengo"
+ },
+ "Tu ático": {
+  "en": "Your penthouse",
+  "zh": "你的顶层公寓",
+  "ru": "Ваш пентхаус",
+  "sw": "Nyumba yako ya juu"
+ },
+ "Tu piso": {
+  "en": "Your flat",
+  "zh": "你的公寓",
+  "ru": "Ваша квартира",
+  "sw": "Nyumba yako"
+ },
+ "Tu casa": {
+  "en": "Your house",
+  "zh": "你的房子",
+  "ru": "Ваш дом",
+  "sw": "Nyumba yako"
+ },
+ "Piso de muestra": {
+  "en": "Show flat",
+  "zh": "样板间",
+  "ru": "Демонстрационная квартира",
+  "sw": "Nyumba ya mfano"
+ },
+ "Casa de muestra": {
+  "en": "Show house",
+  "zh": "样板房",
+  "ru": "Демонстрационный дом",
+  "sw": "Nyumba ya mfano"
+ },
+ "Edificio de": {
+  "en": "Building of",
+  "zh": "建筑所有者",
+  "ru": "Здание владельца",
+  "sw": "Jengo la"
+ },
+ "Barrio": {
+  "en": "District",
+  "zh": "街区",
+  "ru": "Район",
+  "sw": "Mtaa"
+ },
+ "Parcela en venta": {
+  "en": "Plot for sale",
+  "zh": "地块出售",
+  "ru": "Участок продаётся",
+  "sw": "Kiwanja kinauzwa"
+ },
+ "Unidad en venta": {
+  "en": "Unit for sale",
+  "zh": "单元出售",
+  "ru": "Квартира продаётся",
+  "sw": "Kitengo kinauzwa"
+ },
+ "Flechas: mover": {
+  "en": "Arrows: move",
+  "zh": "方向键：移动",
+  "ru": "Стрелки: переместить",
+  "sw": "Mishale: sogeza"
+ },
+ "R: girar": {
+  "en": "R: rotate",
+  "zh": "R：旋转",
+  "ru": "R: повернуть",
+  "sw": "R: zungusha"
+ },
+ "Escape: soltar": {
+  "en": "Escape: release",
+  "zh": "Esc：放下",
+  "ru": "Escape: отпустить",
+  "sw": "Escape: achilia"
+ },
+ "Escape: salir": {
+  "en": "Escape: leave",
+  "zh": "Esc：离开",
+  "ru": "Escape: выйти",
+  "sw": "Escape: toka"
+ },
+ "Clic en un mueble para moverlo": {
+  "en": "Click a piece of furniture to move it",
+  "zh": "点击家具即可移动",
+  "ru": "Щёлкните по мебели, чтобы переставить её",
+  "sw": "Bofya fanicha ili kuisogeza"
+ },
+ "Encender": {
+  "en": "Switch on",
+  "zh": "开灯",
+  "ru": "Включить",
+  "sw": "Washa"
+ },
+ "Apagar": {
+  "en": "Switch off",
+  "zh": "关灯",
+  "ru": "Выключить",
+  "sw": "Zima"
+ },
+ "Subir al piso": {
+  "en": "Go up to the flat",
+  "zh": "上楼到公寓",
+  "ru": "Подняться в квартиру",
+  "sw": "Panda hadi nyumbani"
+ },
+ "Bajar al zaguán": {
+  "en": "Go down to the lobby",
+  "zh": "下楼到门厅",
+  "ru": "Спуститься в вестибюль",
+  "sw": "Shuka hadi ukumbini"
+ },
+ "Restaurar muebles": {
+  "en": "Restore furniture",
+  "zh": "恢复家具布置",
+  "ru": "Вернуть мебель на место",
+  "sw": "Rejesha fanicha"
+ }
+}
