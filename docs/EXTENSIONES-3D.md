@@ -106,6 +106,11 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
 - **Entre módulos**: `servicios` (un objeto compartido: p. ej. `extras` pone
   `servicios.sonido` y `umbral` lo usa si está). `handle` (la API pública,
   disponible tras el montaje).
+- **`servicios.sonido`** (lo pone `extras`): `play(nombre)` con `'timbre'`
+  (ascensor), `'puerta'` (corredera), `'clic'` y `'paso'`; devuelve `false` sin
+  lanzar si el sonido está apagado o el nombre no existe. `activo()` dice si
+  suena. Todo sintetizado; el AudioContext solo existe tras un gesto del
+  usuario, así que un módulo no puede encenderlo por su cuenta.
 
 ## Reglas de la casa
 

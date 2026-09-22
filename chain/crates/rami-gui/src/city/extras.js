@@ -520,7 +520,7 @@
       'void main(){',
       '  #include <logdepthbuf_fragment>',
       '  vec2 c = gl_PointCoord - 0.5; float r = dot(c, c) * 4.0; if (r > 1.0) discard;',
-      '  gl_FragColor = vec4(uColor, (1.0 - r) * vA * uK * 0.55);',
+      '  gl_FragColor = vec4(uColor, (1.0 - r) * vA * uK * 0.8);',
       '}'].join('\n');
     function creaArena(n) {
       if (tormenta.arena) { scene.remove(tormenta.arena); tormenta.arena.geometry.dispose(); }
@@ -580,6 +580,7 @@
       if (!S.xr) {
         var far = Math.max(fog.far * 1.03, camera.near * 10);
         if (far < camera.far) { camera.far = far; camera.updateProjectionMatrix(); }
+        recorteTerreno(camera.far);
       }
       tormenta.far = camera.far;
       // Granos de arena alrededor de la cámara.
@@ -590,12 +591,29 @@
         camera.getWorldPosition(u.uCam.value);
         u.uTime.value = (now / 1000) % 1000;
         var vv = 7 + 5 * k; u.uWind.value.set(Math.sin(rumbo) * vv, 0.4, -Math.cos(rumbo) * vv);
-        u.uK.value = k; u.uColor.value.setRGB(ARENA_SRGB[0] * luz, ARENA_SRGB[1] * luz, ARENA_SRGB[2] * luz);
-        u.uSize.value = 0.09 * (renderer().domElement.height || 600) / Math.tan(camera.fov * Math.PI / 360) * 0.5;
+        u.uK.value = k; u.uColor.value.setRGB(0.62 * luz, 0.46 * luz, 0.29 * luz);
+        u.uSize.value = 0.16 * (renderer().domElement.height || 600) / Math.tan(camera.fov * Math.PI / 360) * 0.5;
       }
     }
     var _col = new THREE.Color();
     function renderer() { return ctx.renderer; }
+    // El terreno es UNA malla de toda la ciudad (la fina: 512 × 501 casillas,
+    // 513.024 triángulos) sin descarte posible, y es la mitad de lo que se envía
+    // en cualquier encuadre. Su índice va por filas de norte a sur, así que en la
+    // tormenta basta un drawRange con las filas que caen dentro de camera.far:
+    // una franja de lado a lado del mapa y 2·far de alto. Se deshace al acabar.
+    function recorteTerreno(far) {
+      var lista = [S.fine, S.coarse], i;
+      camera.getWorldPosition(_v2);
+      for (i = 0; i < lista.length; i++) {
+        var T = lista[i]; if (!T || !T.mesh) continue;
+        var g = T.mesh.geometry;
+        if (far === null) { g.setDrawRange(0, Infinity); continue; }
+        var j0 = clamp(Math.floor((_v2.z - far) / T.dz), 0, T.sz), j1 = clamp(Math.ceil((_v2.z + far) / T.dz), 0, T.sz);
+        g.setDrawRange(j0 * T.sx * 6, Math.max(0, j1 - j0) * T.sx * 6);
+      }
+      tormenta.filasTerreno = far === null ? 0 : Math.ceil(2 * far / (S.fine ? S.fine.dz : 1));
+    }
     function restauraTormenta() {
       tormenta.aplicada = false; tormenta.visibilidad = 0; tormenta.far = 0;
       var b = tormenta.base;
@@ -607,6 +625,7 @@
       if (S.sky) S.sky.visible = true;
       if (S.stars) S.stars.visible = true;
       if (tormenta.arena) tormenta.arena.visible = false;
+      recorteTerreno(null);
     }
 
     // =========================================================================
@@ -1086,7 +1105,7 @@
         o.extras = {
           metro: metro.info ? copia(metro.info, { cochesDibujados: metro.dibujados }) : null,
           barcos: barcos.info ? copia(barcos.info, { dibujados: barcos.dibujados }) : null,
-          tormenta: { intensidad: Math.round(tormenta.k * 100) / 100, forzada: tormenta.forzada, visibilidad: Math.round(tormenta.visibilidad), far: Math.round(tormenta.far), proxima: p ? fechaDubai(p.ini) + '–' + horaDubai(p.fin) : null },
+          tormenta: { intensidad: Math.round(tormenta.k * 100) / 100, forzada: tormenta.forzada, visibilidad: Math.round(tormenta.visibilidad), far: Math.round(tormenta.far), filasTerreno: tormenta.filasTerreno || 0, proxima: p ? fechaDubai(p.ini) + '–' + horaDubai(p.fin) : null },
           foto: { activo: foto.activo, focal: Math.round(foto.focal), fov: Math.round(camera.fov * 10) / 10, nivel: foto.nivel, travelling: foto.travelling, capturas: foto.capturas },
           sonido: { activo: !!snd.activo, estado: snd.ac ? snd.ac.state : 'sin crear', nodos: snd.nodos },
           triangulos: gasto.triangulos, llamadas: gasto.llamadas
@@ -1125,7 +1144,7 @@
         },
         rutas: function () { return barcos.info; },
         foto: { entra: function () { entraFoto(); return foto.activo; }, sale: function () { saleFoto(); return !foto.activo; }, focal: function (mm) { if (mm) foto.focal = clamp(mm, 14, 200); return foto.focal; }, nivel: function (v) { foto.nivel = !!v; if (!v) camera.clearViewOffset(); return foto.nivel; }, travelling: function (v) { foto.travelling = !!v; return v; }, guardar: function () { foto.pendiente = true; return true; }, estado: function () { return { activo: foto.activo, capturas: foto.capturas, ultima: foto.ultima }; } },
-        sonido: function () { return { activo: !!snd.activo, estado: snd.ac ? snd.ac.state : null, nodos: snd.nodos, volumen: snd.volumen }; },
+        sonido: function () { return { activo: !!snd.activo, estado: snd.ac ? snd.ac.state : null, nodos: snd.nodos, volumen: snd.volumen, pasos: snd.pasoN }; },
         gasto: function () { return { triangulos: gasto.triangulos, llamadas: gasto.llamadas }; }
       }
     };
