@@ -108,14 +108,21 @@
       'vec3 posVista(vec2 uv, float z){ vec2 ndc = uv * 2.0 - 1.0; return vec3((ndc.x + uProy.z) * z / uProy.x, (ndc.y + uProy.w) * z / uProy.y, -z); }',
       'vec3 posEn(vec2 uv){ return posVista(uv, distVista(texture2D(tProf, uv).r)); }',
       'void main(){',
-      '  float d = texture2D(tProf, vUv).r;',
+      // El centro de un píxel de media resolución cae justo en la arista entre dos
+      // texels de la profundidad entera, y la lectura sin filtro redondea a uno u
+      // otro según la fila: en las filas donde el píxel y su vecino caían en el
+      // mismo texel, la normal salía nula y el suelo liso se ocluía en una raya de
+      // lado a lado (medido: 25 % más oscura, siempre en las mismas filas de
+      // pantalla). Se lee siempre en el centro de un texel de la profundidad.
+      '  vec2 uv0 = (floor(vUv / uTexel) + 0.5) * uTexel;',
+      '  float d = texture2D(tProf, uv0).r;',
       '  if (d >= 0.99999) { gl_FragColor = vec4(1.0); return; }',
       '  float z = distVista(d);',
-      '  vec3 p = posVista(vUv, z);',
+      '  vec3 p = posVista(uv0, z);',
       // La normal, de la profundidad: en cada eje, el vecino más parecido en z,
       // para que el borde de una torre contra el cielo no la tuerza.
       '  vec2 dx = vec2(uTexel.x, 0.0), dy = vec2(0.0, uTexel.y);',
-      '  vec3 pr = posEn(vUv + dx), pl = posEn(vUv - dx), pu = posEn(vUv + dy), pd = posEn(vUv - dy);',
+      '  vec3 pr = posEn(uv0 + dx), pl = posEn(uv0 - dx), pu = posEn(uv0 + dy), pd = posEn(uv0 - dy);',
       '  vec3 ex = abs(pr.z - p.z) < abs(p.z - pl.z) ? pr - p : p - pl;',
       '  vec3 ey = abs(pu.z - p.z) < abs(p.z - pd.z) ? pu - p : p - pd;',
       '  vec3 n = normalize(cross(ex, ey));',
@@ -272,13 +279,17 @@
     function destino(w, h) {
       return new THREE.WebGLRenderTarget(w, h, { depthBuffer: false, stencilBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
     }
-    /** Los destinos del tamaño del lienzo y de la calidad; se rehacen solo si algo cambió. */
+    /**
+     * Los destinos del tamaño del lienzo y de la calidad. Los ganchos `tamano` y
+     * `calidad` los sueltan y aquí se rehacen en el primer cuadro que los pide; la
+     * comparación con el búfer de dibujo cubre además lo que cambia el tamaño sin
+     * pasar por resize (la salida de las gafas devuelve el lienzo a su tamaño).
+     */
     function asegura() {
       renderer.getDrawingBufferSize(_tam);
       var w = Math.max(1, _tam.x | 0), h = Math.max(1, _tam.y | 0);
+      if (T && T.w === w && T.h === h) return;
       var nAO = P.ssao | 0, eAO = P.escalaAO || 0.5, nB = P.resplandor | 0, ms = gl2 ? (P.msaa | 0) : 0;
-      var clave = [w, h, nAO, eAO, nB, ms].join(':');
-      if (T && T.clave === clave) return;
       suelta();
       var prof = new THREE.DepthTexture(w, h, THREE.UnsignedIntType);
       var esc = new THREE.WebGLRenderTarget(w, h, { samples: ms, depthTexture: prof, depthBuffer: true, stencilBuffer: false,
@@ -286,7 +297,7 @@
       // Ver la cabecera: con esto los materiales compilan como para el lienzo
       // (tono, sRGB y niebla en ese orden) y el destino guarda los mismos bytes.
       esc.isXRRenderTarget = true;
-      T = { clave: clave, w: w, h: h, escena: esc, ao1: null, ao2: null, niveles: [] };
+      T = { w: w, h: h, escena: esc, ao1: null, ao2: null, niveles: [] };
       if (nAO > 0) {
         var wa = Math.max(1, Math.round(w * eAO)), ha = Math.max(1, Math.round(h * eAO));
         T.ao1 = destino(wa, ha); T.ao2 = destino(wa, ha); T.wa = wa; T.ha = ha;
@@ -385,7 +396,9 @@
 
     return {
       pintar: pintar,
-      calidad: function (nombre, Q) { P = Q.post || null; if (!P) suelta(); },
+      calidad: function (nombre, Q) { P = Q.post || null; suelta(); },
+      // El lienzo cambió de tamaño: los destinos se rehacen en el próximo cuadro.
+      tamano: function () { suelta(); },
       estadisticas: function (o) {
         o.espejismo = { activo: activo(), efectos: efectos(), llamadas: activo() ? cuenta.llamadas : 0, triangulos: activo() ? cuenta.triangulos : 0,
           ancho: T ? T.w : 0, alto: T ? T.h : 0, muestrasAO: P ? (P.ssao | 0) : 0, niveles: P ? (P.resplandor | 0) : 0, msaa: gl2 && P ? (P.msaa | 0) : 0 };

@@ -11,7 +11,7 @@ el montaje del visor:
 |---|---|
 | `umbral.js` | Entrega 5: el portal, el zaguán, el ascensor y el apartamento |
 | `vida.js` | Entrega 6: peatones con destino económico (los carriles y la cesión de paso de los coches van en el núcleo) |
-| `espejismo.js` | Entrega 7: oclusión ambiental, resplandor, curva de color y cascadas de sombra (los interiores por paralaje van en el sombreador de edificios del núcleo) |
+| `espejismo.js` | Entrega 7: oclusión ambiental, resplandor y curva de color con el gancho `pintar` (los interiores por paralaje van en el sombreador de edificios del núcleo, y las cascadas de sombra en `updateShadowFrame`) |
 | `extras.js` | Secciones 6–7 del plan: sonido sintetizado, modo foto, tormenta de arena, metro elevado y barcos |
 | `memoria.js` | Secciones 6–8 del plan: la ciudad que recuerda (placa y pátina), los encargos de la economía, el día uno y el aviso siempre a la vista |
 
@@ -87,23 +87,6 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
   cuadro. `cascadas()` son las luces de sombra que hay además del sol (dos en
   alta y ultra, ninguna en baja y media); tienen intensidad cero y no hay que
   moverlas: `updateShadowFrame` las coloca.
-
-### Dibujar a un destino intermedio (el gancho `pintar`)
-
-Quien dibuja la escena en un `WebGLRenderTarget` en vez de en el lienzo tiene
-que saber dos cosas de three r150 y de los materiales del visor:
-
-1. Fuera del lienzo three compila los materiales con salida lineal, y los del
-   visor mezclan la niebla **después** del tono y de la codificación sRGB, con
-   un color de niebla ya pasado por esa curva (`updateSun`). Un destino normal
-   da una escena oscura y una niebla desplazada. `espejismo.js` marca su destino
-   con `isXRRenderTarget = true`, textura en `sRGBEncoding` y
-   `internalFormat: 'RGBA8'`: los materiales compilan el mismo programa que para
-   el lienzo y el destino guarda los mismos bytes (comprobado píxel a píxel).
-2. `renderer.info` se reinicia en cada `render()`. Para que `stats()` y
-   `bench()` cuenten la escena y además las pasadas propias, se dibuja la escena
-   con `autoReset` como esté y las pasadas con `autoReset = false`, y se deja
-   como estaba.
 - **Genotipo** (`ctx.util`): `semillaMorfologia(x, y, canal)`,
   `semillaRopaje(x, y, dueno, desde)`, `real01`, `lcg`, `hash2`, `fnv1a`,
   `strSeed`, `clamp`, `lerp`, `smoothstep`, `lin1`, `lin3`. **Solo enteros para
@@ -131,6 +114,29 @@ que saber dos cosas de three r150 y de los materiales del visor:
 - **Entre módulos**: `servicios` (un objeto compartido: p. ej. `extras` pone
   `servicios.sonido` y `umbral` lo usa si está). `handle` (la API pública,
   disponible tras el montaje).
+
+### Dibujar a un destino intermedio (el gancho `pintar`)
+
+Quien dibuja la escena en un `WebGLRenderTarget` en vez de en el lienzo tiene
+que saber dos cosas de three r150 y de los materiales del visor:
+
+1. Fuera del lienzo three compila los materiales con salida lineal, y los del
+   visor mezclan la niebla **después** del tono y de la codificación sRGB, con
+   un color de niebla ya pasado por esa curva (`updateSun`). Un destino normal
+   da una escena oscura y una niebla desplazada. `espejismo.js` marca su destino
+   con `isXRRenderTarget = true`, textura en `sRGBEncoding` y
+   `internalFormat: 'RGBA8'`: los materiales compilan el mismo programa que para
+   el lienzo y el destino guarda los mismos bytes (comprobado píxel a píxel).
+2. `renderer.info` se reinicia en cada `render()`. Para que `stats()` y
+   `bench()` cuenten la escena y además las pasadas propias, se dibuja la escena
+   con `autoReset` como esté y las pasadas con `autoReset = false`, y se deja
+   como estaba.
+3. La profundidad se lee con `DepthTexture` (sin filtro). Un pase a media
+   resolución que la lea en el centro de SUS píxeles cae en la arista entre dos
+   texels, y el redondeo cambia de fila en fila: hay que llevar la coordenada al
+   centro de un texel de la profundidad antes de leer (`espejismo.js`, `AO_FS`).
+   Los destinos se sueltan en `tamano` y en `calidad` y se rehacen en el
+   siguiente `pintar`.
 
 ## Reglas de la casa
 
