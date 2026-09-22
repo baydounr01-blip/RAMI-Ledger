@@ -59,7 +59,7 @@ algo verdadero; el orden es el de carga.
 | `sol(info)` | Tras recalcular el sol (cada ~2 s): `{ dir, luz, noche, ocaso, hora, colorSol, cielo, niebla }` | — |
 | `tamano(w, h)` | Tras redimensionar el lienzo | — |
 | `empujar(pos, r)` | En la colisión con lo que se mueve: sacar el círculo `(pos, r)` de lo del módulo | una etiqueta (`'peaton'`) si lo empujó |
-| `estadisticas(o)` | En `handle.stats()`: añadir campos a `o` (acaba en `stats().ext`) | — |
+| `estadisticas(o)` | En `handle.stats()` y al terminar `bench()`: añadir campos a `o` (acaba en `stats().ext`). Si el módulo pone `o.<nombre>.efectos` (una lista de textos en español), el núcleo los añade a `stats().efectos` y a `bench().efectos` | — |
 | `vr(activo)` | Al entrar y salir de las gafas | — |
 | `soltar()` | Al desmontar el visor | — |
 
@@ -75,10 +75,35 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
   (`pos`, `yaw`, `pitch`, `fly`, `speed`), `EYE` (1,7 m), `keys()`,
   `puntero()`, `Q()`, `calidad()`, `N()`, `CELL()`, `LIFT()`, `rotR()`.
 - **Materiales y luz**: `shared` (uniformes compartidos: `uSun`, `uSunColor`,
-  `uSkyColor`, `uGroundColor`, `uNight`, `uDusk`, `uEnv`), `buildMat`,
+  `uSkyColor`, `uGroundColor`, `uNight`, `uDusk`, `uEnv`, `uInterior`), `buildMat`,
   `plainMat`, `terrainMat`, `makeBuildingMaterial(shared, ventanas)`, `mats`
   (las cuatro texturas), `noiseTex`, `envRT`, `sun`, `hemi`, `sunDir`,
   `lightDir`, `uniformes` (`viewport`, `lod`, `drop`, `noche`, `fantasma`).
+- **Profundidad y sombras** (v0.11.0): `profundidad()` devuelve `'log'` (el
+  búfer logarítmico, por defecto) o `'lineal'` (el experimento: se pide con
+  `localStorage['rami.profundidad'] = 'lineal'` antes de montar). Con `'lineal'`
+  el núcleo ajusta `camera.near` y `camera.far` cada cuadro
+  (`planosProfundidad`); quien lea la profundidad los toma de la cámara en ese
+  cuadro. `cascadas()` son las luces de sombra que hay además del sol (dos en
+  alta y ultra, ninguna en baja y media); tienen intensidad cero y no hay que
+  moverlas: `updateShadowFrame` las coloca.
+
+### Dibujar a un destino intermedio (el gancho `pintar`)
+
+Quien dibuja la escena en un `WebGLRenderTarget` en vez de en el lienzo tiene
+que saber dos cosas de three r150 y de los materiales del visor:
+
+1. Fuera del lienzo three compila los materiales con salida lineal, y los del
+   visor mezclan la niebla **después** del tono y de la codificación sRGB, con
+   un color de niebla ya pasado por esa curva (`updateSun`). Un destino normal
+   da una escena oscura y una niebla desplazada. `espejismo.js` marca su destino
+   con `isXRRenderTarget = true`, textura en `sRGBEncoding` y
+   `internalFormat: 'RGBA8'`: los materiales compilan el mismo programa que para
+   el lienzo y el destino guarda los mismos bytes (comprobado píxel a píxel).
+2. `renderer.info` se reinicia en cada `render()`. Para que `stats()` y
+   `bench()` cuenten la escena y además las pasadas propias, se dibuja la escena
+   con `autoReset` como esté y las pasadas con `autoReset = false`, y se deja
+   como estaba.
 - **Genotipo** (`ctx.util`): `semillaMorfologia(x, y, canal)`,
   `semillaRopaje(x, y, dueno, desde)`, `real01`, `lcg`, `hash2`, `fnv1a`,
   `strSeed`, `clamp`, `lerp`, `smoothstep`, `lin1`, `lin3`. **Solo enteros para

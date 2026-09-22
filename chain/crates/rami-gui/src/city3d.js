@@ -1030,16 +1030,16 @@
     // 3 = ventana corrida (una cinta de fachada a fachada por planta). Las mallas
     // sin el atributo leen 0.
     'attribute float aflags;',
-    'varying vec3 vNormalW; varying vec3 vWorld; varying float vLocalY; varying float vFlags;',
+    'varying vec3 vNormalW; varying vec3 vWorld; varying float vLocalY; varying float vFlags; varying float vBase;',
     'void main(){',
-    '  vFlags = aflags;',
+    '  vFlags = aflags; vBase = abase;',
     '  #include <color_vertex>',
     '  vec3 on = normal;',
     '  #ifdef USE_INSTANCING', '  on = mat3(instanceMatrix) * on;', '  #endif',
     '  vec3 transformedNormal = normalMatrix * on;',
     '  vNormalW = normalize(mat3(modelMatrix) * on);',
     '  vec4 wp = vec4(position, 1.0); float lh = position.y - abase;',
-    '  #ifdef USE_INSTANCING', '  wp = instanceMatrix * wp; lh = wp.y - instanceMatrix[3].y;', '  #endif',
+    '  #ifdef USE_INSTANCING', '  wp = instanceMatrix * wp; lh = wp.y - instanceMatrix[3].y; vBase = instanceMatrix[3].y;', '  #endif',
     '  vec4 worldPosition = modelMatrix * wp; vWorld = worldPosition.xyz; vLocalY = lh;',
     '  vec4 mvPosition = viewMatrix * worldPosition;',
     '  gl_Position = projectionMatrix * mvPosition;',
@@ -1056,9 +1056,48 @@
     '#include <lights_pars_begin>',
     '#include <shadowmap_pars_fragment>',
     '#include <shadowmask_pars_fragment>',
-    'uniform vec3 uSun, uSunColor, uSkyColor, uGroundColor; uniform float uNight, uDusk, uWindows; uniform samplerCube uEnv;',
-    'varying vec3 vNormalW; varying vec3 vWorld; varying float vLocalY; varying float vFlags;',
+    'uniform vec3 uSun, uSunColor, uSkyColor, uGroundColor; uniform float uNight, uDusk, uWindows, uInterior; uniform samplerCube uEnv;',
+    'varying vec3 vNormalW; varying vec3 vWorld; varying float vLocalY; varying float vFlags; varying float vBase;',
     'float hash21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }',
+    // Interiores por paralaje (v0.11.0, entrega 7). Detrás de cada hueco de
+    // vidrio hay una habitación que no existe como geometría: el rayo de la
+    // cámara se lleva al marco de la sala —4,5 m a lo largo de la fachada (la
+    // celda del sorteo de luces, así que la sala encendida es la que se ve
+    // encendida), 3,6 m de planta a planta y 5,6 m de fondo— y se corta con su
+    // caja: fondo, paredes, suelo o techo, lo primero que toque. Encima, un
+    // mueble (un plano a media profundidad, de pie en el suelo) y, en una de
+    // cada tres salas, una persiana bajada. Todo sale de dos sorteos: `hb`, el
+    // del edificio (oficina fría o vivienda cálida), y `hs`, el de la sala.
+    // Devuelve el albedo de lo que se ve en .rgb, en .a cuánta luz de día le
+    // llega (cae con el fondo), y en `lamp` cuánto la ilumina la lámpara de noche.
+    'vec4 interiorSala(vec2 q, vec3 v, vec3 nh, float hb, float hs, out float lamp){',
+    '  vec3 T = vec3(nh.z, 0.0, -nh.x);',
+    '  vec3 rd = vec3(dot(-v, T), -v.y, max(dot(v, nh), 0.05)) / vec3(4.5, 3.6, 5.6);',
+    '  vec3 ro = vec3(fract(q), 0.0);',
+    '  vec3 rs = step(0.0, rd);',
+    '  vec3 tb = (rs - ro) / (rd + (rs * 2.0 - 1.0) * 1e-5);',
+    '  float t = min(min(tb.x, tb.y), tb.z);',
+    '  vec3 hp = ro + rd * t;',
+    '  float fz = step(tb.z, min(tb.x, tb.y));',
+    '  float fy = (1.0 - fz) * step(tb.y, tb.x);',
+    '  float techo = fy * rs.y, suelo = fy * (1.0 - rs.y), lado = (1.0 - fz) * (1.0 - fy);',
+    '  float h2 = fract(hs * 7.31), h3 = fract(hs * 13.7), h4 = fract(hs * 29.3);',
+    '  vec3 pared = mix(vec3(0.66, 0.60, 0.52), vec3(0.54, 0.59, 0.62), hb) * mix(0.75, 1.1, hs);',
+    '  vec3 fondo = mix(pared, mix(vec3(0.55, 0.30, 0.22), vec3(0.26, 0.40, 0.46), h3), step(0.7, h2));',
+    '  vec3 piso = mix(vec3(0.34, 0.24, 0.16), vec3(0.36, 0.36, 0.35), step(0.5, h4));',
+    '  vec3 alb = pared * lado * 0.85 + fondo * fz + piso * suelo + vec3(0.82) * techo;',
+    '  float dia = mix(1.0, 0.35, hp.z) * mix(1.0, 0.75, techo);',
+    '  lamp = (fz + 0.8 * lado + 0.75 * suelo + 1.25 * techo) * (0.8 + 0.35 * hp.y) * mix(1.05, 0.85, hp.z);',
+    '  float zf = 0.35 + 0.35 * h2, x0 = 0.1 + 0.5 * h3, an = 0.25 + 0.3 * h4, alto = 0.22 + 0.2 * fract(hs * 5.7);',
+    '  float tf = zf / rd.z; vec3 pf = ro + rd * tf;',
+    '  float mueble = step(tf, t) * step(x0, pf.x) * step(pf.x, x0 + an) * step(pf.y, alto) * step(0.0, pf.y);',
+    '  alb = mix(alb, mix(vec3(0.10, 0.09, 0.08), vec3(0.30, 0.22, 0.15), h3), mueble);',
+    '  dia = mix(dia, 0.5 * mix(1.0, 0.35, zf), mueble); lamp = mix(lamp, 0.3, mueble);',
+    '  float persiana = step(0.66, fract(hs * 3.77)) * step(0.8 - 0.5 * h4, ro.y);',
+    '  alb = mix(alb, vec3(0.78, 0.74, 0.66), persiana);',
+    '  dia = mix(dia, 0.9, persiana); lamp = mix(lamp, 0.9, persiana);',
+    '  return vec4(alb, dia);',
+    '}',
     'void main(){',
     '  #include <logdepthbuf_fragment>',
     '  float tipo = floor(vFlags + 0.5);',
@@ -1090,6 +1129,20 @@
     '  albedo *= 1.0 - slab * 0.4;',
     '  albedo *= mix(1.0, 0.82, step(0.9, n.y) * uWin);',
     '  vec3 col = albedo * (amb * 0.85 + uSunColor * ndl * 1.15);',
+    // La sala (desde la calidad media) sustituye al vidrio oscuro: de día la
+    // alumbra la luz de cielo que entra por la ventana, teñida por el vidrio, y
+    // encima va el reflejo con su Fresnel de siempre, que es lo que manda; de
+    // noche la enciende su lámpara (abajo). Solo en fragmentos de vidrio.
+    '  float hayS = 0.0, lampS = 1.0; vec3 salaAlb = vec3(0.0);',
+    '  if (uInterior > 0.5 && glass > 0.01) {',
+    '    vec3 nh = normalize(vec3(n.x, 0.0, n.z) + vec3(1e-5, 0.0, 0.0));',
+    '    float hb = hash21(floor(vWorld.xz * 0.002) + vBase * 0.731);',
+    '    float hs = hash21(cell * vec2(0.93, 1.07) + floor(vWorld.xz * 0.002) + 17.0);',
+    '    vec4 si = interiorSala(uvw / vec2(4.5, 3.6), v, nh, hb, hs, lampS);',
+    '    salaAlb = si.rgb; hayS = 1.0;',
+    '    vec3 dentro = salaAlb * (amb * 0.30 + uSunColor * 0.04 * max(uSun.y, 0.0)) * si.a;',
+    '    col = mix(col, dentro * vec3(0.80, 0.88, 0.92), glass);',
+    '  }',
     '  vec3 r = reflect(-v, n);',
     '  float mirror = max(glass, glassy * 0.6);',
     '  vec3 env = textureCube(uEnv, r, mix(3.5, 0.0, mirror)).rgb;',
@@ -1101,7 +1154,9 @@
     '  col += uSunColor * spec * mix(0.06, 0.55, mirror) * (1.0 - uNight) * max(uSun.y, 0.0);',
     '  float on = lit * max(uNight, uDusk * 0.45);',
     '  col = mix(col, col * 0.28 + vec3(0.008, 0.010, 0.018), uNight);',
-    '  col += vec3(1.0, 0.63, 0.32) * glass * on * (0.20 + 0.95 * rnd * rnd);',
+    '  vec3 calida = vec3(1.0, 0.63, 0.32) * (0.20 + 0.95 * rnd * rnd);',
+    '  calida = mix(calida, calida * salaAlb * 1.6 * lampS, hayS);',
+    '  col += calida * glass * on;',
     '  gl_FragColor = vec4(col, 1.0);',
     '  #include <tonemapping_fragment>',
     '  #include <encodings_fragment>',
@@ -1111,6 +1166,7 @@
     var u = THREE.UniformsUtils.merge([THREE.UniformsLib.lights, THREE.UniformsLib.fog]);
     u.uSun = shared.uSun; u.uSunColor = shared.uSunColor; u.uSkyColor = shared.uSkyColor; u.uGroundColor = shared.uGroundColor; u.uNight = shared.uNight; u.uDusk = shared.uDusk; u.uEnv = shared.uEnv;
     u.uWindows = { value: windows ? 1 : 0 };
+    u.uInterior = shared.uInterior || { value: 0 };
     return new THREE.ShaderMaterial({ uniforms: u, vertexShader: BUILD_VS, fragmentShader: BUILD_FS, vertexColors: true, fog: true, lights: true });
   }
 
@@ -1881,11 +1937,24 @@
     sky: '#cfe3f3', fog: '#e2d9c8', plant: '#3fa34d', crate: '#a8783f', road: '#4a4440',
     labelCity: '#ffffff', labelTown: '#ffe9b0', labelLandmark: '#ffd166', labelAirport: '#bfe6ff', labelBeach: '#ffd9a8', labelPort: '#c9f0ff', labelIsland: '#bfeaff', cityLabel: '#7ef0c0'
   };
+  // El acabado de imagen (v0.11.0, entrega 7) por nivel:
+  //   interiores — la habitación dentro de cada hueco de vidrio (BUILD_FS);
+  //   post       — lo que dibuja el módulo «espejismo» con su gancho `pintar`:
+  //                curva de color, niveles de resplandor, muestras de oclusión
+  //                ambiental (0 = sin ella) y su escala respecto al lienzo, y el
+  //                multimuestreo del destino intermedio; null = se dibuja directo;
+  //   cascadas   — lado del mapa de sombra de cada cascada (cercana, media,
+  //                lejana); null = una sola luz con sombra, como hasta la v0.10.16.
+  // Baja no gana nada: es la calidad de las máquinas que no pueden más.
   var QUALITY = {
-    baja: { pr: 0.75, vr: 1.0, shadows: false, shadowMap: 1024, traffic: 0, clusters: 0.4, far: 0.6, palms: 0 },
-    media: { pr: 1.0, vr: 1.2, shadows: true, shadowMap: 1536, traffic: 120, clusters: 1, far: 1, palms: 900 },
-    alta: { pr: 2, vr: 1.5, shadows: true, shadowMap: 2048, traffic: 240, clusters: 1, far: 1, palms: 2200 },
-    ultra: { pr: 3, vr: 2.0, shadows: true, shadowMap: 4096, traffic: 400, clusters: 1, far: 1, palms: 4000 }
+    baja: { pr: 0.75, vr: 1.0, shadows: false, shadowMap: 1024, traffic: 0, clusters: 0.4, far: 0.6, palms: 0,
+      interiores: false, post: null, cascadas: null },
+    media: { pr: 1.0, vr: 1.2, shadows: true, shadowMap: 1536, traffic: 120, clusters: 1, far: 1, palms: 900,
+      interiores: true, post: { curva: 1, resplandor: 3, ssao: 0, escalaAO: 0.5, msaa: 4 }, cascadas: null },
+    alta: { pr: 2, vr: 1.5, shadows: true, shadowMap: 2048, traffic: 240, clusters: 1, far: 1, palms: 2200,
+      interiores: true, post: { curva: 1, resplandor: 4, ssao: 12, escalaAO: 0.5, msaa: 4 }, cascadas: [2048, 2048, 1024] },
+    ultra: { pr: 3, vr: 2.0, shadows: true, shadowMap: 4096, traffic: 400, clusters: 1, far: 1, palms: 4000,
+      interiores: true, post: { curva: 1, resplandor: 4, ssao: 16, escalaAO: 1, msaa: 4 }, cascadas: [4096, 2048, 2048] }
   };
 
   function mount(container, opts) {
@@ -1924,7 +1993,17 @@
     if (!gl) throw new Error(t('WebGL no disponible en este navegador/webview; se usará la vista 2D.'));
 
     // --- Renderer, escena, cámara, luces ---------------------------------------
-    var renderer = new THREE.WebGLRenderer({ canvas: canvas, context: gl, antialias: true, alpha: false, logarithmicDepthBuffer: true });
+    // El experimento de la profundidad (v0.11.0; pendiente de la entrega 2 del
+    // plan). El búfer logarítmico obliga a todos los sombreadores a escribir
+    // gl_FragDepth, y eso anula el descarte temprano de fragmentos en la escena
+    // entera. Con `localStorage['rami.profundidad'] = 'lineal'` (o
+    // `opts.profundidad`) el visor monta con profundidad lineal y planos cercano
+    // y lejano que se ajustan cada cuadro (planosProfundidad). Se lee al montar:
+    // cambiarlo pide volver a abrir el visor. Lo que va por defecto sigue siendo
+    // el logarítmico hasta que alguien mida los dos en una tarjeta gráfica real.
+    var profundidad = opts.profundidad === 'lineal' ? 'lineal' : 'log';
+    try { if (!opts.profundidad && global.localStorage && global.localStorage.getItem('rami.profundidad') === 'lineal') profundidad = 'lineal'; } catch (eP) {}
+    var renderer = new THREE.WebGLRenderer({ canvas: canvas, context: gl, antialias: true, alpha: false, logarithmicDepthBuffer: profundidad !== 'lineal' });
     renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.72;
     renderer.setPixelRatio(Math.min(dpr, Q.pr));
@@ -1947,6 +2026,36 @@
     sun.castShadow = !!Q.shadows; sun.shadow.mapSize.set(Q.shadowMap, Q.shadowMap);
     sun.shadow.camera.near = 50; sun.shadow.camera.far = 6000; sun.shadow.bias = -0.0004; sun.shadow.normalBias = 1.5;
     sun.shadow.camera.left = -1400; sun.shadow.camera.right = 1400; sun.shadow.camera.top = 1400; sun.shadow.camera.bottom = -1400;
+    // Cascadas de sombra (v0.11.0, entrega 7). Una sola caja de sombra no puede
+    // ser nítida a pie y cubrir a la vez la calle entera: en alta y ultra van tres
+    // —el sol y dos luces direccionales de intensidad cero que solo proyectan
+    // sombra—, con cámaras de ~150 m, ~800 m y ~3,5 km alrededor del objetivo
+    // (updateShadowFrame). getShadowMask() de three ya multiplica todas las luces
+    // con sombra, así que los cuatro materiales propios (edificios, calzada,
+    // terreno, mar) las leen sin tocar su código; y como cada mapa devuelve 1
+    // fuera de su caja, la cercana solo cuenta donde llega. Añadir o quitar una
+    // luz cambia NUM_DIR_LIGHTS y recompila todos los materiales de la escena:
+    // por eso el número se fija al montar y al cambiar de calidad, nunca por cuadro.
+    var cascadas = [];
+    function montaCascadas() {
+      var tam = (Q.shadows && Q.cascadas && Q.cascadas.length > 1) ? Q.cascadas : null, i;
+      for (i = 0; i < cascadas.length; i++) {
+        scene.remove(cascadas[i]); scene.remove(cascadas[i].target);
+        if (cascadas[i].shadow.map) { cascadas[i].shadow.map.dispose(); cascadas[i].shadow.map = null; }
+      }
+      cascadas = [];
+      sun.shadow.bias = -0.0004; sun.shadow.normalBias = 1.5; sun.shadow.camera.right = 0;   // la caja de una luz sola se rehace en updateShadowFrame
+      var lado = tam ? tam[0] : Q.shadowMap;
+      sun.shadow.mapSize.set(lado, lado); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+      if (!tam) return;
+      for (i = 1; i < tam.length; i++) {
+        var l = new THREE.DirectionalLight(0xffffff, 0);
+        l.name = 'cascada' + i; l.castShadow = true; l.shadow.mapSize.set(tam[i], tam[i]);
+        l.shadow.bias = sun.shadow.bias; l.shadow.normalBias = sun.shadow.normalBias;
+        scene.add(l); scene.add(l.target); cascadas.push(l);
+      }
+    }
+    montaCascadas();
     var viewportUniform = { value: new THREE.Vector2(1, 1) };
     var lodUniform = { value: 0 };
     // Entorno: el cielo se renderiza a un mapa cúbico cada vez que cambia el sol
@@ -1966,7 +2075,9 @@
     var shared = {
       uSun: { value: sunDir.clone() }, uSunColor: { value: new THREE.Color(0xfff1d6) },
       uSkyColor: { value: new THREE.Color(0xdcecff) }, uGroundColor: { value: new THREE.Color(0x9a7f60) }, uNight: { value: 0 }, uDusk: { value: 0 },
-      uEnv: { value: envRT.texture }
+      uEnv: { value: envRT.texture },
+      // Interiores por paralaje (v0.11.0): 1 desde la calidad media.
+      uInterior: { value: Q.interiores ? 1 : 0 }
     };
     var buildMat = makeBuildingMaterial(shared, true), plainMat = makeBuildingMaterial(shared, false);
     var terrainMat = makeTerrainMaterial(shared, noiseTex, mats.arena);
@@ -3452,7 +3563,11 @@
       Q = QUALITY[name]; qualityName = name;
       renderer.setPixelRatio(Math.min(dpr, Q.pr));
       renderer.shadowMap.enabled = !!Q.shadows; sun.castShadow = !!Q.shadows;
-      sun.shadow.mapSize.set(Q.shadowMap, Q.shadowMap); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+      // Las cascadas (y el lado de cada mapa) se rehacen aquí y solo aquí: cambiar
+      // el número de luces recompila los materiales, que es lo que hace la línea
+      // de needsUpdate de abajo de todos modos.
+      montaCascadas();
+      shared.uInterior.value = Q.interiores ? 1 : 0;
       if (S.ready) { buildTraffic(Q.traffic); buildPalms(); buildClusters(); }
       scene.traverse(function (o) { if (o.material && o.material.needsUpdate !== undefined) o.material.needsUpdate = true; });
       buildMat.needsUpdate = true; plainMat.needsUpdate = true; terrainMat.needsUpdate = true;
@@ -4382,15 +4497,81 @@
       for (var ie = 0; ie < extEtiquetas.length; ie++) extEtiquetas[ie].cull(camera, _cp, W, H, labelRects);
     }
     var lastSun = 0;
+    var _sLd = new THREE.Vector3(), _sLr = new THREE.Vector3(), _sLu = new THREE.Vector3(), _sLc = new THREE.Vector3();
+    /**
+     * Cascadas (v0.11.0): la caja de sombra de `luz`, de lado 2r, centrada en
+     * (cx, cy, cz) y con el centro llevado a la rejilla de texels del mapa en el
+     * plano de la luz; sin eso, cada paso del jugador desplaza la rejilla una
+     * fracción de texel y los bordes de las sombras tiemblan. La cámara de sombra
+     * de three mira con up = +y, así que sus ejes son (up × dir) y dir × eso: los
+     * mismos que aquí. `dist` es lo que la luz se retira hacia el sol: tiene que
+     * alcanzar la coronación de la torre más alta que haga sombra dentro de la caja
+     * (una torre de 830 m con el sol a 30° queda a 1,7 km en esa dirección).
+     */
+    function cajaSombra(luz, cx, cy, cz, r, dist) {
+      var sc = luz.shadow.camera, texel = 2 * r / luz.shadow.mapSize.x;
+      _sLd.copy(lightDir).normalize();
+      _sLr.set(0, 1, 0).cross(_sLd); if (_sLr.lengthSq() < 1e-8) _sLr.set(1, 0, 0); _sLr.normalize();
+      _sLu.copy(_sLd).cross(_sLr).normalize();
+      var a = Math.round((cx * _sLr.x + cy * _sLr.y + cz * _sLr.z) / texel) * texel;
+      var b = Math.round((cx * _sLu.x + cy * _sLu.y + cz * _sLu.z) / texel) * texel;
+      var d = cx * _sLd.x + cy * _sLd.y + cz * _sLd.z;
+      _sLc.copy(_sLr).multiplyScalar(a).addScaledVector(_sLu, b).addScaledVector(_sLd, d);
+      var lejos = dist + r * 3;
+      if (Math.abs(sc.right - r) > 1e-3 || Math.abs(sc.far - lejos) > 1) { sc.left = -r; sc.right = r; sc.top = r; sc.bottom = -r; sc.near = 10; sc.far = lejos; sc.updateProjectionMatrix(); }
+      luz.position.copy(_sLc).addScaledVector(_sLd, dist);
+      luz.target.position.copy(_sLc); luz.target.updateMatrixWorld();
+      // El sesgo, en metros de mundo, proporcional al texel de SU cascada: la
+      // lejana cubre también la calle que ve la cercana, y como las tres se
+      // multiplican, un acné de la lejana ensuciaría la zona nítida.
+      luz.shadow.normalBias = clamp(texel * 2, 0.15, 8);
+      luz.shadow.bias = -texel / (lejos - 10);
+    }
+    var RADIO_CASCADA_A_PIE = [150, 800, 3500];
     function updateShadowFrame() {
       if (!Q.shadows) return;
       var tg = cam.cur.target;
+      if (cascadas.length) {
+        var n = cascadas.length + 1, k, R = cam.cur.radius, aPie = S.mode === 'walk' || S.xr;
+        for (k = 0; k < n; k++) {
+          var luz = k === 0 ? sun : cascadas[k - 1], rk;
+          if (aPie) rk = RADIO_CASCADA_A_PIE[Math.min(k, 2)];
+          else rk = k === 0 ? clamp(R * 0.5, 150, 1750) : (k === 1 ? clamp(R * 1.3, 800, 3500) : clamp(R * 3, 3500, 7000));
+          // A pie la caja se adelanta media caja en la dirección de la mirada: lo
+          // que queda detrás del jugador no se ve.
+          var ax = 0, az = 0;
+          if (aPie && !S.xr) { ax = -Math.sin(walk.yaw) * rk * 0.5; az = -Math.cos(walk.yaw) * rk * 0.5; }
+          var ox = S.xr ? rig.position.x : tg.x, oz = S.xr ? rig.position.z : tg.z, oy = S.xr ? rig.position.y : Math.max(tg.y, 0);
+          cajaSombra(luz, ox + ax, oy, oz + az, rk, Math.max(rk * 3, 2000));
+        }
+        return;
+      }
       // Caja de sombra proporcional a lo que se ve: a pie, 350 m nítidos; en órbita lejana, hasta 3,5 km.
       var r = S.mode === 'walk' ? 350 : clamp(cam.cur.radius * 1.3, 350, 3500);
       var sc = sun.shadow.camera;
       if (Math.abs(sc.right - r) > 1) { sc.left = -r; sc.right = r; sc.top = r; sc.bottom = -r; sc.near = 10; sc.far = r * 6; sc.updateProjectionMatrix(); }
       sun.position.set(tg.x + lightDir.x * r * 3, Math.max(tg.y, 0) + lightDir.y * r * 3 + 50, tg.z + lightDir.z * r * 3);
       sun.target.position.copy(tg); sun.target.updateMatrixWorld();
+    }
+    /**
+     * Profundidad lineal (el experimento de la v0.11.0): planos cercano y lejano
+     * por cuadro. Con un búfer de 24 bits el error de profundidad a una distancia
+     * z es de unos z² / (cercano · 2²⁴) metros, así que lo que manda es el plano
+     * cercano: a pie 0,5 m (1 km → 12 cm; el logarítmico va con 0,3); en órbita, la
+     * décima parte de la altura sobre el suelo o de la distancia al objetivo, la
+     * menor, hasta 500 m (a esa distancia la esfera del cielo, de 1 km de radio,
+     * sigue entera dentro del cono en pantallas de hasta 2,4:1). El lejano llega
+     * hasta donde la niebla ya lo ha tapado todo. En VR no se toca: enterVR fija
+     * los suyos.
+     */
+    function planosProfundidad() {
+      if (profundidad !== 'lineal' || S.xr) return;
+      _cp.setFromMatrixPosition(camera.matrixWorld);
+      var alto = Math.max(0, _cp.y - groundH(_cp.x, _cp.z)), near;
+      if (S.mode === 'walk') near = clamp(alto * 0.3, 0.5, 300);
+      else near = clamp(Math.min(alto, cam.cur.radius) * 0.1, 1, 500);
+      var far = clamp(_cp.distanceTo(S.center) + S.L * 1.7, 4000, 900000);
+      if (camera.near !== near || camera.far !== far) { camera.near = near; camera.far = far; camera.updateProjectionMatrix(); }
     }
     function frame(now) {
       S.raf = 0;
@@ -4400,7 +4581,7 @@
       if (!S.fpsT) S.fpsT = now;
       else if (now - S.fpsT >= 1000) { S.fps = S.fpsN * 1000 / (now - S.fpsT); S.fpsN = 0; S.fpsT = now; }
       if (S.ready) {
-        updateCamera(dt);
+        updateCamera(dt); planosProfundidad();
         if (now - lastSun > 2000) { lastSun = now; updateSun(); }
         var dist = S.mode === 'walk' ? 2000 : camera.position.distanceTo(cam.cur.target);
         scene.fog.near = dist + S.L * 0.15 * Q.far; scene.fog.far = dist + S.L * 1.6 * Q.far;
@@ -4507,12 +4688,27 @@
         b.fase = 2;
       }
     }
+    /**
+     * Los efectos de imagen activos (v0.11.0), en español; el panel los traduce.
+     * Los del núcleo y los que cada módulo anuncia en su `estadisticas` (el campo
+     * `efectos`, una lista). La medida de fluidez los anota: una cifra de cuadros
+     * por segundo sin saber qué se dibujaba no compara con nada.
+     */
+    function efectosActivos(ex) {
+      var l = [], k;
+      if (Q.interiores) l.push('interiores por paralaje');
+      if (cascadas.length) l.push('cascadas de sombra');
+      if (profundidad === 'lineal') l.push('profundidad lineal');
+      if (!ex) { ex = {}; emitir('estadisticas', ex); }
+      for (k in ex) if (ex[k] && ex[k].efectos && ex[k].efectos.length) l = l.concat(ex[k].efectos);
+      return l;
+    }
     function benchFin() {
       var b = S.bench, g = b.guardado; S.bench = null;
       if (g.mode === 'walk') { setMode('walk'); walk.pos.copy(g.pos); walk.yaw = g.yaw; walk.pitch = g.pitch; walk.fly = g.fly; }
       else { setMode('orbit'); ponVista(g.cur); cam.goal.theta = g.goal.theta; cam.goal.phi = g.goal.phi; cam.goal.radius = g.goal.radius; cam.goal.target.copy(g.goal.target); cam.flight = g.flight; }
       b.resolve({ gpu: gpuName(), calidad: qualityName, ancho: renderer.domElement.width, alto: renderer.domElement.height, pixelRatio: renderer.getPixelRatio(),
-                  segundos: b.seg, duracion: Math.round((performance.now() - b.inicio) / 100) / 10, vistas: b.res });
+                  segundos: b.seg, duracion: Math.round((performance.now() - b.inicio) / 100) / 10, vistas: b.res, efectos: efectosActivos() });
     }
     function resize() {
       if (S.disposed) return;
@@ -4617,7 +4813,9 @@
         xr.saved = { near: camera.near, far: camera.far };
         renderer.xr.enabled = true;
         try { renderer.xr.setReferenceSpaceType('local-floor'); } catch (e) {}
-        camera.near = 0.1; camera.far = 200000; camera.updateProjectionMatrix();
+        // Con profundidad lineal, 0,1 m de plano cercano dejaría la calle a 1 km con
+        // metros de error: 0,3 y 40 km (sin probar en unas gafas: aquí no las hay).
+        camera.near = profundidad === 'lineal' ? 0.3 : 0.1; camera.far = profundidad === 'lineal' ? 40000 : 200000; camera.updateProjectionMatrix();
         return renderer.xr.setSession(session).then(function () {
           vrPlacement(rig.position); rig.rotation.set(0, S.mode === 'walk' ? walk.yaw : rotR, 0);
           var i;
@@ -4688,6 +4886,10 @@
       keys: function () { return keys; }, puntero: function () { return pointerPos; },
       shared: shared, buildMat: buildMat, plainMat: plainMat, terrainMat: terrainMat, mats: mats, noiseTex: noiseTex, envRT: envRT,
       makeBuildingMaterial: makeBuildingMaterial, sun: sun, hemi: hemi, sunDir: sunDir, lightDir: lightDir,
+      /** 'log' o 'lineal': el búfer de profundidad con el que se montó (v0.11.0). */
+      profundidad: function () { return profundidad; },
+      /** Las luces de sombra además del sol (cascadas; vacío en baja y media). */
+      cascadas: function () { return cascadas; },
       uniformes: { viewport: viewportUniform, lod: lodUniform, drop: dropUniform, noche: nightUniform, fantasma: ghostTime },
       util: { fnv1a: fnv1a, hash2: hash2, semillaMorfologia: semillaMorfologia, semillaRopaje: semillaRopaje, real01: real01, lcg: lcg,
         clamp: clamp, lerp: lerp, smoothstep: smoothstep, strSeed: strSeed, lin1: lin1, lin3: lin3 },
@@ -4767,6 +4969,7 @@
         try { var px = new Uint8Array(4 * 4 * 4); renderer.readRenderTargetPixels(envRT, 0, 0, 4, 4, px, 2); var sum = 0; for (var i = 0; i < 64; i++) sum += px[i]; env = Math.round(sum / 64); } catch (e) { env = -1; }
         var o = { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame, landmarks: S.landmarks.length, skyline: S.clusterTotal, solidos: S.catastro ? S.catastro.items.length : 0, trozosBarrio: S.trozosBarrio, trozosParcela: S.trozosParcela, ocultos: S.ocultos, trozosFantasma: S.trozosFantasma, avatars: S.avatarOrder.length, quality: qualityName, mode: S.xr ? 'vr' : S.mode, env: env, ext: {} };
         emitir('estadisticas', o.ext);
+        o.profundidad = profundidad; o.efectos = efectosActivos(o.ext);
         return o;
       },
       bench: bench, gpu: gpuName,

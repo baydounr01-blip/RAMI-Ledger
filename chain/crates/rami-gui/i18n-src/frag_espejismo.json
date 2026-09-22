@@ -1,0 +1,10 @@
+{
+ "efectos": {"en": "effects", "zh": "效果", "ru": "эффекты", "sw": "madoido"},
+ "ninguno": {"en": "none", "zh": "无", "ru": "нет", "sw": "hakuna"},
+ "interiores por paralaje": {"en": "parallax interiors", "zh": "视差室内", "ru": "интерьеры с параллаксом", "sw": "ndani kwa paralaksi"},
+ "cascadas de sombra": {"en": "shadow cascades", "zh": "级联阴影", "ru": "каскады теней", "sw": "mfululizo wa vivuli"},
+ "profundidad lineal": {"en": "linear depth", "zh": "线性深度", "ru": "линейная глубина", "sw": "kina cha mstari"},
+ "curva de color": {"en": "colour curve", "zh": "色彩曲线", "ru": "цветовая кривая", "sw": "mkunjo wa rangi"},
+ "resplandor": {"en": "bloom", "zh": "泛光", "ru": "свечение", "sw": "mng'ao"},
+ "oclusión ambiental": {"en": "ambient occlusion", "zh": "环境光遮蔽", "ru": "фоновое затенение", "sw": "kivuli cha mazingira"}
+}
