@@ -2813,6 +2813,41 @@
       return p;
     }
     /**
+     * Las franjas de las vías del mapa (v0.11.0), para que el plano de los
+     * barrios no plante un edificio en la calzada. enCalle solo conocía la trama
+     * deducida: 100 de los 3.052 edificios de barrio pisaban una de las 21 vías
+     * del mapa —60 con el centro dentro de la calzada, 35 en la Sheikh Zayed
+     * Road— y los coches y el metro elevado de city/extras.js los atravesaban.
+     * Cada vía se trocea cada 20 m con su medio ancho total (calzada, bordillo y
+     * acera, el de buildRoads) en una rejilla de 256 m.
+     */
+    function franjasDelMapa(meta) {
+      var ejes = ejesDelMapa(meta), F = { celdas: {}, R: 256 }, r, k;
+      for (r = 0; r < ejes.length; r++) {
+        var m0 = remuestrea(ejes[r].pts, S.geo, VIA_PASO), largo = 0;
+        for (k = 0; k + 1 < m0.length; k++) largo += Math.sqrt(Math.pow(m0[k + 1].x - m0[k].x, 2) + Math.pow(m0[k + 1].z - m0[k].z, 2));
+        var medio = anchoTotal(ejes[r].calzada ? ejes[r] : anchoVia(largo / 1000)), m = remuestrea(ejes[r].pts, S.geo, 20);
+        for (k = 0; k + 1 < m.length; k++) {
+          var clave = Math.floor((m[k].x + m[k + 1].x) * 0.5 / F.R) + ':' + Math.floor((m[k].z + m[k + 1].z) * 0.5 / F.R);
+          (F.celdas[clave] || (F.celdas[clave] = [])).push({ a: m[k], b: m[k + 1], medio: medio });
+        }
+      }
+      return F;
+    }
+    /** ¿Se monta un círculo de radio `margen` en (wx, wz) sobre una vía del mapa? */
+    function enViaDelMapa(F, wx, wz, margen) {
+      var ci = Math.floor(wx / F.R), cj = Math.floor(wz / F.R), i, j, n;
+      for (j = cj - 1; j <= cj + 1; j++) for (i = ci - 1; i <= ci + 1; i++) {
+        var lista = F.celdas[i + ':' + j]; if (!lista) continue;
+        for (n = 0; n < lista.length; n++) {
+          var s = lista[n], dx = s.b.x - s.a.x, dz = s.b.z - s.a.z, L2 = dx * dx + dz * dz || 1;
+          var u = clamp(((wx - s.a.x) * dx + (wz - s.a.z) * dz) / L2, 0, 1), ex = s.a.x + dx * u - wx, ez = s.a.z + dz * u - wz;
+          if (ex * ex + ez * ez < (s.medio + margen) * (s.medio + margen)) return true;
+        }
+      }
+      return false;
+    }
+    /**
      * El plano de los barrios: dónde va cada edificio, cuánto mide y cómo se
      * orienta. Se calcula una vez; las mallas se levantan aparte (buildClusters)
      * porque la calidad cambia cuántos se dibujan, no cuáles hay. Cada edificio
@@ -2820,8 +2855,8 @@
      * se plante encima de él ni de un hito.
      */
     function planificarBarrios(meta) {
-      var cl = meta.clusters || [], i, j;
-      S.edificios = []; S.rechazadosPorHuella = 0;
+      var cl = meta.clusters || [], i, j, franjas = franjasDelMapa(meta);
+      S.edificios = []; S.rechazadosPorHuella = 0; S.rechazadosPorVia = 0;
       for (i = 0; i < cl.length; i++) {
         var c = cl[i], rnd = lcg(c.seed || (i + 1) * 7919), cw = S.geo.toWorld(c.lat, c.lon);
         var kind = TIPOS_BARRIO.indexOf(c.kind) >= 0 ? c.kind : 'blocks', lista = [], tries = 0;
@@ -2838,6 +2873,7 @@
           // posiciones que pisan la trama, las MANZANAS salen solas: el edificio
           // se queda donde queda sitio, que es exactamente como crece una ciudad.
           if (enCalle(x, z, Math.max(fw, fd) * 0.5)) continue;
+          if (enViaDelMapa(franjas, x, z, Math.max(fw, fd) * 0.5)) { S.rechazadosPorVia++; continue; }
           var yawLibre = rnd() * Math.PI, tono = rnd();
           // Ni sobre otro edificio ni sobre un hito (v0.10.15).
           if (!huellaLibre(S.catastro, x, z, Math.sqrt(fw * fw + fd * fd) * 0.5)) { S.rechazadosPorHuella++; continue; }
