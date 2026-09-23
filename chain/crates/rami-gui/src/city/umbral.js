@@ -7,7 +7,7 @@
  *
  * Cómo está hecho, en cuatro ideas:
  *
- * 1. EL PORTAL SALE DEL CATÁLOGO, NO DE UNA COPIA. Cada edificio (los 3.052 de
+ * 1. EL PORTAL SALE DEL CATÁLOGO, NO DE UNA COPIA. Cada edificio (los 3.048 de
  *    barrio y los de las parcelas) se vuelve a pedir al catálogo de cuerpos del
  *    núcleo (`edificioPartes`, `parcelaPartes`) y en la lista de piezas se busca
  *    la puerta por su firma: el tono de puerta que publica el núcleo
@@ -55,7 +55,7 @@
 
     // ---- Medidas ----------------------------------------------------------------
     var ALCANCE = 3.0;            // m desde el punto de llegada del portal para ofrecer «Entrar»
-    var MARGEN_PATIO = 1.5;       // m que el rectángulo de un patio sale fuera de la huella del edificio
+    var MARGEN_PATIO = 0.6;       // m que el rectángulo de un patio sale fuera de la huella (el visor para al jugador a 0,42 m de ella)
     var PASO_BUSCA = 0.1;         // s entre dos búsquedas del portal cercano
     var REJILLA = 64;             // m: celda del índice de portales
     var R_JUGADOR = 0.3;          // m: el jugador dentro, un círculo
@@ -63,6 +63,14 @@
     var LIBRE = 2.8;              // m de altura libre de un piso
     var FACHADA_POR_UNIDAD = 11;  // m de fachada por vivienda: unidades por planta = ⌊(ancho − 1) / 11⌋, de 1 a 4
     var VEL = 2.4;                // m/s andando dentro (y en los tramos guiados)
+    // Subpasos de la colisión propia: el círculo del jugador (0,3 m dentro, 0,42 en
+    // el patio) sale de cada subpaso a su radio de la pared, así que con subpasos
+    // más cortos que el radio el centro nunca entra en ella. Con el paso entero
+    // (0,41 m con mayúsculas y un cuadro de 0,1 s) el centro caía dentro de un muro
+    // de 0,2 m, el borde más cercano era el de detrás y se salía al otro lado.
+    var SUBPASO = 0.1, SUBPASO_PATIO = 0.3;
+    var MAX_BUZONES = 64;         // el tope de viviendas por parcela del consenso (MAX_UNIDADES_POR_PARCELA)
+    var MIN_HUECO_UNIDAD = 7.4;   // m de fachada: por debajo no cabe un piso (el piso más estrecho mide 7 m)
     var CANAL_PISO = 41, CANAL_MUESTRA = 42, CANAL_EXPO = 43;
     var MAX_LAMPARAS = 8, LAMPARA_CABINA = 7, LAMPARA_RELLANO = 6;
 
@@ -273,6 +281,11 @@
     function dirMundo(m, dx, dz, out) { out = out || {}; out.x = dx * m.c + dz * m.s; out.z = -dx * m.s + dz * m.c; return out; }
     function dirLocal(m, dx, dz, out) { out = out || {}; out.x = dx * m.c - dz * m.s; out.z = dx * m.s + dz * m.c; return out; }
     function angulo(a) { return Math.atan2(Math.sin(a), Math.cos(a)); }
+    /** La cota de los pies en la calle, como el visor: el terreno o, si la hay, la acera o la calzada. */
+    function sueloEn(x, z) {
+      var g = MU.groundH(x, z), c = MU.sueloCalle ? MU.sueloCalle(x, z) : -Infinity;
+      return c > g ? c : g;
+    }
 
     // =====================================================================================
     // 1. PORTALES: dónde está la puerta de cada edificio
@@ -316,14 +329,15 @@
     /**
      * El punto de llegada, 1,35 m delante de la puerta. Si la puerta está al fondo
      * de un patio (L, U), el patio: el rectángulo local entre las alas que llegan
-     * más allá de la fachada de la puerta (o hasta 1,5 m fuera de la huella por el
-     * lado abierto de una L) y desde la puerta hasta 1,5 m fuera de la boca. El
+     * más allá de la fachada de la puerta (o hasta 0,6 m fuera de la huella por el
+     * lado abierto de una L) y desde la puerta hasta 0,6 m fuera de la boca. El
      * catastro del núcleo tiene la huella entera del edificio como un sólido, que
      * para al jugador a 0,42 m de ella; en ese rectángulo anda el módulo con su
      * colisión (gancho andar, `andaPatio`) y se llega andando hasta la puerta,
-     * donde se ofrece entrar a menos de 3 m. El margen de 1,5 m cubre también la
-     * huella girada al revés del catastro de la base (medido: paraba a 0,57 m de
-     * la boca en una L de 25 m girada 91°), que la rama «vida» corrige.
+     * donde se ofrece entrar a menos de 3 m. El margen de 0,6 m es lo justo para
+     * que el sitio donde el visor para al jugador (a 0,42 m) caiga dentro: desde
+     * la v0.11.0 el catastro gira las huellas como las mallas (corrección de
+     * «vida»); con el de la v0.10.16, girado al revés, hacía falta 1,5 m.
      */
     function completaPortal(po, piezas) {
       var m = marco(po.o, po.yaw), pz = po.puerta, i;
@@ -524,20 +538,66 @@
       if (plan.tipo === 'nave') return planNave(plan);
       // Torre, hotel y concesionario: zaguán, ascensor y pisos.
       var b1 = B1;
-      plan.upp = clamp(Math.floor((plan.fx1 - plan.fx0 - 1) / FACHADA_POR_UNIDAD), 1, 4);
+      plan.upp = unidadesPorPlanta(plan, po.pc);
       plan.zF = b1.z1; plan.zI = b1.z1 - 0.35;
       plan.D = clamp(b1.sz - 6, 6.5, 10.5);
       plan.zA0 = plan.zI - plan.D;
       plan.ex = clamp(pz.px, plan.fx0 + 1.6, plan.fx1 - 1.6);
-      var fondoZ = plan.tipo === 'concesionario' ? 20 : (plan.tipo === 'hotel' ? 12 : 7.5);
-      plan.zL0 = Math.min(plan.zA0 - 2.4, pz.zf - 0.45 - fondoZ);
       var ancho = plan.tipo === 'concesionario' ? 17 : (plan.tipo === 'hotel' ? 7 : 3.4);
       plan.zx0 = Math.max(Math.min(pz.px - ancho, plan.ex - 2.4), B0.x0 + 0.6);
       plan.zx1 = Math.min(Math.max(pz.px + ancho, plan.ex + 2.4), B0.x1 - 0.6);
       if (plan.zx1 - plan.zx0 < 5) { plan.zx0 = Math.min(pz.px, plan.ex) - 2.6; plan.zx1 = Math.max(pz.px, plan.ex) + 2.6; }
+      var fondoZ = plan.tipo === 'hotel' ? 12 : 7.5;
+      if (plan.tipo === 'concesionario') { plan.expo = planExpo(po, plan.zx1 - plan.zx0); fondoZ = plan.expo.fondo; }
+      plan.zL0 = Math.min(plan.zA0 - 2.4, pz.zf - 0.45 - fondoZ);
       plan.zaguan = { x0: plan.zx0, x1: plan.zx1, z0: plan.zL0, z1: pz.zf - 0.45, yb: su, alto: altoZaguan(plan.tipo) };
       plan.cab = { x0: plan.ex - 0.95, x1: plan.ex + 0.95, z0: plan.zL0 - 2.05, z1: plan.zL0 };
       return plan;
+    }
+    /**
+     * Unidades por planta. Por la huella: ⌊(ancho del tramo − 1 m) / 11 m⌋, de 1 a
+     * 4. Si la parcela está dividida en más viviendas de las que caben así
+     * (plantas × esas), se estrechan los pisos hasta ⌈unidades / plantas⌉ por
+     * planta, sin bajar de 7,4 m de fachada cada uno (el piso más estrecho mide 7 m).
+     * Lo que ni así cabe (una parcela pendiente, de tres plantas, dividida en 64)
+     * no tiene piso en el edificio: `sitioUnidad` devuelve null.
+     */
+    function unidadesPorPlanta(plan, pc) {
+      var fx = plan.fx1 - plan.fx0, base = clamp(Math.floor((fx - 1) / FACHADA_POR_UNIDAD), 1, 4), U = pc ? pc.unidades | 0 : 0, n = plan.plantas.length;
+      if (U > n * base) return Math.min(Math.max(base, Math.floor((fx - 1) / MIN_HUECO_UNIDAD)), Math.ceil(U / n));
+      return base;
+    }
+    /** La planta y el hueco de la vivienda n (desde 1), o null si el edificio no tiene sitio para ella. */
+    function sitioUnidad(plan, n) {
+      var idx = (n | 0) - 1, f = Math.floor(idx / plan.upp);
+      if (idx < 0 || f >= plan.plantas.length) return null;
+      return { planta: plan.plantas[f], slot: idx % plan.upp };
+    }
+    /** El número de vivienda del hueco `slot` de la planta `planta` (0 si no es de ninguna). */
+    function numeroUnidad(plan, planta, slot) {
+      var f = plan.plantas ? plan.plantas.indexOf(planta) : -1;
+      return f >= 0 && slot >= 0 ? f * plan.upp + slot + 1 : 0;
+    }
+    /** Los activos coche de la parcela (índices en S.city.assets, en su orden). */
+    function cochesDe(po) {
+      var as = (S.city && S.city.assets) || [], l = [], i;
+      if (po.cx === undefined) return l;
+      for (i = 0; i < as.length; i++) if ((as[i].kind | 0) === 2 && (as[i].x | 0) === po.cx && (as[i].y | 0) === po.cy) l.push(i);
+      return l;
+    }
+    /**
+     * La sala de exposición: un coche sobre peana (5,6 m de diámetro) por activo
+     * coche de la parcela, hasta 12; sin activos, de 3 a 6 de muestra. Peanas a
+     * 6 m entre centros en cada fila y filas a 6,2 m, a 0,2 m de las paredes; la
+     * sala se alarga lo que haga falta (al menos 20 m) para dejar 4,6 m libres
+     * delante, con la entrada y la mesa del vendedor. Con 7 coches o más en una
+     * fila las peanas se solapaban (paso de 5 m con 12 coches).
+     */
+    function planExpo(po, anchoSala) {
+      var coches = cochesDe(po), sinActivos = !coches.length;
+      var n = sinActivos ? 3 + Math.floor(real01(semillaEdificio(po, CANAL_EXPO)) * 4) : Math.min(coches.length, 12);
+      var porFila = Math.max(1, Math.floor((anchoSala - 6) / 6) + 1), filas = Math.ceil(n / porFila);
+      return { coches: coches, sinActivos: sinActivos, n: n, porFila: porFila, filas: filas, fondo: Math.max(20, 10.6 + (filas - 1) * 6.2) };
     }
     function altoZaguan(tipo) { return tipo === 'concesionario' ? 5.2 : (tipo === 'hotel' ? 4.2 : 3.4); }
     function planVilla(plan) {
@@ -560,35 +620,42 @@
 
     // ---- De quién es ------------------------------------------------------------------
     function corta(a) { a = String(a || ''); return a.length > 12 ? a.slice(0, 6) + '…' + a.slice(-4) : a; }
-    function precio(v) { return (Number(v) / 1e8).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + ' RAMI'; }
+    function precio(v) { v = Number(v) || 0; return (v / 1e8).toLocaleString('es-ES', { maximumFractionDigits: v >= 1e8 ? 2 : 4 }) + ' RAMI'; }   // como ramShort del panel
     function quien(owner, handle) { return handle ? '@' + handle : corta(owner); }
     /**
-     * El piso que toca: el ático si eres el dueño de la parcela; tu unidad si la
-     * parcela está dividida (`unidades` > 0 y `units` = [{ n, owner, handle, sale }],
-     * n desde 1; unidad n → planta válida ⌊(n − 1) / upp⌋, hueco (n − 1) mod upp);
-     * si no, el piso de muestra que dicta la morfología del edificio.
+     * El piso que toca. Las viviendas de una parcela dividida (`unidades` > 0 y
+     * `units` = [{ n, owner, handle, sale }], n desde 1) ocupan las plantas libres
+     * de abajo arriba: la n, la planta ⌊(n − 1) / upp⌋ y el hueco (n − 1) mod upp
+     * (`sitioUnidad`). El ático (la última planta, a todo lo ancho) es del dueño de
+     * la parcela mientras las viviendas no lleguen a ella. Así: dueño de la parcela
+     * con el ático libre → el ático; si no, tu vivienda de número más bajo; si no
+     * (o si tu vivienda no cabe en el edificio), el piso de muestra que dicta la
+     * morfología, fuera del ático.
      */
     function eligePiso(plan) {
       var po = plan.po, me = S.city && S.city.me, pc = po.pc, v = plan.plantas, upp = plan.upp, i;
-      if (pc && me && pc.owner === me) return { clase: 'atico', planta: v[v.length - 1], slot: -1 };
-      if (pc && me && (pc.unidades | 0) > 0 && pc.units && pc.units.length) {
+      var U = pc ? pc.unidades | 0 : 0, atico = !!pc && (!U || Math.ceil(U / upp) < v.length), sinSitio = 0;
+      if (pc && me && pc.owner === me && atico) return { clase: 'atico', planta: v[v.length - 1], slot: -1 };
+      if (me && U > 0 && pc.units && pc.units.length) {
         var mia = null;
-        for (i = 0; i < pc.units.length; i++) { var u = pc.units[i]; if (u && u.owner === me && (!mia || (u.n | 0) < (mia.n | 0))) mia = u; }
-        if (mia) { var idx = Math.max(0, (mia.n | 0) - 1); return { clase: 'unidad', planta: v[Math.min(Math.floor(idx / upp), v.length - 1)], slot: idx % upp, n: Math.max(1, mia.n | 0) }; }
+        for (i = 0; i < pc.units.length; i++) { var u = pc.units[i]; if (u && u.owner === me && (u.n | 0) >= 1 && (u.n | 0) <= U && (!mia || (u.n | 0) < (mia.n | 0))) mia = u; }
+        if (mia) { var st = sitioUnidad(plan, mia.n); if (st) return { clase: 'unidad', planta: st.planta, slot: st.slot, n: mia.n | 0 }; sinSitio = mia.n | 0; }
       }
-      var r = lcg(semillaEdificio(po, CANAL_MUESTRA));
-      return { clase: 'muestra', planta: v[Math.min(v.length - 1, Math.floor(r() * v.length))], slot: Math.min(upp - 1, Math.floor(r() * upp)) };
+      var r = lcg(semillaEdificio(po, CANAL_MUESTRA)), nv = atico && v.length > 1 ? v.length - 1 : v.length;
+      return { clase: 'muestra', planta: v[Math.min(nv - 1, Math.floor(r() * nv))], slot: Math.min(upp - 1, Math.floor(r() * upp)), sinSitio: sinSitio };
     }
     /** Lo que el HUD dice del piso. */
     function titularPiso(plan, piso) {
-      var po = plan.po, pc = po.pc, lineas = [], idxP = plan.plantas ? plan.plantas.indexOf(piso.planta) : -1;
-      var num = idxP >= 0 && piso.slot >= 0 ? idxP * plan.upp + piso.slot + 1 : 0;
+      var po = plan.po, pc = po.pc, lineas = [], U = pc ? pc.unidades | 0 : 0;
+      var num = numeroUnidad(plan, piso.planta, piso.slot);
+      if (U > 0 && num > U) num = 0;                                                            // un hueco sin vivienda de consenso
       if (piso.clase === 'atico') lineas.push(t('Tu ático') + ' · ' + t('planta') + ' ' + piso.planta);
       else if (piso.clase === 'unidad') lineas.push(t('Tu piso') + ' · ' + t('unidad') + ' ' + piso.n + ' · ' + t('planta') + ' ' + piso.planta);
       else lineas.push(t('Piso de muestra') + ' · ' + t('planta') + ' ' + piso.planta);
+      if (piso.sinSitio) lineas.push(t('Tu vivienda no tiene planta en este edificio') + ': ' + t('unidad') + ' ' + piso.sinSitio);
       if (pc) {
         var u = null, i;
-        if ((pc.unidades | 0) > 0 && pc.units && num) for (i = 0; i < pc.units.length; i++) if (pc.units[i] && (pc.units[i].n | 0) === num) u = pc.units[i];
+        if (U > 0 && pc.units && num) for (i = 0; i < pc.units.length; i++) if (pc.units[i] && (pc.units[i].n | 0) === num) u = pc.units[i];
         if (piso.clase !== 'atico') lineas.push(u && u.owner ? t('Unidad') + ' ' + num + ' · ' + quien(u.owner, u.handle) : t('Edificio de') + ' ' + quien(pc.owner, pc.handle));
         else lineas.push(quien(pc.owner, pc.handle));
         if (u && u.sale) lineas.push(t('Unidad en venta') + ': ' + precio(u.sale));
@@ -606,7 +673,7 @@
      * segunda. `solidos`: rectángulos en planta que paran al jugador.
      */
     function nuevoEspacio(nombre, yb) {
-      return { nombre: nombre, yb: yb, env: lote(), dec: lote(), solidos: [], lamparas: [], interact: [], muebles: [], mallas: [], grupo: new THREE.Group(), limites: null, ventana: null, salida: null, triangulos: 0 };
+      return { nombre: nombre, yb: yb, env: lote(), dec: lote(), solidos: [], muros: [], lamparas: [], interact: [], muebles: [], mallas: [], grupo: new THREE.Group(), limites: null, ventana: null, salida: null, triangulos: 0 };
     }
     /**
      * Pared a lo largo de x (en z0..z1) o de z (en x0..x1), del suelo al techo, con
@@ -618,9 +685,11 @@
       var yb = E.yb, cur = a0, i;
       function pieza(u0, u1, v0, v1, solida) {
         if (u1 - u0 < 1e-3 || v1 - v0 < 1e-3) return;
+        var r = eje === 'x' ? { x0: u0, x1: u1, z0: b0, z1: b1 } : { x0: b0, x1: b1, z0: u0, z1: u1 };
         if (eje === 'x') caja(E.env, u0, yb + v0, b0, u1, yb + v1, b1, c);
         else caja(E.env, b0, yb + v0, u0, b1, yb + v1, u1, c);
-        if (solida && v0 <= 0.01) E.solidos.push(eje === 'x' ? { x0: u0, x1: u1, z0: b0, z1: b1 } : { x0: b0, x1: b1, z0: u0, z1: u1 });
+        if (solida && v0 <= 0.01) E.solidos.push(r);
+        E.muros.push({ x0: r.x0, x1: r.x1, z0: r.z0, z1: r.z1, y0: yb + v0, y1: yb + v1 });   // lo que tapa la vista (objetivo, clic)
       }
       for (i = 0; i < huecos.length; i++) {
         var h = huecos[i], ha = Math.max(h.a, cur), hb = Math.min(h.b, a1);
@@ -971,8 +1040,9 @@
     }
     function buzones(E, xPared, zc, haciaDentro, plan) {
       // Uno por vivienda: las unidades de consenso si la parcela está dividida;
-      // si no, plantas × unidades por planta. Como mucho 48 (la textura es de uno).
-      var pc = plan.po.pc, n = pc && (pc.unidades | 0) > 0 ? clamp(pc.unidades | 0, 1, 48) : clamp(plan.plantas.length * plan.upp, 4, 48), cols = Math.min(8, Math.max(4, Math.ceil(Math.sqrt(n * 1.6))));
+      // si no, plantas × unidades por planta. Como mucho 64, el tope de viviendas
+      // por parcela del consenso (8 × 8 casillas: 2,7 × 2,1 m en la pared).
+      var pc = plan.po.pc, n = pc && (pc.unidades | 0) > 0 ? clamp(pc.unidades | 0, 1, MAX_BUZONES) : clamp(plan.plantas.length * plan.upp, 4, MAX_BUZONES), cols = Math.min(8, Math.max(4, Math.ceil(Math.sqrt(n * 1.6))));
       var tb = texturaBuzones(n, cols), w = cols * 0.34, h = tb.filas * 0.26, x = xPared + haciaDentro * 0.02;
       caja(E.dec, Math.min(x, x + haciaDentro * 0.3), E.yb + 1.55 - h / 2 - 0.03, zc - w / 2 - 0.03, Math.max(x, x + haciaDentro * 0.3), E.yb + 1.55 + h / 2 + 0.03, zc + w / 2 + 0.03, [0.55, 0.57, 0.6]);
       var g = new THREE.PlaneGeometry(w, h);
@@ -998,16 +1068,13 @@
       caja(E.dec, px - 1.6, E.yb, Z.z1 - 6, px + 1.6, E.yb + 0.012, Z.z1 - 0.6, [0.55, 0.12, 0.12]);                  // la alfombra roja
       E.letrero = t('Recepción');
     }
-    /** La sala de exposición: un coche por activo coche de la parcela (o los que dicte la morfología). */
+    /** La sala de exposición: un coche por activo coche de la parcela (o los que dicte la morfología); el reparto, en `planExpo`. */
     function exposicion(E, plan, r) {
-      var Z = plan.zaguan, po = plan.po, coches = [], i, as = (S.city && S.city.assets) || [];
-      for (i = 0; i < as.length; i++) if ((as[i].kind | 0) === 2 && (as[i].x | 0) === po.cx && (as[i].y | 0) === po.cy) coches.push(i);
-      var sinActivos = !coches.length, n = sinActivos ? 3 + Math.floor(real01(semillaEdificio(po, CANAL_EXPO)) * 4) : Math.min(coches.length, 12);
-      var geo = G.carGeometry(), pa = geo.attributes.position.array, na = geo.attributes.normal.array, ca = geo.attributes.color.array, col = new THREE.Color();
-      var filas = 2, porFila = Math.ceil(n / filas), ancho = Z.x1 - Z.x0 - 4, k, j;
+      var Z = plan.zaguan, po = plan.po, X = plan.expo, coches = X.coches, sinActivos = X.sinActivos, n = X.n, porFila = X.porFila;
+      var geo = G.carGeometry(), pa = geo.attributes.position.array, na = geo.attributes.normal.array, ca = geo.attributes.color.array, col = new THREE.Color(), k, j;
       for (k = 0; k < n; k++) {
         var fila = Math.floor(k / porFila), enFila = k % porFila, nf = Math.min(porFila, n - fila * porFila);
-        var cx = (Z.x0 + Z.x1) / 2 + (enFila - (nf - 1) / 2) * Math.min(6.2, ancho / Math.max(nf, 1)), cz = Z.z0 + 5 + fila * 6.5;
+        var cx = (Z.x0 + Z.x1) / 2 + (enFila - (nf - 1) / 2) * 6, cz = Z.z0 + 3.2 + fila * 6.2;
         if (sinActivos) col.setHSL(real01(semillaEdificio(po, CANAL_EXPO, k + 1)), 0.65, 0.5); else col.setHSL(UT.hash2(coches[k], 23), 0.65, 0.5);
         var giro = 0.5 + (k % 2) * 0.25, cg = Math.cos(giro), sg = Math.sin(giro);
         for (j = 0; j < pa.length; j += 3) {
@@ -1020,6 +1087,7 @@
         }
         pon(E.dec, { g: 'cyl', a: 24, sx: 5.6, sy: 0.3, sz: 5.6, x: cx, y: E.yb, z: cz, c: [0.9, 0.9, 0.92] });            // la peana
         E.solidos.push({ x0: cx - 2.8, x1: cx + 2.8, z0: cz - 2.8, z1: cz + 2.8 });
+        (E.peanas || (E.peanas = [])).push({ x: +cx.toFixed(3), z: +cz.toFixed(3), r: 2.8 });
       }
       geo.dispose();
       var dx = Z.x1 - 3;
@@ -1379,7 +1447,7 @@
     function salirAndando() {
       if (!casa || seq) return false;
       if (casa.visible !== casa.bajo) return salirYa();
-      var po = casa.po, pz = po.puerta, fuera = aMundo(casa.m, pz.px, po.zA + 1.2), yf = ctx.mundo.groundH(fuera.x, fuera.z) - casa.m.oy;
+      var po = casa.po, pz = po.puerta, fuera = aMundo(casa.m, pz.px, po.zA + 1.2), yf = sueloEn(fuera.x, fuera.z) - casa.m.oy;
       casa.entrado = false; sel = null;
       corre([pasoAndar([{ x: pz.px, z: casa.bajo.salida.z - 0.3 }, { x: pz.px, z: pz.zf + 0.4 }, { x: pz.px, z: po.zA + 1.2, y: yf }], Math.PI), pasoFn(function () { cierraCasa(); })]);
       seq.salida = true;
@@ -1389,8 +1457,12 @@
     function salirYa() {
       if (!casa) return false;
       var po = casa.po, fuera = aMundo(casa.m, po.puerta.px, po.zA + 1.2);
-      walk.pos.set(fuera.x, ctx.mundo.groundH(fuera.x, fuera.z), fuera.z); walk.yaw = angulo(po.yaw + Math.PI); walk.pitch = 0.05; walk.fly = 0;
+      walk.pos.set(fuera.x, 0, fuera.z); walk.yaw = angulo(po.yaw + Math.PI); walk.pitch = 0.05; walk.fly = 0;
       cierraCasa();
+      // Fuera de todo sólido del catastro (un vecino muy pegado), salvo en el patio
+      // del propio edificio, que el catastro tiene por macizo y anda este módulo.
+      if (!po.patio && ctx.catastro && ctx.catastro.empujarFuera) ctx.catastro.empujarFuera(walk.pos, 0.42);
+      walk.pos.y = sueloEn(walk.pos.x, walk.pos.z);
       return true;
     }
     /** Al salir de la cabina se mira a la puerta del piso (arriba) o a la de la calle (abajo). */
@@ -1467,19 +1539,26 @@
       if (k.w || (!sel && k.arrowup)) mz -= 1; if (k.s || (!sel && k.arrowdown)) mz += 1;
       if (k.a || (!sel && k.arrowleft)) mx -= 1; if (k.d || (!sel && k.arrowright)) mx += 1;
       walk.fly = 0;
-      var p = posLocal(), q = { x: p.x, z: p.z };
+      var p = posLocal(), q = { x: p.x, z: p.z }, ddx = 0, ddz = 0;
       if (mx || mz) {
         var n = Math.sqrt(mx * mx + mz * mz), sp = VEL * (k.shift ? 1.7 : 1) * dt, yl = yawLocal();
         mx /= n; mz /= n;
         var fx = -Math.sin(yl), fz = -Math.cos(yl), rx = Math.cos(yl), rz = -Math.sin(yl);
-        q.x += (fx * -mz + rx * mx) * sp; q.z += (fz * -mz + rz * mx) * sp;
+        ddx = (fx * -mz + rx * mx) * sp; ddz = (fz * -mz + rz * mx) * sp;
       }
-      empuja(q, R_JUGADOR, solidosDe(E));
-      var L = E.limites;
-      q.x = clamp(q.x, L.x0 + 0.05, L.x1 - 0.05);
-      if (!(E.salida && Math.abs(q.x - E.salida.x) < E.salida.ancho / 2)) q.z = clamp(q.z, L.z0 + 0.05, L.z1 - 0.05);
+      // En subpasos de 0,1 m como mucho (SUBPASO): ni un cuadro largo ni las
+      // mayúsculas atraviesan un tabique de 0,12 m.
+      var sol = solidosDe(E), L = E.limites, np = Math.max(1, Math.ceil(Math.sqrt(ddx * ddx + ddz * ddz) / SUBPASO)), i, sale = false;
+      for (i = 0; i < np && !sale; i++) {
+        q.x += ddx / np; q.z += ddz / np;
+        empuja(q, R_JUGADOR, sol);
+        q.x = clamp(q.x, L.x0 + 0.05, L.x1 - 0.05);
+        if (!(E.salida && Math.abs(q.x - E.salida.x) < E.salida.ancho / 2)) q.z = clamp(q.z, L.z0 + 0.05, L.z1 - 0.05);
+        sale = !!(E.salida && q.z > E.salida.z - 0.12 && Math.abs(q.x - E.salida.x) < E.salida.ancho / 2);
+      }
+      medidas.subpasos = np;
       ponLocal(q.x, q.z, E.yb);
-      if (E.salida && q.z > E.salida.z - 0.12 && Math.abs(q.x - E.salida.x) < E.salida.ancho / 2) salirAndando();
+      if (sale) salirAndando();
     }
 
     // ---- El patio de una L o de una U: se anda hasta la puerta del fondo --------------------
@@ -1504,44 +1583,59 @@
     function andaPatio(dt) {
       if (!puedeEntrar()) return false;
       var po = patioEn(walk.pos.x, walk.pos.z); if (!po) return false;
-      var P = po.pat, pz = po.puerta, k = ctx.keys(), mx = 0, mz = 0, q = { x: _pl.x, z: _pl.z }, R = 0.42;
+      var P = po.pat, pz = po.puerta, k = ctx.keys(), mx = 0, mz = 0, q = { x: _pl.x, z: _pl.z }, R = 0.42, ddx = 0, ddz = 0, i;
       if (k.w || k.arrowup) mz -= 1; if (k.s || k.arrowdown) mz += 1;
       if (k.a || k.arrowleft) mx -= 1; if (k.d || k.arrowright) mx += 1;
+      var sp = 6 * (walk.speed || 1) * (k.shift ? 5 : 1) * dt;
+      // Q/E como en el visor: bajar y subir. Al pasar de 2 m se vuela y el patio
+      // se lo deja al visor (que, por encima de la azotea, deja pasar).
+      if (k.q) walk.fly = Math.max(0, walk.fly - sp); if (k.e) walk.fly = Math.min(3000, walk.fly + sp);
+      if (walk.fly >= 2) return false;
       if (mx || mz) {
-        var n = Math.sqrt(mx * mx + mz * mz), sp = 6 * (walk.speed || 1) * (k.shift ? 5 : 1) * dt, yl = angulo(walk.yaw - po.m.yaw);
+        var n = Math.sqrt(mx * mx + mz * mz), yl = angulo(walk.yaw - po.m.yaw);
         mx /= n; mz /= n;
         var fx = -Math.sin(yl), fz = -Math.cos(yl), rx = Math.cos(yl), rz = -Math.sin(yl);
-        q.x += (fx * -mz + rx * mx) * sp; q.z += (fz * -mz + rz * mx) * sp;
+        ddx = (fx * -mz + rx * mx) * sp; ddz = (fz * -mz + rz * mx) * sp;
       }
       var solidos = [{ x0: -po.hw, x1: po.hw, z0: -po.hd, z1: P.z0 + 0.2 }, { x0: pz.px - pz.dw / 2, x1: pz.px + pz.dw / 2, z0: P.z0, z1: pz.zo }];
       if (P.cerradoA) solidos.push({ x0: -po.hw, x1: P.x0, z0: -po.hd, z1: po.hd });
       if (P.cerradoB) solidos.push({ x0: P.x1, x1: po.hw, z0: -po.hd, z1: po.hd });
-      empuja(q, R, solidos);
+      // Subpasos de 0,3 m (con mayúsculas el visor da 3 m por cuadro de 0,1 s).
+      var np = Math.max(1, Math.ceil(Math.sqrt(ddx * ddx + ddz * ddz) / SUBPASO_PATIO));
+      for (i = 0; i < np; i++) { q.x += ddx / np; q.z += ddz / np; empuja(q, R, solidos); }
       aMundo(po.m, q.x, q.z, _w);
-      walk.pos.x = _w.x; walk.pos.z = _w.z; walk.pos.y = MU.groundH(_w.x, _w.z); walk.fly = 0;
+      walk.pos.x = _w.x; walk.pos.z = _w.z; walk.pos.y = sueloEn(_w.x, _w.z);
       medidas.pasosPatio++;
       return true;
     }
 
     // ---- La cámara dentro, la vista por la puerta y la puerta automática ------------------
-    var modoPuerta = false, _fr = new THREE.Frustum(), _pm = new THREE.Matrix4(), _vm = new THREE.Matrix4(), _cq = new THREE.Quaternion(), _ce = new THREE.Euler(0, 0, 0, 'YXZ'), _cv = new THREE.Vector3(), _bx = new THREE.Box3(), _bp = new THREE.Vector3();
+    var modoPuerta = false, _fr = new THREE.Frustum(), _pm = new THREE.Matrix4(), _vm = new THREE.Matrix4(), _mm = new THREE.Matrix4(), _cq = new THREE.Quaternion(), _ce = new THREE.Euler(0, 0, 0, 'YXZ'), _cv = new THREE.Vector3(), _bx = new THREE.Box3(), _bp = new THREE.Vector3();
     var CERCA_DENTRO = 0.05, LEJOS_CIEGO = 90;
     /** El ojo, en el marco local del edificio (x, z) y en cota de mundo (y). */
     function ojoLocal() { aLocal(casa.m, walk.pos.x, walk.pos.z, _l); return { x: _l.x, z: _l.z, y: walk.pos.y + walk.fly + ctx.EYE }; }
-    /** ¿Se ve algún hueco a la ciudad desde aquí? Prueba conservadora: la caja de cada hueco, 0,3 m más ancha, contra el tronco de la cámara. */
+    /**
+     * ¿Se ve algún hueco a la ciudad desde aquí? Prueba conservadora: la caja de
+     * cada hueco, 0,3 m más ancha, contra el tronco de la cámara. Todo en el marco
+     * local del edificio (tronco de proyección × vista × modelo del edificio), donde
+     * las cajas de los huecos van alineadas con los ejes. Hasta la ronda 2 se
+     * probaban en el mundo, con la caja que envuelve la del hueco girada: en un
+     * edificio girado 40° la de una vidriera de 3 m llegaba a 1,2 m dentro del
+     * zaguán, la cámara quedaba dentro y el lejano ciego no se aplicaba mirando al
+     * fondo del zaguán.
+     */
     function huecoALaVista(E) {
       var ab = E && E.aberturas; if (!ab || !ab.length) return false;
-      var cam = ctx.camera, i, j, w = {};
+      var cam = ctx.camera, i;
       _ce.set(walk.pitch, walk.yaw, 0, 'YXZ'); _cq.setFromEuler(_ce);
       _cv.set(walk.pos.x, walk.pos.y + walk.fly + ctx.EYE, walk.pos.z);
       _vm.compose(_cv, _cq, _s.set(1, 1, 1)).invert();
-      _fr.setFromProjectionMatrix(_pm.multiplyMatrices(cam.projectionMatrix, _vm));
+      _ce.set(0, casa.m.yaw, 0, 'YXZ'); _cq.setFromEuler(_ce);
+      _mm.compose(_bp.set(casa.m.ox, casa.m.oy, casa.m.oz), _cq, _s.set(1, 1, 1));
+      _fr.setFromProjectionMatrix(_pm.multiplyMatrices(cam.projectionMatrix, _vm).multiply(_mm));
       for (i = 0; i < ab.length; i++) {
-        var a = ab[i]; _bx.makeEmpty();
-        for (j = 0; j < 4; j++) {
-          aMundo(casa.m, j & 1 ? a.x1 + 0.3 : a.x0 - 0.3, j & 2 ? a.z1 + 0.3 : a.z0 - 0.3, w);
-          _bx.expandByPoint(_bp.set(w.x, casa.m.oy + E.yb + a.y0 - 0.3, w.z)); _bx.expandByPoint(_bp.set(w.x, casa.m.oy + E.yb + a.y1 + 0.3, w.z));
-        }
+        var a = ab[i];
+        _bx.min.set(a.x0 - 0.3, E.yb + a.y0 - 0.3, a.z0 - 0.3); _bx.max.set(a.x1 + 0.3, E.yb + a.y1 + 0.3, a.z1 + 0.3);
         if (_fr.intersectsBox(_bx)) return true;
       }
       return false;
@@ -1606,16 +1700,36 @@
       var cp = Math.cos(walk.pitch);
       return { o: { x: walk.pos.x, y: walk.pos.y + ctx.EYE, z: walk.pos.z }, d: { x: -Math.sin(walk.yaw) * cp, y: Math.sin(walk.pitch), z: -Math.cos(walk.yaw) * cp } };
     }
-    /** Lo que se tiene delante (a menos de 3,2 m y a menos de ~22°): lámpara, ascensor, salida. */
+    /**
+     * Primer corte (fracción 0..1 del segmento o+t·d, marco del edificio) con una
+     * pared del espacio (`E.muros`: cada trozo de pared, con su altura), o 1 si
+     * no corta ninguna. Una lámpara o un mueble al otro lado de un tabique no se
+     * alcanza ni con F ni con un clic.
+     */
+    function cortaMuro(E, ox, oy, oz, dx, dy, dz, tmax) {
+      var mejor = tmax, i, k, o = [ox, oy, oz], d = [dx, dy, dz];
+      for (i = 0; i < E.muros.length; i++) {
+        var w = E.muros[i], mn = [w.x0, w.y0, w.z0], mx = [w.x1, w.y1, w.z1], t0 = 0, t1 = mejor, fuera = false;
+        for (k = 0; k < 3 && !fuera; k++) {
+          if (Math.abs(d[k]) < 1e-9) { if (o[k] < mn[k] || o[k] > mx[k]) fuera = true; continue; }
+          var a = (mn[k] - o[k]) / d[k], b = (mx[k] - o[k]) / d[k];
+          if (a > b) { var tmp = a; a = b; b = tmp; }
+          if (a > t0) t0 = a; if (b < t1) t1 = b; if (t0 > t1) fuera = true;
+        }
+        if (!fuera && t0 < mejor) mejor = t0;
+      }
+      return mejor;
+    }
+    /** Lo que se tiene delante (a menos de 3,2 m, a menos de ~22° y sin pared en medio): lámpara, ascensor, salida. */
     function objetivo() {
       var E = casa && casa.visible; if (!E || seq) return null;
-      var v = ojo(), mejor = null, mc = 0.925, i, p = {};
+      var v = ojo(), mejor = null, mc = 0.925, i, p = {}, ol = aLocal(casa.m, v.o.x, v.o.z), oy = v.o.y - casa.m.oy;
       function mira(obj, x, y, z) {
         aMundo(casa.m, x, z, p);
         var dx = p.x - v.o.x, dy = casa.m.oy + y - v.o.y, dz = p.z - v.o.z, d = Math.sqrt(dx * dx + dy * dy + dz * dz);
         if (d > 3.2 || d < 0.05) return;
         var c = (dx * v.d.x + dy * v.d.y + dz * v.d.z) / d;
-        if (c > mc) { mc = c; mejor = obj; }
+        if (c > mc && cortaMuro(E, ol.x, oy, ol.z, x - ol.x, y - oy, z - ol.z, 1) >= 1) { mc = c; mejor = obj; }
       }
       for (i = 0; i < E.lamparas.length; i++) if (E.lamparas[i] && !E.lamparas[i].fija) mira({ tipo: 'lampara', i: i }, E.lamparas[i].x, E.lamparas[i].y, E.lamparas[i].z);
       for (i = 0; i < E.interact.length; i++) mira(E.interact[i], E.interact[i].x, E.interact[i].y, E.interact[i].z);
@@ -1638,7 +1752,8 @@
     /** Rayo (mundo) contra las cajas locales: muebles, lámparas, ascensor, salida. */
     function tocado(o, d) {
       var E = casa && casa.visible; if (!E) return null;
-      var lo = aLocal(casa.m, o.x, o.z), ld = dirLocal(casa.m, d.x, d.z), oy = o.y - casa.m.oy, mejor = null, mt = 6, i;
+      var lo = aLocal(casa.m, o.x, o.z), ld = dirLocal(casa.m, d.x, d.z), oy = o.y - casa.m.oy, mejor = null, i;
+      var mt = cortaMuro(E, lo.x, oy, lo.z, ld.x, d.y, ld.z, 6);                              // lo que hay detrás de una pared no se toca
       function prueba(obj, b) {
         var t0 = 0, t1 = mt, org = [lo.x, oy, lo.z], dir = [ld.x, d.y, ld.z], mn = [b.x0, b.y0, b.z0], mx = [b.x1, b.y1, b.z1], k;
         for (k = 0; k < 3; k++) {
@@ -1704,8 +1819,15 @@
       var mira = document.createElement('div');
       mira.style.cssText = 'position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:rgba(255,255,255,.75);box-shadow:0 0 2px #000;z-index:3;pointer-events:none;display:none';
       d.appendChild(txt); d.appendChild(btn);
-      ctx.container.appendChild(d); ctx.container.appendChild(mira);
-      hud = { el: d, txt: txt, btn: btn, mira: mira, html: '', btnOn: false, on: false };
+      // Una capa propia que este módulo no enciende ni apaga: quien oculte los
+      // hijos del contenedor (el modo foto de «extras») la oculta entera, y lo que
+      // el aviso cambie por dentro mientras tanto no la vuelve a enseñar.
+      var capa = document.createElement('div');
+      capa.className = 'umbralCapa';
+      capa.style.cssText = 'position:absolute;left:0;top:0;right:0;bottom:0;pointer-events:none;z-index:3';
+      capa.appendChild(d); capa.appendChild(mira);
+      ctx.container.appendChild(capa);
+      hud = { capa: capa, el: d, txt: txt, btn: btn, mira: mira, html: '', btnOn: false, on: false };
     }
     function escapa(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
     function pintaHud() {
@@ -1781,7 +1903,8 @@
         if (casa && casa.po.tipo === 'parcela') {                                             // la parcela ha cambiado: fuera si ya no es el mismo edificio
           var nuevo = porId[casa.po.id];
           if (!nuevo || nuevo.arch !== casa.po.arch || Math.abs(nuevo.o.y - casa.po.o.y) > 0.01) salirYa();
-          else if (Math.abs((nuevo.alto || 0) - (casa.po.alto || 0)) > 0.01) reabre(nuevo);       // otra altura: otro plan
+          else if (Math.abs((nuevo.alto || 0) - (casa.po.alto || 0)) > 0.01 ||                 // otra altura, u otra división en viviendas: otro plan
+            ((nuevo.pc && nuevo.pc.unidades) | 0) !== ((casa.po.pc && casa.po.pc.unidades) | 0)) reabre(nuevo);
           else {
             casa.po.pc = nuevo.pc;                                                            // el mismo edificio: dueño, venta y unidades al día
             if (!seq && casa.entrado && casa.visible === casa.bajo && casa.cabina) casa.piso = eligePiso(casa.plan);
@@ -1877,7 +2000,7 @@
       soltar: function () {
         cierraCasa();
         if (MAT) { for (var k in MAT) if (MAT[k] && MAT[k].dispose) MAT[k].dispose(); MAT = null; }
-        if (hud) { if (hud.el.parentNode) hud.el.parentNode.removeChild(hud.el); if (hud.mira.parentNode) hud.mira.parentNode.removeChild(hud.mira); hud = null; }
+        if (hud) { if (hud.capa.parentNode) hud.capa.parentNode.removeChild(hud.capa); hud = null; }
       }
     };
 
@@ -1907,7 +2030,9 @@
           plantas: plan.plantas || [0], unidadesPorPlanta: plan.upp || 1, piso: casa.piso || (casa.bajo && casa.bajo.piso) || null,
           planta: E && E.piso ? E.piso.planta : 0, pisoId: E ? E.pisoId || null : null, recuperado: !!(E && E.recuperado),
           titular: E && E.piso && plan.plantas ? titularPiso(plan, E.piso) : null, letrero: E ? E.letrero || null : null, coches: E ? E.coches || 0 : 0,
-          buzones: casa.bajo && casa.bajo.buzones ? casa.bajo.buzones.n : 0,
+          buzones: casa.bajo && casa.bajo.buzones ? casa.bajo.buzones.n : 0, peanas: E && E.peanas ? E.peanas.slice() : null,
+          sala: E && E.limites ? { x0: E.limites.x0, x1: E.limites.x1, z0: E.limites.z0, z1: E.limites.z1 } : null,
+          cuartos: E && E.cuartos ? JSON.parse(JSON.stringify(E.cuartos)) : null,
           pos: { x: +p.x.toFixed(3), z: +p.z.toFixed(3), y: +(walk.pos.y - casa.m.oy).toFixed(3) }, yawLocal: +yawLocal().toFixed(4),
           cabina: casa.cabina ? +casa.cabY.toFixed(3) : null, luces: luces, muebles: muebles, seleccion: sel ? sel.id : null,
           objetivo: (function () { var o = objetivo(); return o ? (o.tipo === 'lampara' ? 'lampara:' + o.i : o.tipo) : null; })(),
@@ -1925,6 +2050,13 @@
         return out.sort(function (a, b) { return a.d - b.d; });
       },
       total: function () { return portales.length; },
+      /** Dónde cae cada vivienda del edificio en el que se está: [{ n, planta, hueco }] (null si no cabe), y el ático. */
+      viviendas: function () {
+        if (!casa || !casa.plan.plantas) return null;
+        var plan = casa.plan, pc = plan.po.pc, U = pc ? pc.unidades | 0 : 0, l = [], n;
+        for (n = 1; n <= U; n++) { var st = sitioUnidad(plan, n); l.push(st ? { n: n, planta: st.planta, hueco: st.slot } : { n: n, planta: null, hueco: null }); }
+        return { unidades: U, plantas: plan.plantas.length, porPlanta: plan.upp, tramo: +(plan.fx1 - plan.fx0).toFixed(2), atico: !!pc && (!U || Math.ceil(U / plan.upp) < plan.plantas.length), lista: l };
+      },
       /** Planta n (0 = zaguán): en ascensor, o `inmediato` sin viaje. */
       irAPlanta: function (n, inmediato) {
         if (!casa || !casa.cabina) return false;
