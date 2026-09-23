@@ -26,7 +26,7 @@ use std::process::ExitCode;
 use rami_core::crypto::{address_from_pubkey, KeyPair};
 use rami_core::params::Params;
 use rami_core::store::ChainDir;
-use rami_core::tx::{signer_of, txid, verify_tx_con, AccountId, FirmaCtx, Tx};
+use rami_core::tx::{txid, verify_tx_con, AccountId, FirmaCtx, Tx};
 
 use rami_wallet::{
     build_buy_unit, build_claim_parcel, build_commit, build_divide_parcel, build_reveal, build_sell_unit, build_set_profile,
@@ -82,26 +82,40 @@ fn fee_of(args: &[String]) -> u64 {
     arg(args, "--fee").and_then(|s| s.parse().ok()).unwrap_or(1)
 }
 
-/// nonce siguiente = nonce en cadena + tx pendientes de este firmante, y el
+/// nonce siguiente = el que deja el mempool aplicado sobre la cabeza, y el
 /// contexto de firma que rige AHORA en esta cadena (regla v1 o v2 ligada a la
 /// red): con él se firma para que el nodo admita la tx.
 fn next_nonce(chain: &ChainDir, params: Params, me: &AccountId) -> Result<(u64, FirmaCtx), String> {
     let tree = chain.load_tree(params)?;
-    let base = tree.head_state()?.nonce_of(me);
     let ahora = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let firma = tree.firma_ctx(ahora);
-    // Solo cuentan las pendientes que AÚN valen bajo la regla vigente: una tx
-    // firmada con v1 antes de la activación ya no entrará en ningún bloque,
-    // así que su nonce sigue libre (el nodo la poda; aquí se ignora).
-    let pending = chain
-        .load_mempool()
-        .iter()
-        .filter(|t| signer_of(t) == Some(me) && verify_tx_con(t, &firma).is_ok())
-        .count() as u64;
-    Ok((base + pending, firma))
+    // Una pendiente que ya no vale —firmada con la regla anterior, o una
+    // compra que ganó otro— no cuenta y su nonce sigue libre. Hasta la
+    // v0.11.0 se contaban todas las del firmante que verificaban, y tras
+    // perder una compra `send` firmaba con un nonce que nadie admitía.
+    let (sim, _) = estado_con_mempool(chain, &tree, &firma)?;
+    Ok((sim.nonce_of(me), firma))
+}
+
+/// El estado de la cabeza con las pendientes del mempool aplicadas en orden
+/// (las que ya no aplican se saltan sin dejar nada) y la altura del bloque
+/// siguiente: lo que ve el nodo al admitir una tx nueva.
+fn estado_con_mempool(
+    chain: &ChainDir,
+    tree: &rami_core::blocktree::BlockTree,
+    firma: &FirmaCtx,
+) -> Result<(rami_core::state::State, u64), String> {
+    let mut sim = tree.head_state()?;
+    let altura = tree.get(&tree.head()).map(|n| n.block.header.height + 1).unwrap_or(1);
+    for t in chain.load_mempool() {
+        if verify_tx_con(&t, firma).is_ok() {
+            let _ = rami_core::state::apply_tx_sin_rastro(&mut sim, &t, altura, 1, &txid(&t), firma);
+        }
+    }
+    Ok((sim, altura))
 }
 
 fn submit(chain: &ChainDir, firma: &FirmaCtx, tx: &Tx) -> ExitCode {
@@ -366,17 +380,10 @@ fn enviar_ciudad(args: &[String], build: impl FnOnce(&FirmaCtx, &KeyPair, u64) -
     };
     let ahora = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let firma = tree.firma_ctx(ahora);
-    let mut sim = match tree.head_state() {
-        Ok(s) => s,
+    let (mut sim, altura) = match estado_con_mempool(&chain, &tree, &firma) {
+        Ok(v) => v,
         Err(e) => return die(&e),
     };
-    let altura = tree.get(&tree.head()).map(|n| n.block.header.height + 1).unwrap_or(1);
-    for t in chain.load_mempool() {
-        // Las que ya no aplican se saltan sin dejar nada en `sim`.
-        if verify_tx_con(&t, &firma).is_ok() {
-            let _ = rami_core::state::apply_tx_sin_rastro(&mut sim, &t, altura, 1, &txid(&t), &firma);
-        }
-    }
     let nonce = sim.nonce_of(&kp.public_bytes());
     let tx = build(&firma, &kp, nonce);
     if let Err(e) = verify_tx_con(&tx, &firma) {

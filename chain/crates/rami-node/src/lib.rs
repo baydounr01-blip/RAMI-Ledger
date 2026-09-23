@@ -36,7 +36,7 @@ use rami_core::params::Params;
 use rami_core::pow::{difficulty_from_bits, meets_target, pow_hash};
 use rami_core::state::{block_reward, Account, State, COIN};
 use rami_core::store::ChainDir;
-use rami_core::tx::{merkle_root_txids, signer_of, txid, verify_tx_con, AccountId, FirmaCtx, Tx, TxId};
+use rami_core::tx::{merkle_root_txids, signer_of, tx_size, txid, verify_tx_con, AccountId, FirmaCtx, Tx, TxId, MAX_BLOCK_BYTES, MAX_BLOCK_TXS};
 
 use rami_net::{Frame, NetConfig, NetEvent, Network, PeerId, TipInfo};
 use rami_net::identity::{fingerprint as fingerprint_of, identity_pow_ok, NodeIdentity};
@@ -85,6 +85,11 @@ const BAD_BLOCKS_CAP: usize = 4096;
 /// tamaño de la memoria de txids ya vistos.
 const MEMPOOL_MAX: usize = 5_000;
 const MEMPOOL_MAX_PER_SIGNER: usize = 64;
+/// Tamaño máximo de una tx que el mempool admite (política, no consenso: un
+/// bloque ajeno con una tx mayor se sigue validando por sus cotas). La mayor
+/// tx legítima es un Reveal con 4 KiB de señal y un secreto de 32 bytes;
+/// sin este tope, un secreto de varios megabytes ocupaba el mempool de todos.
+pub const MEMPOOL_TX_MAX_BYTES: usize = 64 * 1024;
 const SEEN_TX_CAP: usize = 100_000;
 /// Hashes por vuelta del minero antes de refrescar métricas/epoch.
 const MINE_CHUNK: u64 = 120_000;
@@ -150,8 +155,11 @@ fn try_apply(sim: &mut State, tx: &Tx, height: u64, firma: &FirmaCtx) -> Result<
 }
 
 /// Siguiente nonce de `a` para una tx nueva: el que le queda tras aplicar en
-/// orden, sobre `state` (la punta), las tx pendientes que valen bajo `firma`,
-/// igual que el bloque candidato. Una pendiente que dejó de valer (la compra
+/// orden, sobre `state` (la punta), las tx pendientes, igual que `accept_tx`
+/// al admitirlas. Las firmas no se vuelven a verificar: ya se verificaron al
+/// entrar y `podar_mempool_por_regla` retira las que dejan de valer (con el
+/// mempool lleno, verificar las 5 000 costaba unos 310 ms por llamada, en el
+/// hilo del nodo, en cada acción del panel). Una pendiente que dejó de valer (la compra
 /// de algo que otro compró antes, un acuñado en una vivienda que ya no es
 /// tuya…) no cuenta y su nonce vuelve a estar libre. Hasta la v0.11.0 se
 /// contaban todas las pendientes: tras perder una compra, cada tx nueva de esa
@@ -160,9 +168,7 @@ fn try_apply(sim: &mut State, tx: &Tx, height: u64, firma: &FirmaCtx) -> Result<
 pub fn nonce_siguiente(state: &State, mempool: &[Tx], height: u64, firma: &FirmaCtx, a: &AccountId) -> u64 {
     let mut sim = state.clone();
     for t in mempool {
-        if verify_tx_con(t, firma).is_ok() {
-            let _ = try_apply(&mut sim, t, height, firma);
-        }
+        let _ = try_apply(&mut sim, t, height, firma);
     }
     sim.nonce_of(a)
 }
@@ -196,7 +202,21 @@ pub fn build_candidate(
     let mut sim = state.clone();
     let mut included: Vec<Tx> = Vec::new();
     let mut fees: u128 = 0;
+    // Las cotas del bloque que comprueba `apply_block` (MAX_BLOCK_TXS con la
+    // coinbase, MAX_BLOCK_BYTES): hasta la v0.11.0 el candidato no las miraba
+    // y el mempool admite 5 000 tx, así que un mempool grande —o una sola tx
+    // enorme, un Reveal con un secreto de 3 MB— dejaba a todos los mineros
+    // fabricando bloques que nadie admite. La coinbase se cuenta con la
+    // recompensa máxima: su tamaño no depende del importe.
+    let mut bytes = tx_size(&Tx::Coinbase { height, to: miner, reward: u64::MAX, memo: CHANCELLOR.as_bytes().to_vec() });
     for tx in mempool {
+        if included.len() + 1 >= MAX_BLOCK_TXS {
+            break;
+        }
+        let tam = tx_size(tx);
+        if bytes + tam > MAX_BLOCK_BYTES {
+            continue;
+        }
         // Solo entran las tx firmadas bajo la regla que rige para ESTE
         // timestamp: así el bloque candidato es válido para todos los nodos
         // con los mismos parámetros (v1 antes de la activación, v2 después).
@@ -205,6 +225,7 @@ pub fn build_candidate(
         }
         if try_apply(&mut sim, tx, height, firma).is_ok() {
             fees += tx_fee(tx) as u128;
+            bytes += tam;
             included.push(tx.clone());
         }
     }
@@ -3005,9 +3026,11 @@ impl Node {
         // Retira del mempool las tx ya incluidas y las que ya no pueden
         // entrar en la rama de la punta (nonce gastado por otra).
         self.mempool.retain(|t| !included.contains(&txid(t)));
+        // La punta siempre tiene su estado guardado: se lee sin copiarlo
+        // (copiarlo en cada bloque costaba de 0,7 a 92 ms al ponerse al día).
         if !self.mempool.is_empty() {
-            if let Ok(st) = self.tree.head_state() {
-                podar_nonces_gastados(&st, &mut self.mempool);
+            if let Some(st) = self.tree.tip_state_of(&self.tree.head()) {
+                podar_nonces_gastados(st, &mut self.mempool);
             }
         }
         self.persist_mempool();
@@ -3026,6 +3049,10 @@ impl Node {
         let id = txid(&tx);
         if self.seen_tx.contains(&id) {
             return Ok(hex::encode(id));
+        }
+        let tam = tx_size(&tx);
+        if tam > MEMPOOL_TX_MAX_BYTES {
+            return Err(format!("tx de {tam} bytes > máximo del mempool {MEMPOOL_TX_MAX_BYTES}"));
         }
         // Topes del mempool (anti-DoS): nadie puede llenarnos la memoria a
         // base de tx válidas pero infinitas, ni acaparar el mempool un solo
@@ -3126,8 +3153,11 @@ impl Node {
                 // (las demás se podan y su nonce sigue libre) y que aún aplican
                 // sobre la punta (v0.11.0: `nonce_siguiente`).
                 let firma = self.firma_ctx(now_secs());
-                let state = self.tree.head_state().unwrap_or_default();
-                let n = nonce_siguiente(&state, &self.mempool, self.head_height() + 1, &firma, &a);
+                let altura = self.head_height() + 1;
+                let n = match self.tree.tip_state_of(&self.tree.head()) {
+                    Some(st) => nonce_siguiente(st, &self.mempool, altura, &firma, &a),
+                    None => nonce_siguiente(&self.tree.head_state().unwrap_or_default(), &self.mempool, altura, &firma, &a),
+                };
                 let _ = reply.send(n);
             }
             NodeCmd::RecentBlocks(n, reply) => {

@@ -438,9 +438,15 @@ fn comprobar_no_congelada(p: &Parcel, owner_unidad: &AccountId) -> Result<(), St
 /// candidato con un nonce que el bloque real no admite, y el minero fabricaba
 /// una y otra vez bloques que su propio árbol rechazaba. Aquí, si falla, se
 /// reponen la cuenta del firmante y `quemado`, que es lo único que `apply_tx`
-/// toca antes de un rechazo; lo fija el test
-/// `un_rechazo_sin_rastro_en_los_tipos_que_mutan_antes_de_fallar`. Si un
-/// tipo nuevo muta otra cosa antes de fallar, ese test tiene que cubrirlo.
+/// toca antes de un rechazo: los tipos que pagan a un tercero o mueven una
+/// parcela, un activo o una vivienda lo hacen cuando ya no queda ninguna
+/// comprobación que pueda fallar (en la vivienda, los contadores se
+/// comprueban antes de mutar). Lo fija el test
+/// `un_rechazo_sin_rastro_en_los_tipos_que_mutan_antes_de_fallar`, y la
+/// revisión lo sometió a 300 000 tx aleatorias sin un solo rechazo con
+/// rastro. Si un tipo nuevo muta otra cosa antes de fallar, ese test tiene
+/// que cubrirlo. Clonar el estado antes de cada tx no es alternativa: con el
+/// mempool lleno, un candidato pasaba de 0,3 s a entre 2 y 360 s.
 pub fn apply_tx_sin_rastro(
     state: &mut State,
     tx: &Tx,
@@ -918,6 +924,12 @@ pub fn apply_tx(
             if entra_en_ajena {
                 comprobar_tope_cuenta(state, to)?;
             }
+            // Los contadores, antes de mutar nada: así ningún rechazo de este
+            // tipo deja la vivienda movida (el invariante lo mantiene, pero la
+            // garantía de `apply_tx_sin_rastro` no depende de él).
+            if sale_de_ajena && state.viviendas_ajenas_de(from) < 1 {
+                return Err("contador de viviendas incoherente".into());
+            }
             consumir(state, from, total)?;
             let p = state.parcels.get_mut(&(*x, *y)).expect("existe");
             p.units[i].owner = *to;
@@ -973,6 +985,10 @@ pub fn apply_tx(
             let entra_en_ajena = *who != dueno_parcela;
             if entra_en_ajena {
                 comprobar_tope_cuenta(state, who)?;
+            }
+            // Como en TransferUnit: el contador del vendedor, antes de pagar.
+            if sale_de_ajena && state.viviendas_ajenas_de(&vendedor) < 1 {
+                return Err("contador de viviendas incoherente".into());
             }
             // La misma política que BuyAsset y BuyParcel: el comprador paga el
             // precio entero al vendedor y la comisión al minero; no se quema
@@ -1925,6 +1941,23 @@ mod tests {
             ("BuyAsset sin venta", Tx::BuyAsset { who: pb, asset: activo, max_price: COIN, fee: 1, nonce: n, sig: z }),
             ("SellParcel ajena", Tx::SellParcel { who: pb, x: 21, y: 45, price: COIN, fee: 1, nonce: n, sig: z }),
             ("BuyParcel sin venta", Tx::BuyParcel { who: pb, x: 21, y: 45, max_price: COIN, fee: 1, nonce: n, sig: z }),
+            ("Commit sin saldo para la comisión", Tx::Commit { by: pb, commitment: [3u8; 32], fee: 99 * COIN, nonce: n, sig: z }),
+            (
+                "SetProfile sin saldo para el nombre",
+                Tx::SetProfile {
+                    who: pb,
+                    handle: b"beatriz".to_vec(),
+                    display: Vec::new(),
+                    bio: Vec::new(),
+                    avatar: 0,
+                    color: 0,
+                    node_pk: [0u8; 32],
+                    node_sig: [0u8; 64],
+                    fee: 2 * COIN,
+                    nonce: n,
+                    sig: z,
+                },
+            ),
         ];
         let antes = foto(&k.st);
         let h = k.h + 1;

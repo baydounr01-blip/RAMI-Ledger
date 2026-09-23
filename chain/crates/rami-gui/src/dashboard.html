@@ -2127,7 +2127,7 @@
   function ramCampo(s){
     var v = ramTecleado(s);
     if(v === null){ document.getElementById("cityStatus").textContent = "✗ "+t("Importe inválido: usa coma o punto para los decimales y ningún separador de miles."); return null; }
-    if(/^\d{1,3}[.,]\d{3}$/.test(String(s).replace(/\s+/g, "")) && !confirm(t("Se leerá como")+" "+ramShort(Math.round(Number(v)*1e8))+" RAMI. "+t("Para escribir miles, escribe el número sin separador. ¿Continuar?"))) return null;
+    if(/^\d{1,3}[.,]\d{3}$/.test(String(s).replace(/\s+/g, "")) && !confirm(t("Se leerá como")+" "+ramEntrada(Math.round(Number(v)*1e8))+" RAMI. "+t("Para escribir miles, escribe el número sin separador. ¿Continuar?"))) return null;
     return v;
   }
   function ramShort(n){ n = Number(n)||0; return (n/1e8).toLocaleString("es-ES",{maximumFractionDigits:(n >= 1e8 ? 2 : 4)}); }

@@ -216,7 +216,7 @@ las notas de versión y quien toque el código después.
   libre aplicando las pendientes sobre la punta (una perdida ya no bloquea la
   cuenta) y `podar_nonces_gastados` retira del mempool las de nonce ya
   gastado al admitir cada bloque. Tests:
-  `un_rechazo_sin_rastro_en_los_tipos_que_mutan_antes_de_fallar` (15 tipos)
+  `un_rechazo_sin_rastro_en_los_tipos_que_mutan_antes_de_fallar` (17 tipos)
   y `el_candidato_no_arrastra_el_nonce_de_una_tx_que_dejo_de_valer` (el caso
   de la revisión, de punta a punta con el árbol). El consenso no cambia:
   `apply_block` ya trabajaba sobre una copia y tiraba el bloque entero.
@@ -232,3 +232,39 @@ las notas de versión y quien toque el código después.
 - **Concordancia**: «1 vivienda», «1 tuya».
 - Sin cambios: el tamaño de `/api/city` con la ciudad llena (unos 29 MB en el
   peor caso) sigue siendo un límite documentado en §10.
+
+## Ronda 2 de revisión (aprobada; menores arreglados)
+
+- **El candidato respeta las cotas del bloque** (defecto anterior a este
+  frente, de impacto en toda la red): `build_candidate` no miraba
+  `MAX_BLOCK_TXS` (4 096 con la coinbase) ni `MAX_BLOCK_BYTES` (2 MiB), y el
+  mempool admite 5 000 tx. Un solo Reveal con un secreto de 3 MB —`verify_tx_con`
+  acota la señal, no el secreto— dejaba a todos los mineros fabricando
+  bloques inválidos mientras siguiera en el mempool, que se guarda en disco.
+  Ahora el candidato se corta por número y salta lo que no cabe, y el mempool
+  no admite tx de más de 64 KiB (`MEMPOOL_TX_MAX_BYTES`, política: un bloque
+  ajeno se sigue validando por sus cotas). Tests en
+  `rami-node/tests/candidato_cotas.rs`: el Reveal de 3 MB se salta y el pago
+  que va detrás entra; 4 196 tx dan un bloque de 4 096 y el resto entra en el
+  siguiente.
+- **`NextNonce` ya no verifica 5 000 firmas por llamada**: `nonce_siguiente`
+  aplica las pendientes igual que `accept_tx` al admitirlas (las firmas ya se
+  verificaron al entrar; `podar_mempool_por_regla` retira las que dejan de
+  valer), y lee el estado de la punta sin copiarlo. Con el mempool lleno, la
+  revisión midió 319–530 ms por llamada, frente a 3,25 ms antes de la ronda 1.
+  La poda de nonces gastados al admitir un bloque tampoco copia ya el estado
+  (0,7–92 ms por bloque al ponerse al día).
+- **Contadores de vivienda antes de mutar**: `TransferUnit` y `BuyUnit`
+  comprueban el contador del que vende o transfiere antes de pagar o mover la
+  vivienda (`BuyParcel` ya lo hacía). El invariante lo cumplía, pero ahora la
+  garantía de `apply_tx_sin_rastro` no depende de él. El test de rechazos sin
+  rastro cubre 17 tipos (con `Commit` y `SetProfile`).
+- **La CLI calcula el nonce como el nodo**: `next_nonce` (send, stake,
+  commit, reveal, profile) usa el mismo `estado_con_mempool` que las órdenes
+  de la ciudad; antes contaba todas las pendientes del firmante.
+- **El diálogo de importes ambiguos enseña el importe exacto** («1,125», no
+  «1,13»).
+- Queda (anterior a este frente): una tx que deja de valer sin gastar su
+  nonce no caduca; ocupa sitio en el mempool hasta que otra con su nonce se
+  mina. Hace falta caducidad o una forma de cancelar.
+- `cargo test --workspace --release --locked`: 155 en verde.
