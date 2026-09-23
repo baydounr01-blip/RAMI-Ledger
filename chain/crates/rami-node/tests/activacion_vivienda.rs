@@ -12,7 +12,7 @@ use rami_core::crypto::KeyPair;
 use rami_core::params::Params;
 use rami_core::state::{viviendas_ajenas_recontadas, COIN};
 use rami_core::tx::{txid, verify_tx_con, FirmaCtx, Tx};
-use rami_node::{build_block, build_candidate, make_genesis, mine_header, now_secs};
+use rami_node::{build_block, build_candidate, make_genesis, mine_header, nonce_siguiente, now_secs, podar_nonces_gastados};
 use rami_wallet::{build_buy_unit, build_claim_parcel, build_divide_parcel, build_mint_asset, build_sell_unit, build_transfer, build_transfer_unit};
 
 fn mina(tree: &BlockTree, miner: [u8; 32], mempool: &[Tx]) -> rami_core::block::Block {
@@ -159,4 +159,90 @@ fn sin_fecha_la_vivienda_no_rige_y_nada_cambia() {
         tree.insert(b).unwrap();
         assert_eq!(tree.head_state().unwrap().parcels[&(5, 5)].unidades, 0);
     }
+}
+
+/// Revisión de la v0.11.0: un defecto anterior del candidato (una tx que
+/// falla después de subir el nonce dejaba ese nonce en la copia del estado)
+/// tenía con la vivienda una vía más. Ella tiene una vivienda en venta y deja
+/// en el mempool de un minero un acuñado en la parcela (nonce 1) y un pago
+/// (nonce 2). Otro minero mina la compra de su vivienda: el acuñado deja de
+/// valer. El candidato no puede arrastrar el nonce del acuñado fallido: si lo
+/// hiciera, el pago con nonce 2 entraría en un bloque que el propio árbol
+/// rechaza, y el minero lo repetiría en cada bloque.
+#[test]
+fn el_candidato_no_arrastra_el_nonce_de_una_tx_que_dejo_de_valer() {
+    let kp = KeyPair::from_secret(&[54u8; 32]);
+    let kp2 = KeyPair::from_secret(&[55u8; 32]);
+    let kp3 = KeyPair::from_secret(&[56u8; 32]);
+    let (yo, ella, tercero) = (kp.public_bytes(), kp2.public_bytes(), kp3.public_bytes());
+    let p = Params::regtest().con_dubai_desde(Some(0)).con_vivienda_desde(Some(0));
+    let mut arbol = BlockTree::new(make_genesis(false, p, yo), p).unwrap();
+    let ctx = arbol.firma_ctx(now_secs());
+    assert!(ctx.vivienda_rige());
+    for _ in 0..2 {
+        let b = mina(&arbol, yo, &[]);
+        arbol.insert(b).unwrap();
+    }
+    let n = arbol.head_state().unwrap().nonce_of(&yo);
+    let b = mina(
+        &arbol,
+        yo,
+        &[
+            build_claim_parcel(&ctx, &kp, 21, 45, "Residencial", 7, 1, n),
+            build_transfer(&ctx, &kp, ella, 10 * COIN, 1, n + 1),
+            build_transfer(&ctx, &kp, tercero, 10 * COIN, 1, n + 2),
+        ],
+    );
+    assert_eq!(b.txs.len(), 4);
+    arbol.insert(b).unwrap();
+    let b = mina(&arbol, yo, &[build_divide_parcel(&ctx, &kp, 21, 45, 4, 1, n + 3), build_transfer_unit(&ctx, &kp, 21, 45, 2, ella, 1, n + 4)]);
+    assert_eq!(b.txs.len(), 3);
+    arbol.insert(b).unwrap();
+    let b = mina(&arbol, yo, &[build_sell_unit(&ctx, &kp2, 21, 45, 2, 2 * COIN, 1, 0)]);
+    assert_eq!(b.txs.len(), 2);
+    arbol.insert(b).unwrap();
+
+    // El mempool del minero: el acuñado de ella y, detrás, su pago.
+    let acuna = build_mint_asset(&ctx, &kp2, 21, 45, 1, "cuadro", 1, 1);
+    let paga = build_transfer(&ctx, &kp2, yo, COIN, 1, 2);
+    let hoy = mina(&arbol, yo, &[acuna.clone(), paga.clone()]);
+    assert_eq!(hoy.txs.len(), 3, "con el estado de ahora las dos valen");
+
+    // Otro minero mina la compra de la vivienda de ella.
+    let b = mina(&arbol, tercero, &[build_buy_unit(&ctx, &kp3, 21, 45, 2, 2 * COIN, 1, 0)]);
+    assert_eq!(b.txs.len(), 2);
+    arbol.insert(b).unwrap();
+    assert_eq!(arbol.head_state().unwrap().parcels[&(21, 45)].units[1].owner, tercero);
+
+    // El candidato sobre la nueva cabeza: el acuñado ya no vale y el pago
+    // tampoco (el nonce de ella sigue en 1). El bloque es válido.
+    let manana = mina(&arbol, yo, &[acuna.clone(), paga.clone()]);
+    let lleva = manana.txs.len();
+    if let Err(e) = arbol.insert(manana) {
+        panic!("el árbol rechaza el bloque de su propio minero ({lleva} tx): {e}");
+    }
+    assert_eq!(lleva, 1, "ni el acuñado ni el pago entran");
+    let st = arbol.head_state().unwrap();
+    assert_eq!(st.nonce_of(&ella), 1);
+
+    // Y la cuenta de ella no se queda bloqueada: el nonce del acuñado perdido
+    // vuelve a estar libre (contando las dos pendientes, sería 3 y ninguna tx
+    // nueva de ella entraría nunca).
+    let h = arbol.get(&arbol.head()).unwrap().block.header.height + 1;
+    let mut mempool = vec![acuna, paga];
+    assert_eq!(nonce_siguiente(&st, &mempool, h, &ctx, &ella), 1);
+    let nueva = build_transfer(&ctx, &kp2, tercero, COIN, 1, 1);
+    mempool.push(nueva.clone());
+    let b = mina(&arbol, yo, &mempool);
+    assert_eq!(b.txs, vec![b.txs[0].clone(), nueva], "entra la nueva, con el nonce que quedó libre");
+    arbol.insert(b).unwrap();
+    // El acuñado perdido (nonce 1, ya gastado) sale del mempool; el pago
+    // (nonce 2) sigue y entra en el bloque siguiente: lo firmó ella.
+    let st = arbol.head_state().unwrap();
+    assert_eq!(podar_nonces_gastados(&st, &mut mempool), 2, "el acuñado y la nueva (ya minada) tienen nonce 1 < 2");
+    assert_eq!(mempool.len(), 1);
+    let b = mina(&arbol, yo, &mempool);
+    assert_eq!(b.txs.len(), 2);
+    arbol.insert(b).unwrap();
+    assert_eq!(arbol.head_state().unwrap().nonce_of(&ella), 3);
 }

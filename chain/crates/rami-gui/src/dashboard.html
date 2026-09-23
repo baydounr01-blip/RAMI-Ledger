@@ -1282,7 +1282,9 @@
     var elR = document.getElementById("conRegla");
     if(!elR) return;
     if(!c){ elR.textContent = "—"; return; }
-    var vig = c.regla_vigente || 1, sop = c.regla_soportada || 1;
+    // regla_entendida está en la misma escala que regla_vigente (1–4);
+    // regla_soportada es la de Status.rule (1–5) y no se compara con ella.
+    var vig = c.regla_vigente || 1, sop = c.regla_entendida || c.regla_soportada || 1;
     elR.textContent = "v"+vig;
     document.getElementById("conSoporta").textContent = t("este monedero entiende hasta")+" v"+sop;
     var d = document.getElementById("conDesde");
@@ -2112,10 +2114,22 @@
   // separadores): ramFmt es para leer y escribe «2,5» o «1.000», que el nodo
   // lee como «importe inválido» o como 1 RAMI.
   function ramExacto(n){ n = Math.max(0, Math.floor(Number(n)||0)); var dec = String(n % 1e8); while(dec.length < 8) dec = "0"+dec; return Math.floor(n/1e8)+"."+dec; }
-  // Lo mismo para rellenar un campo que la persona puede editar («2.5»).
-  function ramEntrada(n){ return ramExacto(n).replace(/\.?0+$/, ""); }
-  // Lo que teclea la persona: «2,5» también vale (coma decimal), sin espacios.
-  function ramTecleado(s){ s = String(s||"").replace(/\s+/g, ""); return (s.indexOf(",") >= 0 && s.indexOf(".") < 0) ? s.replace(",", ".") : s; }
+  // Para rellenar un campo que la persona puede editar: como lo escribe el
+  // panel al mostrarlo (coma decimal, «2,5») y sin separador de miles.
+  function ramEntrada(n){ return ramExacto(n).replace(/\.?0+$/, "").replace(".", ","); }
+  // Lo que teclea la persona en un campo de importe: coma o punto decimal
+  // («2,5» o «2.5»), hasta 8 decimales, sin separador de miles. Devuelve el
+  // texto para el nodo («2.5») o null si no es un importe.
+  function ramTecleado(s){ s = String(s||"").replace(/\s+/g, ""); return /^\d+([.,]\d{0,8})?$/.test(s) ? s.replace(",", ".") : null; }
+  // ramTecleado para los campos de la ciudad: si no es un importe, lo dice en
+  // cityStatus y devuelve null; si se lee de dos maneras («1.500»: ¿uno y
+  // medio o mil quinientos?), pregunta enseñando cómo se va a leer.
+  function ramCampo(s){
+    var v = ramTecleado(s);
+    if(v === null){ document.getElementById("cityStatus").textContent = "✗ "+t("Importe inválido: usa coma o punto para los decimales y ningún separador de miles."); return null; }
+    if(/^\d{1,3}[.,]\d{3}$/.test(String(s).replace(/\s+/g, "")) && !confirm(t("Se leerá como")+" "+ramShort(Math.round(Number(v)*1e8))+" RAMI. "+t("Para escribir miles, escribe el número sin separador. ¿Continuar?"))) return null;
+    return v;
+  }
   function ramShort(n){ n = Number(n)||0; return (n/1e8).toLocaleString("es-ES",{maximumFractionDigits:(n >= 1e8 ? 2 : 4)}); }
   function shortAddr(h){ return h ? h.slice(0,8)+"…"+h.slice(-6) : "—"; }
   function dhms(sec){ sec = Math.max(0, sec|0); var d = Math.floor(sec/86400), h = Math.floor(sec%86400/3600), m = Math.floor(sec%3600/60); return (d ? d+" d " : "") + h+" h "+m+" min"; }
@@ -2229,16 +2243,11 @@
       if(mine){
         if(dubai){
           h += cityForm('<strong>'+t("Vender la empresa")+'</strong>'+
-            '<label class="field" style="margin-top:10px"><span class="cap">'+t("Precio (RAMI)")+'</span><input id="cySalePrice" placeholder="'+ramShort(price*2)+'" inputmode="decimal" value="'+(p.sale ? ramEntrada(p.sale) : "")+'"></label>'+
+            '<label class="field" style="margin-top:10px"><span class="cap">'+t("Precio (RAMI)")+'</span><input id="cySalePrice" placeholder="'+ramEntrada(price*2)+'" inputmode="decimal" value="'+(p.sale ? ramEntrada(p.sale) : "")+'"></label>'+
             '<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn" id="cySell">'+t("Publicar venta")+'</button>'+(p.sale ? '<button class="btn ghost" id="cyUnsell">'+t("Retirar de la venta")+'</button>' : '')+'</div>'+
             '<p class="note">'+t("Quien compre paga el precio a tu dirección; la operación queda en la cadena y alimenta la cotización.")+'</p>');
         }
-        var kinds = ASSET_NAMES.slice(0, dubai ? 4 : 2), akSel = '<select id="cyAKind">'+kinds.map(function(k,i){ if(i===2 && p.kind!==SECTOR_CONCESIONARIO) return ""; return '<option value="'+i+'">'+t(k)+'</option>'; }).join("")+'</select>';
-        var mintNote = dubai ? t("Precio quemado: planta u objeto 1 RAMI, vehículo 5 RAMI (solo concesionarios), local 20 RAMI.") : t("Precio quemado: 1 RAMI.");
-        h += cityForm('<strong>'+t("Acuñar activo")+'</strong>'+
-          '<label class="field" style="margin-top:10px"><span class="cap">Tipo</span>'+akSel+'</label>'+
-          '<label class="field"><span class="cap">'+t("Descripción (máx. 64 bytes)")+'</span><input id="cyMeta" placeholder="'+t("Planta #1 · lote primavera")+'"></label>'+
-          '<button class="btn" id="cyMint">'+t("Acuñar")+'</button><p class="note">'+mintNote+'</p>');
+        h += acunarHtml(p, dubai, "");
         if(p.kind===SECTOR_GRANJA){
           h += cityForm('<strong>'+t("Repartir cosecha")+'</strong>'+
             '<label class="field" style="margin-top:10px"><span class="cap">'+t("Total a repartir (RAMI, de tu saldo)")+'</span><input id="cyTotal" placeholder="9" inputmode="decimal"></label>'+
@@ -2251,6 +2260,11 @@
           '<button class="btn ghost" id="cyClaim">'+t("Guardar (solo comisión)")+'</button>');
       }
       h += viviendasHtml(p, me, d, pend);
+      // Escritura de vivienda: quien tiene una vivienda en la parcela también
+      // acuña en ella (el consenso lo admite desde la activación).
+      if(!mine && d.vivienda && me && (p.units||[]).some(function(u){ return u.owner===me; })){
+        h += acunarHtml(p, dubai, t("Tienes una vivienda en esta parcela: puedes acuñar activos en ella y serán tuyos."));
+      }
     }
     if(assets.length){
       h += '<div style="margin-top:12px"><strong>'+t("Activos en esta parcela")+'</strong></div>';
@@ -2283,6 +2297,16 @@
   // Hechos del nodo (/api/city: unidades, units, vivienda*); las reglas y los
   // topes los aplica el consenso, aquí solo se muestran y se piden.
   var VIV_MAX_PARCELA = 64, VIV_MAX_CUENTA = 16;
+  // El formulario de acuñar: para el dueño de la parcela y, desde la
+  // escritura de vivienda, para el dueño de cualquiera de sus viviendas.
+  function acunarHtml(p, dubai, nota){
+    var kinds = ASSET_NAMES.slice(0, dubai ? 4 : 2), akSel = '<select id="cyAKind">'+kinds.map(function(k,i){ if(i===2 && p.kind!==SECTOR_CONCESIONARIO) return ""; return '<option value="'+i+'">'+t(k)+'</option>'; }).join("")+'</select>';
+    var mintNote = dubai ? t("Precio quemado: planta u objeto 1 RAMI, vehículo 5 RAMI (solo concesionarios), local 20 RAMI.") : t("Precio quemado: 1 RAMI.");
+    return cityForm('<strong>'+t("Acuñar activo")+'</strong>'+(nota ? '<p class="note" style="margin-top:6px">'+nota+'</p>' : '')+
+      '<label class="field" style="margin-top:10px"><span class="cap">Tipo</span>'+akSel+'</label>'+
+      '<label class="field"><span class="cap">'+t("Descripción (máx. 64 bytes)")+'</span><input id="cyMeta" placeholder="'+t("Planta #1 · lote primavera")+'"></label>'+
+      '<button class="btn" id="cyMint">'+t("Acuñar")+'</button><p class="note">'+mintNote+'</p>');
+  }
   function viviendaDueno(u, me){
     if(me && u.owner===me) return "<b style='color:var(--accent)'>"+t("tú")+"</b>";
     return u.handle ? "<b>@"+esc(u.handle)+"</b>" : esc(shortAddr(u.owner));
@@ -2328,7 +2352,8 @@
       return h+'</div>';
     }
     var enVenta = units.filter(function(u){ return u.sale; }).length, mias = units.filter(function(u){ return me && u.owner===me; }).length;
-    h += '<div class="note" style="margin-top:6px">'+p.unidades+" "+t("viviendas")+" · "+enVenta+" "+t("en venta")+(mias ? " · "+mias+" "+t("tuyas") : "")+'</div>';
+    h += '<div class="note" style="margin-top:6px">'+(p.unidades === 1 ? t("1 vivienda") : p.unidades+" "+t("viviendas"))+" · "+enVenta+" "+t("en venta")+
+      (mias ? " · "+(mias === 1 ? t("1 tuya") : mias+" "+t("tuyas")) : "")+'</div>';
     if(p.sale) h += '<div class="note">'+t("La parcela está en venta: las viviendas de su dueño van con ella y no se venden ni se transfieren sueltas.")+'</div>';
     h += '<div style="max-height:320px;overflow-y:auto;margin-top:6px">';
     // Una línea por vivienda (hasta 64): número, dueño, venta; lo de quien
@@ -2369,7 +2394,7 @@
       if(!(v >= 1 && v <= VIV_MAX_PARCELA)){ document.getElementById("cityStatus").textContent = "✗ "+t("De 1 a 64 viviendas."); return; }
       if(confirm(t("Dividirás la parcela en")+" "+v+" "+t("viviendas. Solo se divide una vez. ¿Continuar?"))) cityAct("/api/city/divide", {x:x, y:y, unidades:v}, t("parcela dividida"));
     }
-    else if(b.classList.contains("cyVivSell")) cityAct("/api/city/unit_sell", {x:x, y:y, n:n, price:ramTecleado(campo("cyVivPrice"))}, t("venta publicada"));
+    else if(b.classList.contains("cyVivSell")){ var pv = ramCampo(campo("cyVivPrice")); if(pv !== null) cityAct("/api/city/unit_sell", {x:x, y:y, n:n, price:pv}, t("venta publicada")); }
     else if(b.classList.contains("cyVivUnsell")) cityAct("/api/city/unit_sell", {x:x, y:y, n:n, price:"0"}, t("venta retirada"));
     else if(b.classList.contains("cyVivXfer")) cityAct("/api/city/unit_transfer", {x:x, y:y, n:n, to:campo("cyVivTo")}, t("vivienda transferida"));
     else if(b.classList.contains("cyVivBuy")){
@@ -2481,12 +2506,12 @@
     var x = city.sel.x, y = city.sel.y, id = b.getAttribute("data-id"), p = parcelAt(x,y);
     if(b.id==="cyClaim"){ cityAct("/api/city/claim", {x:x,y:y,name:document.getElementById("cyName").value.trim(),kind:Number(document.getElementById("cyKind").value)}, t("parcela reclamada")); }
     else if(b.id==="cyMint"){ cityAct("/api/city/mint", {x:x,y:y,kind:Number(document.getElementById("cyAKind").value),meta:document.getElementById("cyMeta").value.trim()}, t("activo acuñado")); }
-    else if(b.id==="cyHarvest"){ if(confirm(t("Repartirás ese total de TU saldo entre los arrendatarios activos. ¿Continuar?"))) cityAct("/api/city/harvest", {x:x,y:y,total:document.getElementById("cyTotal").value.trim()}, t("cosecha repartida")); }
-    else if(b.id==="cySell"){ cityAct("/api/city/sell", {x:x,y:y,price:document.getElementById("cySalePrice").value.trim()}, t("venta publicada")); }
+    else if(b.id==="cyHarvest"){ var tv = ramCampo(document.getElementById("cyTotal").value); if(tv !== null && confirm(t("Repartirás ese total de TU saldo entre los arrendatarios activos. ¿Continuar?"))) cityAct("/api/city/harvest", {x:x,y:y,total:tv}, t("cosecha repartida")); }
+    else if(b.id==="cySell"){ var sv = ramCampo(document.getElementById("cySalePrice").value); if(sv !== null) cityAct("/api/city/sell", {x:x,y:y,price:sv}, t("venta publicada")); }
     else if(b.id==="cyUnsell"){ cityAct("/api/city/sell", {x:x,y:y,price:"0"}, t("venta retirada")); }
     else if(b.id==="cyBuy"){ if(p && p.sale && confirm(t("Pagarás")+" "+ramShort(p.sale)+" RAMI "+t("al dueño. ¿Continuar?"))) cityAct("/api/city/buy", {x:x,y:y,max_price:ramExacto(p.sale)}, t("compra enviada")); }
-    else if(b.classList.contains("cyList")){ cityAct("/api/city/list", {asset:id, price:document.querySelector('.cyPrice[data-id="'+id+'"]').value.trim(), term:Number(document.querySelector('.cyTerm[data-id="'+id+'"]').value)}, t("alquiler publicado")); }
-    else if(b.classList.contains("cySellA")){ cityAct("/api/city/sell_asset", {asset:id, price:document.querySelector('.cyPrice[data-id="'+id+'"]').value.trim()}, t("venta publicada")); }
+    else if(b.classList.contains("cyList")){ var lv = ramCampo(document.querySelector('.cyPrice[data-id="'+id+'"]').value); if(lv !== null) cityAct("/api/city/list", {asset:id, price:lv, term:Number(document.querySelector('.cyTerm[data-id="'+id+'"]').value)}, t("alquiler publicado")); }
+    else if(b.classList.contains("cySellA")){ var av = ramCampo(document.querySelector('.cyPrice[data-id="'+id+'"]').value); if(av !== null) cityAct("/api/city/sell_asset", {asset:id, price:av}, t("venta publicada")); }
     else if(b.classList.contains("cyUnsellA")){ cityAct("/api/city/sell_asset", {asset:id, price:"0"}, t("venta retirada")); }
     else if(b.classList.contains("cyBuyA")){ var pr = Number(b.getAttribute("data-price")); if(confirm(t("Pagarás")+" "+ramShort(pr)+" RAMI "+t("al dueño. ¿Continuar?"))) cityAct("/api/city/buy_asset", {asset:id, max_price:ramExacto(pr)}, t("compra enviada")); }
     else if(b.classList.contains("cyRent")){ cityAct("/api/city/rent", {asset:id}, t("activo alquilado")); }

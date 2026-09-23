@@ -138,12 +138,45 @@ pub fn tx_fee(tx: &Tx) -> u64 {
 /// reglas que la validación de bloques (`apply_tx`): así el mempool y el bloque
 /// candidato nunca admiten una tx que luego invalidaría el bloque minado (y
 /// dejaría al minero atascado). `height` = altura del bloque en que iría.
-/// Mutar `sim` permite encadenar varias en el mismo bloque candidato.
+/// Mutar `sim` permite encadenar varias en el mismo bloque candidato; por eso
+/// una tx que falla no puede dejar nada en `sim` (v0.11.0: antes, un rechazo
+/// después de `require_nonce` dejaba el nonce subido y la siguiente tx del
+/// mismo firmante entraba en un bloque inválido; `apply_tx_sin_rastro`).
 fn try_apply(sim: &mut State, tx: &Tx, height: u64, firma: &FirmaCtx) -> Result<(), String> {
     if matches!(tx, Tx::Coinbase { .. }) {
         return Err("coinbase no va en mempool".into());
     }
-    rami_core::state::apply_tx(sim, tx, height, 1, &txid(tx), firma)
+    rami_core::state::apply_tx_sin_rastro(sim, tx, height, 1, &txid(tx), firma)
+}
+
+/// Siguiente nonce de `a` para una tx nueva: el que le queda tras aplicar en
+/// orden, sobre `state` (la punta), las tx pendientes que valen bajo `firma`,
+/// igual que el bloque candidato. Una pendiente que dejó de valer (la compra
+/// de algo que otro compró antes, un acuñado en una vivienda que ya no es
+/// tuya…) no cuenta y su nonce vuelve a estar libre. Hasta la v0.11.0 se
+/// contaban todas las pendientes: tras perder una compra, cada tx nueva de esa
+/// cuenta llevaba un nonce que nadie admitía mientras la perdida siguiera en
+/// el mempool (y seguía siempre: el mempool solo se podaba por forma).
+pub fn nonce_siguiente(state: &State, mempool: &[Tx], height: u64, firma: &FirmaCtx, a: &AccountId) -> u64 {
+    let mut sim = state.clone();
+    for t in mempool {
+        if verify_tx_con(t, firma).is_ok() {
+            let _ = try_apply(&mut sim, t, height, firma);
+        }
+    }
+    sim.nonce_of(a)
+}
+
+/// Retira del mempool las tx que ya no pueden entrar en ningún bloque de la
+/// rama de `state`: su nonce es menor que el de su firmante (otra con ese
+/// nonce ya se minó). Devuelve cuántas retiró.
+pub fn podar_nonces_gastados(state: &State, mempool: &mut Vec<Tx>) -> usize {
+    let antes = mempool.len();
+    mempool.retain(|t| match (signer_of(t), rami_core::tx::nonce_of_tx(t)) {
+        (Some(w), Some(n)) => n >= state.nonce_of(w),
+        _ => true,
+    });
+    antes - mempool.len()
 }
 
 /// Construye la CABECERA candidata (sin minar, nonce 0) y las tx de un bloque a
@@ -388,10 +421,16 @@ pub struct PeerView {
 /// Hechos del cambio de consenso (regla de firma v2 ligada a la red).
 #[derive(Clone, Debug, Serialize, Default)]
 pub struct ConsensoInfo {
-    /// Regla que rige AHORA para las tx nuevas (1 o 2).
+    /// Regla que rige AHORA para las tx nuevas (`FirmaCtx::numero`: 1 firma
+    /// v1, 2 firma v2, 3 Dubái, 4 Dubái con la escritura de vivienda).
     pub regla_vigente: u32,
-    /// Regla más alta que entiende este binario.
+    /// Regla más alta que ANUNCIA este binario (`Status.rule`, otra escala:
+    /// 4 son los perfiles de la v0.10.0 y 5 la vivienda).
     pub regla_soportada: u32,
+    /// v0.11.0: la regla más alta que entiende este binario en la escala de
+    /// `regla_vigente` (la que regiría con todas las fechas cumplidas). Es la
+    /// que se compara con `regla_vigente` en el panel.
+    pub regla_entendida: u32,
     /// Instante de activación (Unix, UTC); `None` si esta red no la tiene.
     pub v2_desde: Option<u64>,
     /// Segundos hasta la activación (0 si ya rige o no hay fecha).
@@ -2963,8 +3002,14 @@ impl Node {
         let included: Vec<TxId> = block.txs.iter().map(txid).collect();
         self.tree.insert(block.clone())?;
         self.chain.append_block(&block)?;
-        // Retira del mempool las tx ya incluidas.
+        // Retira del mempool las tx ya incluidas y las que ya no pueden
+        // entrar en la rama de la punta (nonce gastado por otra).
         self.mempool.retain(|t| !included.contains(&txid(t)));
+        if !self.mempool.is_empty() {
+            if let Ok(st) = self.tree.head_state() {
+                podar_nonces_gastados(&st, &mut self.mempool);
+            }
+        }
         self.persist_mempool();
         Ok(true)
     }
@@ -3077,16 +3122,13 @@ impl Node {
                 let _ = reply.send(self.firma_ctx(now_secs()));
             }
             NodeCmd::NextNonce(a, reply) => {
-                let base = self.tree.head_state().map(|s| s.nonce_of(&a)).unwrap_or(0);
                 // Sólo cuentan las pendientes que aún valen bajo la regla vigente
-                // (las demás se podan y su nonce sigue libre).
+                // (las demás se podan y su nonce sigue libre) y que aún aplican
+                // sobre la punta (v0.11.0: `nonce_siguiente`).
                 let firma = self.firma_ctx(now_secs());
-                let pending = self
-                    .mempool
-                    .iter()
-                    .filter(|t| signer_of(t) == Some(&a) && verify_tx_con(t, &firma).is_ok())
-                    .count() as u64;
-                let _ = reply.send(base + pending);
+                let state = self.tree.head_state().unwrap_or_default();
+                let n = nonce_siguiente(&state, &self.mempool, self.head_height() + 1, &firma, &a);
+                let _ = reply.send(n);
             }
             NodeCmd::RecentBlocks(n, reply) => {
                 let chain = self.tree.observer_chain();
@@ -3429,6 +3471,7 @@ impl Node {
                 ConsensoInfo {
                     regla_vigente: ctx.numero(),
                     regla_soportada: REGLA_SOPORTADA,
+                    regla_entendida: FirmaCtx::v2(ctx.net).con_dubai(true).con_vivienda(true).numero(),
                     v2_desde,
                     faltan_segundos: v2_desde.map(|d| d.saturating_sub(ahora)).unwrap_or(0),
                     pares_v2: self.peer_rule.values().filter(|r| **r >= REGLA_V2).count(),

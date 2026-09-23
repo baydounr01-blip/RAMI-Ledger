@@ -427,9 +427,52 @@ fn comprobar_no_congelada(p: &Parcel, owner_unidad: &AccountId) -> Result<(), St
     Ok(())
 }
 
+/// `apply_tx` para quien sigue usando el estado después de un rechazo: el
+/// mempool y el bloque candidato del nodo, que encadenan transacciones sobre
+/// una copia. Dentro de un bloque da igual lo que un rechazo deje a medias:
+/// `apply_block_con` trabaja sobre una copia y tira el bloque entero. Fuera,
+/// no: varios tipos anteriores a la v0.11.0 suben el nonce (`require_nonce`),
+/// cobran la comisión o suman a lo quemado ANTES de una comprobación que
+/// puede fallar (Unstake, Reveal, TransferAsset, BuyAsset, MintAsset…). Con
+/// esa copia, la siguiente transacción del mismo firmante entraba en el
+/// candidato con un nonce que el bloque real no admite, y el minero fabricaba
+/// una y otra vez bloques que su propio árbol rechazaba. Aquí, si falla, se
+/// reponen la cuenta del firmante y `quemado`, que es lo único que `apply_tx`
+/// toca antes de un rechazo; lo fija el test
+/// `un_rechazo_sin_rastro_en_los_tipos_que_mutan_antes_de_fallar`. Si un
+/// tipo nuevo muta otra cosa antes de fallar, ese test tiene que cubrirlo.
+pub fn apply_tx_sin_rastro(
+    state: &mut State,
+    tx: &Tx,
+    height: u64,
+    index: usize,
+    this_txid: &TxId,
+    firma: &FirmaCtx,
+) -> Result<(), String> {
+    let firmante = crate::tx::signer_of(tx).copied();
+    let cuenta = firmante.and_then(|w| state.accounts.get(&w).cloned());
+    let quemado = state.quemado;
+    let r = apply_tx(state, tx, height, index, this_txid, firma);
+    if r.is_err() {
+        if let Some(w) = firmante {
+            match cuenta {
+                Some(c) => {
+                    state.accounts.insert(w, c);
+                }
+                None => {
+                    state.accounts.remove(&w);
+                }
+            }
+        }
+        state.quemado = quemado;
+    }
+    r
+}
+
 /// Transición de estado de UNA transacción. Pública para que el mempool y el
 /// constructor de bloques usen EXACTAMENTE las mismas reglas que la validación
-/// de bloques (una tx que pase aquí nunca invalidará el bloque minado).
+/// de bloques (una tx que pase aquí nunca invalidará el bloque minado; si
+/// falla y el estado se reutiliza, `apply_tx_sin_rastro`).
 /// `firma`: las reglas que rigen en el bloque (lo decide el árbol por su
 /// fecha): Dubái (precios por distrito, mercado, tipos nuevos) y la escritura
 /// de vivienda (`FirmaCtx::vivienda_rige`).
@@ -1819,5 +1862,104 @@ mod tests {
         let barata = s(&b, Tx::TransferUnit { from: pb, x: 21, y: 45, n: 2, to: pa, fee: 1, nonce: 0, sig: [0u8; 64] });
         assert!(apply_tx(&mut sim, &barata, k.h + 1, 2, &txid(&barata), &ctx).unwrap_err().contains("no eres el dueño"));
         assert_eq!(sim.nonce_of(&pb), 0);
+    }
+
+    /// Foto determinista de TODO el estado (los HashMap, ordenados).
+    fn foto(st: &State) -> String {
+        let mut cuentas: Vec<String> = st.accounts.iter().map(|(k, a)| format!("{}:{a:?}", hex::encode(k))).collect();
+        cuentas.sort();
+        let mut commits: Vec<String> = st.commits.iter().map(|(k, v)| format!("{k:?}{v:?}")).collect();
+        commits.sort();
+        let mut compromisos: Vec<String> = st.commit_commitment.iter().map(|(k, v)| format!("{k:?}{v:?}")).collect();
+        compromisos.sort();
+        let mut revelados: Vec<String> = st.revealed.iter().map(|k| format!("{k:?}")).collect();
+        revelados.sort();
+        format!(
+            "{cuentas:?}|{:?}|{:?}|{commits:?}|{compromisos:?}|{revelados:?}|{}|{}|{}|{:?}|{:?}|{:?}|{:?}|{:?}",
+            st.parcels, st.assets, st.height, st.city_fund, st.quemado, st.trades, st.profiles, st.handles, st.nodes, st.viviendas_ajenas
+        )
+    }
+
+    /// El candidato y el mempool del nodo encadenan transacciones sobre una
+    /// copia del estado. Los tipos anteriores a la v0.11.0 que suben el nonce,
+    /// cobran la comisión o queman ANTES de fallar dejan rastro con `apply_tx`
+    /// (y la siguiente tx del firmante entraba en un bloque inválido);
+    /// `apply_tx_sin_rastro` no deja ninguno, en ningún tipo. Los cuatro de
+    /// vivienda no dejan rastro ni siquiera con `apply_tx`.
+    #[test]
+    fn un_rechazo_sin_rastro_en_los_tipos_que_mutan_antes_de_fallar() {
+        let ctx = ctx_vivienda();
+        let a = KeyPair::from_secret(&[93u8; 32]);
+        let b = KeyPair::from_secret(&[94u8; 32]);
+        let (pa, pb) = (a.public_bytes(), b.public_bytes());
+        let mut k = Cadena::nueva(pa, ctx);
+        let s = |kp: &KeyPair, tx: Tx| signed_con(kp, &ctx, tx);
+        let acunado = s(&a, Tx::MintAsset { who: pa, x: 21, y: 45, kind: 1, meta: b"banco".to_vec(), fee: 1, nonce: 1, sig: [0u8; 64] });
+        let activo = txid(&acunado);
+        k.ok(vec![
+            s(&a, Tx::ClaimParcel { who: pa, x: 21, y: 45, name: b"Casa".to_vec(), kind: 7, fee: 1, nonce: 0, sig: [0u8; 64] }),
+            acunado,
+            s(&a, Tx::Transfer { from: pa, to: pb, amount: 3 * COIN, fee: 1, nonce: 2, sig: [0u8; 64] }),
+        ]);
+        k.ok(vec![
+            s(&a, Tx::DivideParcel { who: pa, x: 21, y: 45, unidades: 3, fee: 1, nonce: 3, sig: [0u8; 64] }),
+            s(&a, Tx::TransferUnit { from: pa, x: 21, y: 45, n: 2, to: pb, fee: 1, nonce: 4, sig: [0u8; 64] }),
+        ]);
+        // B: 3 RAMI, nonce 0, dueña de la vivienda 2. Cada una de estas pasa
+        // el nonce y falla después (algunas, también tras cobrar o quemar).
+        let z = [0u8; 64];
+        let n = 0;
+        let mutan = vec![
+            ("Transfer sin saldo", Tx::Transfer { from: pb, to: pa, amount: 99 * COIN, fee: 1, nonce: n, sig: z }),
+            ("Stake sin saldo", Tx::Stake { who: pb, amount: 99 * COIN, fee: 1, nonce: n, sig: z }),
+            ("Unstake de más", Tx::Unstake { who: pb, amount: COIN, fee: 1, nonce: n, sig: z }),
+            ("Reveal sin commit", Tx::Reveal { by: pb, commit_txid: [7u8; 32], payload: b"{}".to_vec(), secret: vec![1], fee: 1, nonce: n, sig: z }),
+            ("ClaimParcel ajena", Tx::ClaimParcel { who: pb, x: 21, y: 45, name: b"Mia".to_vec(), kind: 7, fee: 1, nonce: n, sig: z }),
+            ("MintAsset en parcela ajena", Tx::MintAsset { who: pb, x: 22, y: 45, kind: 1, meta: b"x".to_vec(), fee: 1, nonce: n, sig: z }),
+            ("MintAsset con meta no UTF-8", Tx::MintAsset { who: pb, x: 21, y: 45, kind: 1, meta: vec![0xff, 0xfe], fee: 1, nonce: n, sig: z }),
+            ("TransferAsset ajeno", Tx::TransferAsset { from: pb, asset: activo, to: pa, fee: 1, nonce: n, sig: z }),
+            ("ListLease ajeno", Tx::ListLease { who: pb, asset: activo, price: 1, term: 10, fee: 1, nonce: n, sig: z }),
+            ("Rent sin oferta", Tx::Rent { who: pb, asset: activo, fee: 1, nonce: n, sig: z }),
+            ("Harvest ajena", Tx::Harvest { who: pb, x: 21, y: 45, total: COIN, fee: 1, nonce: n, sig: z }),
+            ("SellAsset ajeno", Tx::SellAsset { who: pb, asset: activo, price: COIN, fee: 1, nonce: n, sig: z }),
+            ("BuyAsset sin venta", Tx::BuyAsset { who: pb, asset: activo, max_price: COIN, fee: 1, nonce: n, sig: z }),
+            ("SellParcel ajena", Tx::SellParcel { who: pb, x: 21, y: 45, price: COIN, fee: 1, nonce: n, sig: z }),
+            ("BuyParcel sin venta", Tx::BuyParcel { who: pb, x: 21, y: 45, max_price: COIN, fee: 1, nonce: n, sig: z }),
+        ];
+        let antes = foto(&k.st);
+        let h = k.h + 1;
+        for (caso, tx) in &mutan {
+            let mut sim = k.st.clone();
+            assert!(apply_tx(&mut sim, tx, h, 1, &txid(tx), &ctx).is_err(), "{caso} tenía que fallar");
+            assert_ne!(foto(&sim), antes, "{caso}: apply_tx deja rastro (por eso existe apply_tx_sin_rastro)");
+            let mut sim = k.st.clone();
+            assert!(apply_tx_sin_rastro(&mut sim, tx, h, 1, &txid(tx), &ctx).is_err(), "{caso}");
+            assert_eq!(foto(&sim), antes, "{caso}: apply_tx_sin_rastro dejó rastro");
+        }
+        // La que quema antes de fallar: con apply_tx, el precio del acuñado
+        // queda sumado a lo quemado; sin rastro, no.
+        let (_, meta_mala) = &mutan[6];
+        let mut sim = k.st.clone();
+        let _ = apply_tx(&mut sim, meta_mala, h, 1, &txid(meta_mala), &ctx);
+        assert!(sim.quemado > k.st.quemado);
+        // Los cuatro de vivienda lo comprueban todo antes de mutar.
+        let vivienda = vec![
+            ("DivideParcel ajena", Tx::DivideParcel { who: pb, x: 21, y: 45, unidades: 4, fee: 1, nonce: n, sig: z }),
+            ("TransferUnit ajena", Tx::TransferUnit { from: pb, x: 21, y: 45, n: 1, to: pa, fee: 1, nonce: n, sig: z }),
+            ("SellUnit ajena", Tx::SellUnit { who: pb, x: 21, y: 45, n: 3, price: COIN, fee: 1, nonce: n, sig: z }),
+            ("BuyUnit sin venta", Tx::BuyUnit { who: pb, x: 21, y: 45, n: 1, max_price: COIN, fee: 1, nonce: n, sig: z }),
+        ];
+        for (caso, tx) in &vivienda {
+            let mut sim = k.st.clone();
+            assert!(apply_tx(&mut sim, tx, h, 1, &txid(tx), &ctx).is_err(), "{caso} tenía que fallar");
+            assert_eq!(foto(&sim), antes, "{caso}: una tx de vivienda dejó rastro con apply_tx");
+        }
+        // Y una que vale sigue valiendo igual por los dos caminos.
+        let buena = Tx::SellUnit { who: pb, x: 21, y: 45, n: 2, price: COIN, fee: 1, nonce: n, sig: z };
+        let (mut x1, mut x2) = (k.st.clone(), k.st.clone());
+        apply_tx(&mut x1, &buena, h, 1, &txid(&buena), &ctx).unwrap();
+        apply_tx_sin_rastro(&mut x2, &buena, h, 1, &txid(&buena), &ctx).unwrap();
+        assert_eq!(foto(&x1), foto(&x2));
+        assert_ne!(foto(&x1), antes);
     }
 }

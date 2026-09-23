@@ -136,5 +136,41 @@
   "ru": "квартир. Участок делится только один раз. Продолжить?",
   "sw": "nyumba. Kiwanja kinagawanywa mara moja tu. Endelea?",
   "zh": "套住宅。地块只能分割一次。继续吗？"
+ },
+ "Importe inválido: usa coma o punto para los decimales y ningún separador de miles.": {
+  "en": "Invalid amount: use a comma or a point for decimals and no thousands separator.",
+  "ru": "Неверная сумма: для дробной части используйте запятую или точку, без разделителя тысяч.",
+  "sw": "Kiasi si sahihi: tumia koma au nukta kwa desimali na usitumie kitenganishi cha maelfu.",
+  "zh": "金额无效：小数请用逗号或句点，不要使用千位分隔符。"
+ },
+ "Se leerá como": {
+  "en": "It will be read as",
+  "ru": "Будет прочитано как",
+  "sw": "Kitasomwa kama",
+  "zh": "将被读作"
+ },
+ "Para escribir miles, escribe el número sin separador. ¿Continuar?": {
+  "en": "To write thousands, type the number without a separator. Continue?",
+  "ru": "Чтобы написать тысячи, введите число без разделителя. Продолжить?",
+  "sw": "Kuandika maelfu, andika nambari bila kitenganishi. Uendelee?",
+  "zh": "如需输入千位数，请直接输入数字，不加分隔符。继续吗？"
+ },
+ "Tienes una vivienda en esta parcela: puedes acuñar activos en ella y serán tuyos.": {
+  "en": "You own a home in this parcel: you can mint assets in it and they will be yours.",
+  "ru": "У вас есть квартира на этом участке: вы можете выпускать на нём активы, и они будут вашими.",
+  "sw": "Una nyumba katika kiwanja hiki: unaweza kutengeneza mali ndani yake na zitakuwa zako.",
+  "zh": "你在这块地块上拥有一套住宅：可以在此铸造资产，资产归你所有。"
+ },
+ "1 vivienda": {
+  "en": "1 home",
+  "ru": "1 квартира",
+  "sw": "nyumba 1",
+  "zh": "1 套住宅"
+ },
+ "1 tuya": {
+  "en": "1 yours",
+  "ru": "1 ваша",
+  "sw": "1 ni yako",
+  "zh": "1 套属于你"
  }
 }

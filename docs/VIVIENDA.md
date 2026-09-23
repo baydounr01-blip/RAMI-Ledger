@@ -225,16 +225,29 @@ identidades y los grados no se tocan.
   describe para las transacciones de mercado; no se puede arreglar hacia atrás
   porque el binario antiguo ya está publicado.
 - **Desde la v0.11.0 ya no pasa hacia delante.** `load_blocks` distingue un
-  bloque **bien formado** (JSON con una cabecera que se lee como
-  `BlockHeader` y una lista `txs`) que trae un tipo de transacción desconocido
-  —lo escribió una versión posterior— de la basura: lo salta, avisa («… con
-  transacciones que esta versión no conoce (los escribió una versión
-  posterior); se ignoran»), sus descendientes quedan huérfanos y el nodo se
-  queda en la altura anterior, lo mismo que por red. La basura en medio sigue
-  abortando. Probado en `store.rs`
-  (`bloque_de_una_version_posterior_se_salta_sin_abortar`) y en el paso 5, con
-  el binario real, sobre una copia con la división renombrada como si viniera
-  de una versión futura.
+  bloque **de una versión posterior** de la corrupción, con un criterio
+  estricto (`tipos_de_otra_version`): la cabecera se lee entera como
+  `BlockHeader`, cada transacción de un tipo que esta versión conoce se lee
+  entera como `Tx`, y las demás tienen la forma de una variante nueva (un
+  objeto con una sola clave, un nombre como los de `Tx` —mayúscula y letras o
+  cifras ASCII— que no está en `Tx`, y un objeto dentro). La lista de tipos
+  conocidos sale del propio `Deserialize` de `Tx`, no de una lista escrita a
+  mano. Ese bloque se salta con un aviso que dice la línea y los tipos («…
+  traen tipos de transacción que esta versión no conoce (DivideParcel): los
+  escribió una versión posterior; se ignoran»), sus descendientes quedan
+  huérfanos y el nodo se queda en la altura anterior, lo mismo que por red.
+  Un campo estropeado de un tipo conocido o de la cabecera, un nombre que no
+  es de tipo, o basura en medio siguen abortando con «línea N: bloque JSON
+  inválido», como hasta la v0.10.16 (la primera versión del criterio, «cabecera
+  legible y lista `txs`», se tragaba un `reward` estropeado de la coinbase y
+  `verify` respondía «íntegra»; lo encontró la revisión). Lo que se escapa: una
+  corrupción que cambie el nombre de un tipo por otro nombre válido que no
+  existe; el aviso lo nombra. Probado en `store.rs`
+  (`bloque_de_una_version_posterior_se_salta_sin_abortar`,
+  `corrupcion_en_un_tipo_conocido_sigue_abortando`,
+  `tipos_de_tx_conocidos_salen_de_serde`) y en el paso 5, con el binario real,
+  sobre una copia con la división renombrada como si viniera de una versión
+  futura.
 
 ## 8. Nodo, cartera y panel (hecho)
 

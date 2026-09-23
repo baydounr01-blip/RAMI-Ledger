@@ -188,13 +188,47 @@ las notas de versión y quien toque el código después.
 - **La v0.7.0–v0.10.16 no abre un directorio con bloques de vivienda** tras
   volver atrás de versión (error limpio, fichero intacto). No se puede
   arreglar hacia atrás; desde la v0.11.0 ya no pasa hacia delante.
-- **Hallazgo fuera de este frente (sin arreglar):** `build_candidate`
-  (`rami-node/src/lib.rs`) simula el mempool sobre UNA copia y la sigue usando
-  aunque `try_apply` falle, y `apply_tx` de los tipos anteriores (p. ej.
-  `BuyAsset`) consume el nonce antes de rechazar. Si una compra deja de valer
-  (el vendedor subió el precio) y el mismo firmante tiene otra pendiente con
-  el nonce siguiente, el candidato incluye la segunda sin la primera y el
-  bloque minado es inválido para el propio árbol, una y otra vez. Deducido
-  del código, no reproducido. Las cuatro transacciones de vivienda no lo
-  provocan (comprueban antes de mutar). Arreglo propuesto: `try_apply`
-  transaccional o comprobar-antes-de-mutar en todos los tipos.
+
+## Ronda 1 de revisión (arreglado)
+
+- **`roundtrip.sh`, paso 5, fallaba 23 de cada 30 veces**: `orden | grep -q`
+  con `set -o pipefail`. `grep -q` cierra el tubo en la primera coincidencia,
+  `rami-node mine` vuelve a escribir, el `println!` de Rust entra en pánico
+  (Broken pipe, salida 101) y `pipefail` lo cuenta como fallo aunque el bloque
+  se minara bien. Ahora `orden | contiene PATRÓN` lee toda la salida y después
+  busca.
+- **`load_blocks` se tragaba corrupción real**: el criterio de «bloque de una
+  versión posterior» era «cabecera legible y lista `txs`», y un campo
+  estropeado en medio del fichero pasaba por otra versión (`verify` decía
+  «íntegra» con una altura menor y salía con 0). Ahora es estricto
+  (`tipos_de_otra_version`, docs/VIVIENDA.md §7) y hay un test con ocho formas
+  de corrupción que siguen abortando.
+- **El dueño de una vivienda no podía acuñar desde el panel**: el formulario
+  «Acuñar activo» solo salía para el dueño de la parcela. Ahora
+  (`acunarHtml`) sale también para quien tiene una vivienda en ella, con una
+  nota que lo explica.
+- **El candidato arrastraba el nonce de una tx que dejó de valer** (defecto
+  anterior a este frente, con una vía más por la vivienda: un acuñado en una
+  vivienda que otro compra en un bloque ajeno). `apply_tx_sin_rastro`
+  (rami-core/state.rs) repone la cuenta del firmante y `quemado` si la tx
+  falla, que es todo lo que `apply_tx` toca antes de un rechazo; lo usan
+  `try_apply` del nodo y el monedero. `nonce_siguiente` calcula el nonce
+  libre aplicando las pendientes sobre la punta (una perdida ya no bloquea la
+  cuenta) y `podar_nonces_gastados` retira del mempool las de nonce ya
+  gastado al admitir cada bloque. Tests:
+  `un_rechazo_sin_rastro_en_los_tipos_que_mutan_antes_de_fallar` (15 tipos)
+  y `el_candidato_no_arrastra_el_nonce_de_una_tx_que_dejo_de_valer` (el caso
+  de la revisión, de punta a punta con el árbol). El consenso no cambia:
+  `apply_block` ya trabajaba sobre una copia y tiraba el bloque entero.
+- **La ficha de consenso comparaba dos escalas**: `regla_vigente` (1–4) junto
+  a `regla_soportada` (la de `Status.rule`, 1–5). `ConsensoInfo` gana
+  `regla_entendida`, en la escala de `regla_vigente`, y el panel usa esa.
+- **Importes con coma solo en la venta de viviendas**: ahora todos los campos
+  de importe de la ciudad (vender la empresa, vender o alquilar un activo,
+  repartir cosecha, vender una vivienda) pasan por `ramCampo`: coma o punto
+  decimal, hasta 8 decimales, sin separador de miles; «1.500» o «1,500»
+  preguntan enseñando cómo se va a leer. Los campos rellenos por el panel
+  usan la coma, como la lectura.
+- **Concordancia**: «1 vivienda», «1 tuya».
+- Sin cambios: el tamaño de `/api/city` con la ciudad llena (unos 29 MB en el
+  peor caso) sigue siendo un límite documentado en §10.

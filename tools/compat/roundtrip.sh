@@ -42,6 +42,13 @@ mkdir -p "$RAMI_HOME/.rami"
 
 log() { printf '\n== %s\n' "$*"; }
 falla() { printf '✗ %s\n' "$*" >&2; exit 1; }
+# `orden | contiene PATRÓN`: lee TODA la salida y después busca. Con
+# `set -o pipefail`, `orden | grep -q` falla aunque el patrón esté: grep sale
+# en la primera coincidencia, la orden vuelve a escribir en el tubo cerrado,
+# el println! de Rust entra en pánico (Broken pipe, salida 101) y pipefail lo
+# cuenta como fallo. `rami-node mine` escribe una línea por bloque y un
+# resumen al final: con grep -q fallaban 23 de 30 ejecuciones.
+contiene() { local salida; salida=$(cat); grep -q -- "$1" <<<"$salida"; }
 
 log "compilando la versión nueva (este árbol)"
 cargo build --release --locked --manifest-path "$ROOT/chain/Cargo.toml" -p rami-wallet -p rami-node >/dev/null
@@ -158,18 +165,18 @@ cartera() { "$NEW/rami-wallet" "$1" --chain "$V" --network regtest $VIV --keysto
 ALTURA_V0=$(nuevo status | awk '/altura/{print $3}')
 # (21,45): desierto, 5 RAMI; fuera de la cuadrícula de 32×32 de antes de Dubái.
 cartera claim --x 21 --y 45 --name Residencial --kind 7 --label yo >/dev/null || falla "claim con la nueva"
-nuevo mine --address "$YO" --blocks 1 | grep -q "2 tx" || falla "el bloque de la parcela no lleva la reclamación"
+nuevo mine --address "$YO" --blocks 1 | contiene "2 tx" || falla "el bloque de la parcela no lleva la reclamación"
 cartera divide --x 21 --y 45 --unidades 4 --label yo >/dev/null || falla "divide con la nueva"
-nuevo mine --address "$YO" --blocks 1 | grep -q "2 tx" || falla "el bloque de la división no la lleva"
+nuevo mine --address "$YO" --blocks 1 | contiene "2 tx" || falla "el bloque de la división no la lleva"
 cartera divide --x 21 --y 45 --unidades 8 --label yo >/dev/null 2>"$WORK/viv-dos-veces.err" && falla "se dividió dos veces"
 grep -q "ya está dividida" "$WORK/viv-dos-veces.err" || falla "la segunda división no dio el motivo: $(cat "$WORK/viv-dos-veces.err")"
 cartera unit-sell --x 21 --y 45 --n 2 --price 1 --label yo >/dev/null || falla "unit-sell"
 cartera unit-buy --x 21 --y 45 --n 2 --max-price 1 --label otro >/dev/null || falla "unit-buy desde la otra cuenta"
 cartera unit-transfer --x 21 --y 45 --n 3 --to "$OTRO" --label yo >/dev/null || falla "unit-transfer"
-nuevo mine --address "$YO" --blocks 1 | grep -q "4 tx" || falla "el bloque de venta, compra y transferencia no las lleva"
+nuevo mine --address "$YO" --blocks 1 | contiene "4 tx" || falla "el bloque de venta, compra y transferencia no las lleva"
 cartera unit-buy --x 21 --y 45 --n 2 --max-price 1 --label otro >/dev/null 2>"$WORK/viv-ya.err" && falla "se compró una vivienda que ya era suya"
 grep -q "no está en venta" "$WORK/viv-ya.err" || falla "la compra repetida no dio el motivo: $(cat "$WORK/viv-ya.err")"
-nuevo verify | grep -q "íntegra" || falla "verify de la nueva con la vivienda activada"
+nuevo verify | contiene "íntegra" || falla "verify de la nueva con la vivienda activada"
 ALTURA_VIV=$(nuevo status | awk '/altura/{print $3}')
 [ "$ALTURA_VIV" = "$((ALTURA_V0 + 3))" ] || falla "la nueva con vivienda no avanzó 3 bloques ($ALTURA_V0 → $ALTURA_VIV)"
 # La regla depende de los parámetros: sin fechas no pasa de la parcela de
@@ -214,7 +221,7 @@ F="$WORK/vivienda-futura"; rm -rf "$F"; cp -r "$V" "$F"
 sed -i 's/"DivideParcel"/"TxDeUnaVersionPosterior"/' "$F/chain.jsonl"
 grep -q TxDeUnaVersionPosterior "$F/chain.jsonl" || falla "no se pudo simular el bloque de una versión posterior"
 # shellcheck disable=SC2086
-"$NEW/rami-node" verify --chain "$F" --network regtest $VIV 2>"$WORK/new-verify-futuro.err" | grep -q "íntegra" || falla "la nueva no abre un directorio con un bloque de una versión posterior: $(cat "$WORK/new-verify-futuro.err")"
+"$NEW/rami-node" verify --chain "$F" --network regtest $VIV 2>"$WORK/new-verify-futuro.err" | contiene "íntegra" || falla "la nueva no abre un directorio con un bloque de una versión posterior: $(cat "$WORK/new-verify-futuro.err")"
 grep -q "versión posterior" "$WORK/new-verify-futuro.err" || falla "la nueva no avisó del bloque que no entiende"
 # shellcheck disable=SC2086
 ALTURA_FUT=$("$NEW/rami-node" status --chain "$F" --network regtest $VIV 2>/dev/null | awk '/altura/{print $3}')

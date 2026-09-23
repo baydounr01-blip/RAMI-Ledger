@@ -372,11 +372,9 @@ fn enviar_ciudad(args: &[String], build: impl FnOnce(&FirmaCtx, &KeyPair, u64) -
     };
     let altura = tree.get(&tree.head()).map(|n| n.block.header.height + 1).unwrap_or(1);
     for t in chain.load_mempool() {
+        // Las que ya no aplican se saltan sin dejar nada en `sim`.
         if verify_tx_con(&t, &firma).is_ok() {
-            let mut prueba = sim.clone();
-            if rami_core::state::apply_tx(&mut prueba, &t, altura, 1, &txid(&t), &firma).is_ok() {
-                sim = prueba;
-            }
+            let _ = rami_core::state::apply_tx_sin_rastro(&mut sim, &t, altura, 1, &txid(&t), &firma);
         }
     }
     let nonce = sim.nonce_of(&kp.public_bytes());

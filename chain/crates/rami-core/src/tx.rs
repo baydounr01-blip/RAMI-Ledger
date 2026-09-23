@@ -468,6 +468,33 @@ pub fn signer_of(tx: &Tx) -> Option<&AccountId> {
     }
 }
 
+/// Nonce de una tx firmada (`None` para la coinbase).
+pub fn nonce_of_tx(tx: &Tx) -> Option<u64> {
+    match tx {
+        Tx::Coinbase { .. } => None,
+        Tx::Transfer { nonce, .. }
+        | Tx::Stake { nonce, .. }
+        | Tx::Unstake { nonce, .. }
+        | Tx::Commit { nonce, .. }
+        | Tx::Reveal { nonce, .. }
+        | Tx::ClaimParcel { nonce, .. }
+        | Tx::MintAsset { nonce, .. }
+        | Tx::TransferAsset { nonce, .. }
+        | Tx::ListLease { nonce, .. }
+        | Tx::Rent { nonce, .. }
+        | Tx::Harvest { nonce, .. }
+        | Tx::SellAsset { nonce, .. }
+        | Tx::BuyAsset { nonce, .. }
+        | Tx::SellParcel { nonce, .. }
+        | Tx::BuyParcel { nonce, .. }
+        | Tx::SetProfile { nonce, .. }
+        | Tx::DivideParcel { nonce, .. }
+        | Tx::TransferUnit { nonce, .. }
+        | Tx::SellUnit { nonce, .. }
+        | Tx::BuyUnit { nonce, .. } => Some(*nonce),
+    }
+}
+
 /// Comisión de una transacción (0 para la coinbase).
 pub fn fee_of(tx: &Tx) -> Amount {
     match tx {
