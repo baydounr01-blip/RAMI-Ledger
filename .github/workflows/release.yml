@@ -198,10 +198,13 @@ jobs:
           set -euo pipefail
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           NOTES=$'Instaladores de la testnet **EXPERIMENTAL** de RAMI-Chain — un archivo por sistema, con icono:\n\n- **macOS:** `.dmg` · **Windows:** instalador `.exe` · **Linux:** `.AppImage`.\n- Moneda **sin valor monetario**; no es inversión ni valor negociable; **no se vende**. Se obtiene minando o con staking. **Sin premine.**\n- **Firma:** si el repo tiene certificados (ver `SIGNING.md`), las descargas van firmadas y notarizadas; si no, van **sin firmar** — verifícalas con `SHA256SUMS.txt` y ábrelas siguiendo las notas de la web.\n- Para avanzados: también hay `.tar.gz`/`.zip` con los binarios sueltos.'
-          # Notas del release: RELEASE_NOTES.md del repo (lo que el monedero
-          # muestra como «Novedades» en su pestaña Actualizar) + el aviso fijo.
+          # Notas del release: las versiones recientes de RELEASE_NOTES.md (lo
+          # que el monedero muestra como «Novedades» en su pestaña Actualizar)
+          # + el aviso fijo. El fichero entero pasa del máximo de GitHub para
+          # el cuerpo de un release (125.000 caracteres): notas-recientes.sh
+          # corta por secciones en 100.000 bytes.
           if [ -f RELEASE_NOTES.md ]; then
-            { cat RELEASE_NOTES.md; printf '\n\n---\n\n%s\n' "$NOTES"; } > /tmp/notes.md
+            { bash tools/release/notas-recientes.sh RELEASE_NOTES.md; printf '\n\n---\n\n%s\n' "$NOTES"; } > /tmp/notes.md
           else
             printf '%s\n' "$NOTES" > /tmp/notes.md
           fi

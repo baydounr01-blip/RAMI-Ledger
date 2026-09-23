@@ -101,8 +101,11 @@ if [ "${#missing[@]}" -gt 0 ]; then
 fi
 
 # ---- 3) notas, fecha, versión, semillas ----
-body=""
-if [ -f RELEASE_NOTES.md ]; then body="$(cat RELEASE_NOTES.md)"; fi
+# Las versiones recientes (el fichero entero ya no cabe: ver
+# tools/release/notas-recientes.sh), y a jq por fichero, no como argumento:
+# con --arg, un texto de más de 128 KiB rompía el build («Argument list too
+# long»).
+bash tools/release/notas-recientes.sh RELEASE_NOTES.md > "${OUT}/.notas.md"
 published="$(curl -fsSL --max-time 8 "${UA[@]}" "${AUTH[@]}" "https://api.github.com/repos/${REPO}/releases/tags/${tag}" 2>/dev/null | jq -r '.published_at // empty' || true)"
 [ -n "$published" ] || published="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -111,6 +114,7 @@ cp web/SEEDS-README.txt "${OUT}/SEEDS-README.txt"
 printf '{"version":"%s"}\n' "$tag" > "${OUT}/version.json"
 # Espejo del release con la MISMA forma que la API de GitHub (subconjunto):
 # el auto-actualizador del monedero lo parsea igual que el release oficial.
-jq -n --arg tag "$tag" --arg site "$SITE" --arg body "$body" --arg published "$published" --argjson assets "$assets" \
+jq -n --arg tag "$tag" --arg site "$SITE" --rawfile body "${OUT}/.notas.md" --arg published "$published" --argjson assets "$assets" \
   '{tag_name:$tag, html_url:($site + "/#descargas"), body:$body, published_at:$published, assets:$assets}' > "${OUT}/latest.json"
+rm -f "${OUT}/.notas.md"
 echo "✓ descargas listas en ${OUT} (release ${tag}; espejo latest.json para el auto-actualizador)"
