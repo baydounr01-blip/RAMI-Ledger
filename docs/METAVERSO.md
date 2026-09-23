@@ -333,9 +333,10 @@ carriles (en un cruce oblicuo, lejos del centro), dan la vuelta a las glorietas
 por el anillo, se paran ante los pasos de peatones ocupados, no se paran dentro
 de un cruce y, al final de su calle, dan la vuelta por un semicírculo de su
 carril; la ruta se corta donde se corta la cinta. Los peatones (`city/vida.js`) son una función pura del
-tiempo de Dubái: 28.470 personas con casa en las villas y los bloques, trabajo
-en las empresas de las parcelas (o, sin parcelas, en las torres y naves del
-barrio de oficinas más cercano), horario por semilla y camino por las aceras
+tiempo de Dubái: 29.527 personas con casa en las villas y los bloques, trabajo
+en las empresas de las parcelas (cada una contrata su plantilla entre quienes
+viven más cerca) o, el resto, en las torres y naves de un barrio de oficinas
+sorteado por gravedad (plantas / (1 + km)²), horario por semilla y camino por las aceras
 cruzando solo por los pasos; quien viene de lejos aparece en el bordillo de una
 parada del barrio o en el de delante de su portal; misma posición en dos
 navegadores para el mismo instante. Las cifras y lo que queda, en las notas de la versión.

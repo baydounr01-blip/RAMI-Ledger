@@ -13,11 +13,12 @@
  *
  *   CASA: el portal de una villa o de un bloque de viviendas de un barrio con
  *     trama. De cada edificio sale un número de vecinos según su tamaño.
- *   TRABAJO: sale de la economía. Con parcelas en la ciudad, la empresa que
- *     existe en esa parcela, con una plantilla según su sector, sus ingresos y
- *     sus activos, y más probable cuanto más cerca de casa. Sin parcelas (Dubái
- *     se activa el 1 de diciembre de 2026), las torres de oficinas —o las naves,
- *     uno de cada cuatro— del barrio de oficinas más cercano.
+ *   TRABAJO: sale de la economía. Cada empresa de una parcela contrata su
+ *     plantilla (según su sector, sus ingresos y sus activos) entre los
+ *     trabajadores que viven más cerca de su parcela; los demás (y todos, sin
+ *     parcelas: Dubái se activa el 1 de diciembre de 2026) van a las torres de
+ *     oficinas —o a las naves, uno de cada cuatro— de un barrio de oficinas
+ *     sorteado por gravedad: sus plantas / (1 + km)². Ver «Quién trabaja dónde».
  *   CAMINO: por las aceras de la retícula del barrio, doblando las esquinas por
  *     su curva y cruzando solo por los pasos de peatones pintados. Si el trabajo
  *     queda a más de RADIO_ANDABLE, el peatón no cruza la ciudad a pie: sale de
@@ -61,6 +62,12 @@
     // paso concurrido tenía gente encima minutos seguidos —los peatones son una
     // función del tiempo y no esperan a nadie— y los coches no pasaban nunca.
     // Como la llegada al paso es función del tiempo, la espera también.
+    // Desde la ronda 2 los turnos van coordinados por cruce, como un semáforo de
+    // peatones: los dos pasos que cruzan la misma calle en un cruce (a un lado y
+    // a otro de la otra calle) comparten turno, y los que cruzan la otra calle
+    // van medio ciclo después. Con un turno por paso, un coche esperaba primero
+    // al paso de su entrada y después al de su salida, con turnos sin relación:
+    // en diez minutos de ultra junto a la glorieta 0, uno llegó a 62 s parado.
     var CICLO = 90, VENTANA = 12, ESPERA_MAX = 1500;
     var DMAX = Math.ceil(RUTA_MAX / V_MIN) + ESPERA_MAX;
     var R_PROC = 1600;                 // alrededor del foco se calculan los peatones (pasos ocupados)
@@ -68,7 +75,17 @@
     var MIEMBROS_R = 80;               // más lejos, el peatón va sin brazos ni piernas
     var PEATON_R = 0.35;
     var PARADA_MAX = 600;              // metros por la acera hasta la parada; más lejos, el taxi a la puerta
-    var CACHE_MAX = 8000;              // caminos guardados
+    // Caminos guardados. Desde la ronda 2 solo se guardan los de quien está en la
+    // calle (el de un viaje acabado se suelta: basta su duración, `V.dur`), así
+    // que en hora punta hay de cientos a unos pocos miles; con más de CACHE_MAX
+    // se sueltan los que no se han usado en PODA_CUADROS cuadros.
+    var CACHE_MAX = 8000, PODA_CUADROS = 120;
+    // Una empresa de una parcela contrata a los más cercanos (ronda 2): por
+    // anillos de celdas de la cuadrícula y, dentro de un anillo, por sorteo.
+    // Las oficinas de los barrios de torres y naves, por gravedad: capacidad
+    // (plantas) / (1 + km)².
+    var KM = 1000;
+    var CALIENTA_ANTES = 60;           // segundos por delante que se precalculan al cambiar la población
     var AVISO_CEBRA = 4;               // segundos antes de pisar el paso en que ya cuenta como ocupado
     // Cuántos se dibujan como mucho, y hasta dónde, por calidad. Sin sombras en
     // baja y media: la pasada de sombra dibujaría cada cuerpo otra vez.
@@ -85,9 +102,9 @@
 
     var V = {
       hecho: false, firma: null, zonas: [], personas: [], viajes: [], accesos: [],
-      cache: {}, uso: {}, nCache: 0, arboles: 0, reloj: 0, horaVista: undefined, manual: null, nCuadro: 0, limite: 0, aplazados: 0, trabajo: null,
+      cache: {}, uso: {}, nCache: 0, dur: null, arboles: 0, reloj: 0, horaVista: undefined, manual: null, nCuadro: 0, limite: 0, aplazados: 0, trabajo: null,
       activos: [], dibujados: [], marcadas: [], mallas: null, cap: -1, ms: 0,
-      asfalto: null, cebraIdx: null, nAristas: 0, nOcupadas: 0, diag: {}
+      asfalto: null, cebraIdx: null, nAristas: 0, nOcupadas: 0, diag: {}, faseCebra: {}
     };
 
     // ---- Utilidades -----------------------------------------------------------
@@ -100,7 +117,16 @@
       for (var i = 0; i < vv.length; i++) if (s >= vv[i][0] - 1 && s <= vv[i][1] + 1) return true;
       return false;
     }
-    function aMundo(Z, lx, lz) { return { x: Z.x + Z.cs * lx - Z.sn * lz, z: Z.z + Z.sn * lx + Z.cs * lz }; }
+    // SONDA (ronda 2, solo para la prueba de márgenes, `huella`): desplaza todo lo
+    // que se comprueba (los puntos de las aristas y los portales). Medido: con ±1 nm
+    // en x y en z sale todo igual; con ±1 µm, el grafo, sus pesos, los accesos, los
+    // trabajos y los viajes salen iguales y solo cambia el redondeo a centímetros
+    // del sitio de un acceso (el margen más pequeño de esos redondeos es de 1,5 µm).
+    // La diferencia de un último bit en Math.sin o Math.cos entre dos motores mueve
+    // un punto a 40 km del origen unos 7e-12 m: mil veces menos que el nanómetro.
+    // En uso normal vale cero.
+    var SONDA = { x: 0, z: 0 };
+    function aMundo(Z, lx, lz) { return { x: Z.x + Z.cs * lx - Z.sn * lz + SONDA.x, z: Z.z + Z.sn * lx + Z.cs * lz + SONDA.z }; }
     function aLocal(Z, wx, wz) { var dx = wx - Z.x, dz = wz - Z.z; return { x: Z.cs * dx + Z.sn * dz, z: -Z.sn * dx + Z.cs * dz }; }
 
     // ---- Dónde hay calzada ------------------------------------------------------
@@ -330,6 +356,7 @@
           if (!esquinaExiste(Z, k, j, -1, sz) || !esquinaExiste(Z, k, j, 1, sz)) continue;
           var cw = aMundo(Z, k * Z.paso, j * Z.paso + sz * Z.Dc), ce = cebraEn(cw.x, cw.z, viaDe(Z, 1, k));
           if (ce < 0) continue;
+          V.faseCebra[ce] = faseCruce(Z, k, j, 0);
           XY = []; tramoCurva0(Z, Z.T, Z.q, XY); tramoCurva1(Z, Z.q, Math.min(Z.Dc, Z.T), XY); XY.splice(4, 1);
           if (Z.Dc > Z.T) XY.push([Z.m, Z.Dc]);
           pts = enCuadrante(Z, k, j, -1, sz, XY, false, []);
@@ -343,6 +370,7 @@
           if (!esquinaExiste(Z, k, j, sx, -1) || !esquinaExiste(Z, k, j, sx, 1)) continue;
           var cw2 = aMundo(Z, k * Z.paso + sx * Z.Dc, j * Z.paso), ce2 = cebraEn(cw2.x, cw2.z, viaDe(Z, 0, j));
           if (ce2 < 0) continue;
+          V.faseCebra[ce2] = faseCruce(Z, k, j, 1);
           XY = []; tramoCurva1(Z, Z.T, Z.q, XY); tramoCurva0(Z, Z.q, Math.min(Z.Dc, Z.T), XY); XY.splice(4, 1);
           if (Z.Dc > Z.T) XY.push([Z.Dc, Z.m]);
           pts = enCuadrante(Z, k, j, sx, -1, XY, false, []);
@@ -365,6 +393,10 @@
           if (i >= 0) Z.lados[nodo(Z, k, j, sx, 1, 1) + ':' + nodo(Z, k, j + 1, sx, -1, 1)] = i;
         }
       }
+    }
+    /** El turno de los pasos del cruce (k, j) de la zona Z que cruzan la calle k (`cual` 0) o la j (1): enteros. */
+    function faseCruce(Z, k, j, cual) {
+      return (mezcla(mezcla(Z.i + 1, k + 4096), j + 4096) % CICLO + cual * (CICLO >> 1)) % CICLO;
     }
     function cierraGrafo(Z) {
       V.nAristas += Z.aristas.length;
@@ -421,7 +453,7 @@
     // ---- Caminos: Dijkstra con pesos enteros --------------------------------------
     // Los pesos son centímetros enteros y el montículo desempata por el índice del
     // nodo: en una retícula hay muchos caminos igual de largos, y con distancias de
-    // coma flotante dos máquinas podrían elegir distinto. Así eligen igual.
+    // coma flotante dos máquinas eligen distinto si un empate cae en el último bit. Así eligen igual.
     function arbolDe(Z, ac) {
       var key = ac.id, A = Z.arbol[key];
       if (A) return A;
@@ -537,8 +569,11 @@
       var n = limpio.length; if (n < 2) return null;
       // En un portal no se aparta: se sale y se entra por la puerta.
       var portalIni = vuelta ? finPortal : true, portalFin = vuelta ? true : finPortal;
-      var X = new Float32Array(n), Y = new Float32Array(n), Zz = new Float32Array(n), D = new Float64Array(n);
+      var X = new Float32Array(n), Y = new Float32Array(n), Zz = new Float32Array(n), D = new Float64Array(n), abiertos = 0, marca = {};
       for (i = 0; i < n; i++) {
+        // ¿Está este punto en el tramo de un paso? (entre las dos marcas del paso)
+        var mk = limpio[i][3], enPaso = abiertos > 0;
+        if (mk !== undefined) { if (marca[mk]) { delete marca[mk]; abiertos--; } else { marca[mk] = 1; abiertos++; } enPaso = true; }
         var p = limpio[i], nx = 0, nz = 0, a = i > 0 ? limpio[i - 1] : null, b = i + 1 < n ? limpio[i + 1] : null, l;
         var d1x = 0, d1z = 0, d2x = 0, d2z = 0;
         if (a) { d1x = p[0] - a[0]; d1z = p[2] - a[2]; l = Math.sqrt(d1x * d1x + d1z * d1z) || 1; d1x /= l; d1z /= l; }
@@ -553,6 +588,10 @@
           else { nx = -d1z; nz = d1x; }
         }
         X[i] = p[0] + nx * lado; Y[i] = p[1]; Zz[i] = p[2] + nz * lado;
+        // Apartado, un vértice de una esquina puede caer en la calzada de la otra
+        // calle (ronda 2: 2 de 128.791 muestras de un día entero); fuera de los
+        // pasos, entonces, se queda en la línea de la acera.
+        if (!enPaso && lado && V.asfalto && enAsfalto(X[i], Zz[i], -2) && !enAsfalto(p[0], p[2], -2)) { X[i] = p[0]; Zz[i] = p[2]; }
         D[i] = i ? D[i - 1] + Math.sqrt((X[i] - X[i - 1]) * (X[i] - X[i - 1]) + (Zz[i] - Zz[i - 1]) * (Zz[i] - Zz[i - 1])) : 0;
       }
       var L = D[n - 1], cb = [], abierto = {};
@@ -617,16 +656,24 @@
     // cambia de una vez. El resultado es el mismo que de una vez: cada fase recorre
     // lo mismo en el mismo orden, solo que en trozos. La primera construcción (al
     // cargar, en `listo`) y la del cambio de calidad siguen siendo de una vez: son
-    // momentos en que el visor ya está recargando.
-    var CAMPOS = ['zonas', 'personas', 'viajes', 'accesos', 'cache', 'uso', 'nCache', 'arboles', 'nAristas', 'diag', 'asfalto', 'cebraIdx'];
-    function trabajoNuevo() {
-      return { N: { zonas: [], personas: [], viajes: [], accesos: [], cache: {}, uso: {}, nCache: 0, arboles: 0, nAristas: 0, diag: {}, asfalto: null, cebraIdx: null },
-               fase: 0, i: 0, j: 0, k: 0, Z: null, ms: 0, trozos: 0, trozoMax: 0, fases: [0, 0, 0, 0, 0, 0], t0: Date.now(),
-               casas: [], oficinas: { towers: [], warehouses: [] }, empresas: [], porZona: { towers: {}, warehouses: {} }, pcs: null, sol: null };
+    // momentos en que el visor ya está recargando. Fases (ronda 2): 0 índices de
+    // calzada, 1 grafo de aceras cruce a cruce, 2 portales, 3 empresas de las
+    // parcelas, 4 vecinos, 5 contratación de cada empresa, 6 oficinas y agenda,
+    // 7 índice de horas y, solo por trozos, 8 precalentado de los caminos de quien
+    // estará en la calle cerca del foco cuando se cambie de población.
+    var CAMPOS = ['zonas', 'personas', 'viajes', 'accesos', 'cache', 'uso', 'nCache', 'dur', 'arboles', 'nAristas', 'diag', 'asfalto', 'cebraIdx', 'empleo', 'faseCebra'];
+    function trabajoNuevo(calienta) {
+      return { N: { zonas: [], personas: [], viajes: [], accesos: [], cache: {}, uso: {}, nCache: 0, dur: null, arboles: 0, nAristas: 0, diag: {}, asfalto: null, cebraIdx: null,
+                    empleo: { parcelas: 0, puestos: 0, oficinas: 0, porZona: {} }, faseCebra: {}, nCuadro: 0 },
+               fase: 0, i: 0, j: 0, k: 0, Z: null, ms: 0, trozos: 0, trozoMax: 0, fases: [0, 0, 0, 0, 0, 0, 0, 0, 0], t0: Date.now(), calienta: !!calienta,
+               casas: [], oficinas: { towers: [], warehouses: [] }, empresas: [], trab: [], ofZonas: null, porZona: { towers: {}, warehouses: {} }, pcs: null, sol: null, pre: null };
     }
     /** Avanza el trabajo hasta `hasta` (performance.now()); true si ha acabado. */
     function trabajoPaso(J, hasta) {
       var Vv = V, t0 = performance.now(), hecho = false;
+      // El reloj y el cuadro del estado en uso: el precalentado (fase 8) calcula
+      // los caminos de la hora de ahora y los marca como usados en este cuadro.
+      J.N.nCuadro = Vv.nCuadro; J.T = Vv.T || 0;
       V = J.N;                                   // lo que construyen las funciones de arriba va al estado nuevo
       J.tf = t0;
       try { hecho = fases(J, hasta); } finally { V = Vv; }
@@ -637,11 +684,14 @@
     }
     function trabajoFin(J) {
       for (var k = 0; k < CAMPOS.length; k++) V[CAMPOS[k]] = J.N[CAMPOS[k]];
+      // Lo precalentado cuenta como usado ahora: la reconstrucción dura cientos
+      // de cuadros y la poda lo soltaría por viejo.
+      for (k in V.uso) if (Object.prototype.hasOwnProperty.call(V.uso, k)) V.uso[k] = V.nCuadro;
       V.hecho = true; V.ms = Math.round(J.ms); V.trozos = J.trozos; V.trozoMax = Math.round(J.trozoMax * 10) / 10; V.faseMax = J.faseMax;
-      V.fasesMs = J.fases.map(function (x) { return Math.round(x); }); V.paredMs = Date.now() - J.t0;
+      V.fasesMs = J.fases.map(function (x) { return Math.round(x); }); V.paredMs = Date.now() - J.t0; V.calentados = J.pre ? J.pre.length : 0;
     }
     function construye() {
-      var J = trabajoNuevo();
+      var J = trabajoNuevo(false);
       trabajoPaso(J, Infinity);
       trabajoFin(J);
       V.trabajo = null;
@@ -671,7 +721,7 @@
           var e = S.edificios[J.i][J.j++]; if (e.oculto || !e.alineado) continue;
           var zi = tramaDe(e.x, e.z); if (zi < 0) continue;
           Z = N.zonas[zi];
-          var px = e.x + Math.sin(e.yaw) * (e.d * 0.5 + 0.3), pz = e.z + Math.cos(e.yaw) * (e.d * 0.5 + 0.3);
+          var px = e.x + Math.sin(e.yaw) * (e.d * 0.5 + 0.3) + SONDA.x, pz = e.z + Math.cos(e.yaw) * (e.d * 0.5 + 0.3) + SONDA.z;
           var ac = acceso(Z, px, pz, e.y + 1);
           if (ac) {
             nuevoAcceso(Z, ac, { edificio: e, tipo: e.kind });
@@ -689,23 +739,55 @@
           if (J.i >= J.pcs.length) { fase(J, 4); continue; }
           parcelaEmpresa(J, J.pcs[J.i++]);
         } else if (J.fase === 4) {
-          // Los vecinos de cada casa, y su día.
+          // Los vecinos de cada casa: quién es y si trabaja.
           if (J.i >= J.casas.length) { fase(J, 5); continue; }
           vecinos(J, J.casas[J.i++]);
         } else if (J.fase === 5) {
+          // Cada empresa de una parcela contrata su plantilla, una por vuelta.
+          if (J.i >= J.empresas.length) { fase(J, 6); continue; }
+          recluta(J, J.empresas[J.i], J.i); J.i++;
+        } else if (J.fase === 6) {
+          // Los demás que trabajan, a las oficinas; y el día de cada uno.
+          if (!J.ofZonas) J.ofZonas = { towers: zonasDeOficina(J.oficinas.towers), warehouses: zonasDeOficina(J.oficinas.warehouses) };
+          if (J.i >= N.personas.length) { fase(J, 7); continue; }
+          destino(J, N.personas[J.i++]);
+        } else if (J.fase === 7) {
           // El índice de cada zona: viajes ordenados por hora de salida.
-          if (J.i >= N.zonas.length) return true;
+          if (J.i >= N.zonas.length) {
+            N.dur = new Float64Array(N.viajes.length);
+            for (j = 0; j < N.dur.length; j++) N.dur[j] = NaN;
+            if (!J.calienta) return true;
+            fase(J, 8); continue;
+          }
           Z = N.zonas[J.i++];
           Z.viajes.sort(function (a, b) { return (a.t0 - b.t0) || (a.id - b.id); });
           Z.t0s = new Int32Array(Z.viajes.length);
           for (j = 0; j < Z.viajes.length; j++) Z.t0s[j] = Z.viajes[j].t0;
+        } else if (J.fase === 8) {
+          // El precalentado (ronda 2): antes de cambiar de población, los caminos
+          // de quien estará en la calle cerca del foco (a la hora de ahora y hasta
+          // CALIENTA_ANTES segundos después). Sin esto, la población nueva salía
+          // vacía y se llenaba al ritmo del plazo de caminos: la revisión contó 40
+          // cuadros seguidos sin ningún peatón tras un cambio de la economía.
+          if (!J.pre) J.pre = aCalentar(J.T, foco());
+          if (J.i >= J.pre.length) return true;
+          // Quien ya ha salido, a la hora de ahora; quien sale en los próximos
+          // segundos, a la de dentro de CALIENTA_ANTES.
+          var v = N.viajes[J.pre[J.i++]], el0 = ((J.T - v.t0) % DIA + DIA) % DIA;
+          transcurrido(v, el0 <= DMAX ? J.T : (J.T + CALIENTA_ANTES) % DIA, false);
         }
         if (performance.now() >= hasta) return false;
       }
     }
+    /** Los viajes que salieron en los últimos DMAX segundos (o saldrán en los próximos CALIENTA_ANTES) en las zonas cercanas a `f`. */
+    function aCalentar(T, f) {
+      var out = [], zs = zonasCerca(f);
+      enVentana(T + CALIENTA_ANTES, DMAX + CALIENTA_ANTES, zs, function (v) { out.push(v.id); });
+      return out;
+    }
     function parcelaEmpresa(J, pc) {
       var N = J.N, so = J.sol['parcela:' + pc.x + ':' + pc.y]; if (!so) return;
-      var ppx = so.x + Math.sin(so.yaw) * (so.hd + 0.3), ppz = so.z + Math.cos(so.yaw) * (so.hd + 0.3), ppy = so.y0 + 1;
+      var ppx = so.x + Math.sin(so.yaw) * (so.hd + 0.3) + SONDA.x, ppz = so.z + Math.cos(so.yaw) * (so.hd + 0.3) + SONDA.z, ppy = so.y0 + 1;
       var ztr = tramaDe(ppx, ppz), acp = ztr >= 0 ? acceso(N.zonas[ztr], ppx, ppz, ppy) : null;
       if (acp) nuevoAcceso(N.zonas[ztr], acp, { parcela: pc, tipo: 'parcela', edificio: null });
       else {
@@ -744,61 +826,98 @@
       if (acp.T === null) return;
       J.empresas.push({ ac: acp, pc: pc, peso: plantilla(pc) });
     }
-    // Los barrios de oficinas, para quien trabaja sin parcelas: su centro.
-    function masCercana(lista, x, z) {
-      var mejor = null, md = Infinity, q;
-      for (q = 0; q < lista.length; q++) {
-        var zz = V.zonas[lista[q].zona], d = Math.round(Math.abs(zz.x - x) + Math.abs(zz.z - z));
-        if (d < md || (d === md && lista[q].zona < mejor)) { md = d; mejor = lista[q].zona; }
-      }
-      if (mejor === null) return [];
-      var out = []; for (q = 0; q < lista.length; q++) if (lista[q].zona === mejor) out.push(lista[q]);
-      return out;
-    }
+    // ---- Quién trabaja dónde (ronda 2) ------------------------------------------------
+    // Hasta la ronda 1 cada trabajador sorteaba empresa con un peso por plantilla
+    // y cercanía, sin tope: con ocho parcelas, las ocho recibían los 20.000
+    // trabajadores de la ciudad (con plantillas que suman unas 2.150) y las torres
+    // se quedaban vacías. Y sin parcelas, cada barrio de viviendas iba entero al
+    // barrio de oficinas de centro más cercano: el centro (zona 0) y otros dos no
+    // recibían a nadie en todo el día. Ahora:
+    //   1. Cada empresa de una parcela contrata exactamente su plantilla (o todos
+    //      los que queden, si no llegan): a los trabajadores de los anillos de
+    //      celdas más cercanos a su parcela y, dentro de un anillo, por sorteo
+    //      entero (mezcla de la semilla de la persona y el índice de la empresa).
+    //      Las empresas contratan en orden (fila y columna de su parcela).
+    //   2. El resto va a las oficinas: torres (tres de cada cuatro) o naves; el
+    //      barrio, por gravedad —plantas del barrio / (1 + km)², en enteros—, y el
+    //      edificio del barrio, por sus plantas.
+    /** Los vecinos de una casa: quién es cada uno y si trabaja. El dónde, después (recluta, destino). */
     function vecinos(J, H) {
-      var empresas = J.empresas, porZona = J.porZona, oficinas = J.oficinas, k;
-      var eb = H.edificio, bx = Math.round(eb.x), bz = Math.round(eb.z), sb = U.semillaMorfologia(bx, bz, 21);
+      var eb = H.edificio, bx = Math.round(eb.x), bz = Math.round(eb.z), sb = U.semillaMorfologia(bx, bz, 21), k;
       var nv = eb.kind === 'villas' ? 2 + (sb % 3) : U.clamp(Math.round(Math.max(2, Math.floor(eb.h / 3.2)) * Math.max(2, Math.round(eb.w * eb.d / 110)) * 0.6), 6, 70);
-      var celda = M.worldToCell(eb.x, eb.z), pesos = null, totalPeso = 0;
-      if (empresas.length) {
-        // La empresa: por su plantilla y, a igualdad, la más cercana (en celdas
-        // de la cuadrícula, que son enteros): peso = plantilla·16 / (1 + d)².
-        pesos = [];
-        for (k = 0; k < empresas.length; k++) {
-          var dcel = celda ? Math.max(Math.abs(celda.x - empresas[k].pc.x), Math.abs(celda.y - empresas[k].pc.y)) : 32;
-          var w = Math.max(1, Math.floor(empresas[k].peso * 16 / ((1 + dcel) * (1 + dcel))));
-          totalPeso += w; pesos.push(totalPeso);
-        }
-      }
-      var zc = V.zonas[H.zona], ofT = porZona.towers[H.zona] || (porZona.towers[H.zona] = masCercana(oficinas.towers, zc.x, zc.z));
-      var ofW = porZona.warehouses[H.zona] || (porZona.warehouses[H.zona] = masCercana(oficinas.warehouses, zc.x, zc.z));
+      var celda = M.worldToCell(eb.x, eb.z);
       for (k = 0; k < nv; k++) {
-        var r = U.lcg(mezcla(sb, k + 1)), per = { id: V.personas.length, casa: H, trabajo: null, viajes: [] };
+        var sem = mezcla(sb, k + 1), r = U.lcg(sem), per = { id: V.personas.length, casa: H, trabajo: null, viajes: [], celda: celda, sem: mezcla(sem, 0x5eed) };
         r(); r();
-        var trabaja = r() < 0.72;
+        per.trabaja = r() < 0.72;
         per.v = V_MIN + (V_MAX - V_MIN) * r();
         var est = r(); per.estilo = est < 0.34 ? 0 : (est < 0.58 ? 1 : (est < 0.78 ? 2 : 3));
         var pal = per.estilo === 1 ? BLANCOS : PALETA; per.color = pal[Math.floor(r() * pal.length)];
         per.lado = 0.35 + 0.35 * r();
         per.fase = r() * 6.28;
-        if (trabaja) {
-          if (pesos) {
-            var pick = Math.floor(r() * totalPeso), q = 0;
-            while (q < pesos.length - 1 && pesos[q] <= pick) q++;
-            per.trabajo = empresas[q].ac;
-          } else {
-            var lista = r() < 0.75 && ofT.length ? ofT : (ofW.length ? ofW : ofT);
-            if (lista.length) {
-              var pt = 0, acum = [], q2;
-              for (q2 = 0; q2 < lista.length; q2++) { pt += Math.max(1, Math.floor(lista[q2].edificio.h / 3.2)); acum.push(pt); }
-              var pk2 = Math.floor(r() * pt); q2 = 0; while (q2 < acum.length - 1 && acum[q2] <= pk2) q2++;
-              per.trabajo = lista[q2];
-            }
-          }
-        }
         V.personas.push(per);
-        agenda(per, r);
+        if (per.trabaja) J.trab.push(per.id);
       }
+    }
+    /** La empresa `E` (índice `ie`) contrata su plantilla entre los que aún no tienen trabajo, de los anillos más cercanos. */
+    function recluta(J, E, ie) {
+      var pc = E.pc, anillos = {}, ds = [], i, quedan = E.peso, libres = [];
+      for (i = 0; i < J.trab.length; i++) {
+        var p = V.personas[J.trab[i]]; if (p.trabajo) continue;
+        libres.push(p.id);
+        var d = p.celda ? Math.max(Math.abs(p.celda.x - pc.x), Math.abs(p.celda.y - pc.y)) : 99999;
+        if (!anillos[d]) { anillos[d] = []; ds.push(d); }
+        anillos[d].push(p.id);
+      }
+      J.trab = libres;                            // los que ya tienen trabajo no se vuelven a mirar
+      ds.sort(function (a, b) { return a - b; });
+      for (i = 0; i < ds.length && quedan > 0; i++) {
+        var l = anillos[ds[i]];
+        if (l.length > quedan) {
+          var cl = {};
+          for (var q = 0; q < l.length; q++) cl[l[q]] = mezcla(V.personas[l[q]].sem, ie + 1);
+          l.sort(function (a, b) { return (cl[a] - cl[b]) || (a - b); });
+          l.length = quedan;
+        }
+        for (var m = 0; m < l.length; m++) V.personas[l[m]].trabajo = E.ac;
+        quedan -= l.length;
+      }
+      V.empleo.parcelas += E.peso - quedan; V.empleo.puestos += E.peso;
+    }
+    /** Los barrios de oficinas de una lista de portales: { zona, lista, acum (plantas acumuladas), cap }, por zona. */
+    function zonasDeOficina(lista) {
+      var porZ = {}, out = [], i;
+      for (i = 0; i < lista.length; i++) {
+        var a = lista[i], z = porZ[a.zona];
+        if (!z) { z = porZ[a.zona] = { zona: a.zona, lista: [], acum: [], cap: 0 }; out.push(z); }
+        z.cap += Math.max(1, Math.floor(a.edificio.h / 3.2)); z.lista.push(a); z.acum.push(z.cap);
+      }
+      out.sort(function (a, b) { return a.zona - b.zona; });
+      return out;
+    }
+    /** Pesos acumulados (enteros) de los barrios de oficinas vistos desde la zona `zh`. */
+    function gravedad(J, tipo, zh) {
+      var c = J.porZona[tipo][zh]; if (c) return c;
+      var lz = J.ofZonas[tipo], zc = V.zonas[zh], acum = [], tot = 0, i;
+      for (i = 0; i < lz.length; i++) {
+        var zo = V.zonas[lz[i].zona], km = Math.floor(Math.round(Math.abs(zo.x - zc.x) + Math.abs(zo.z - zc.z)) / KM);
+        tot += Math.max(1, Math.floor(lz[i].cap * 10000 / ((1 + km) * (1 + km)))); acum.push(tot);
+      }
+      return (J.porZona[tipo][zh] = { acum: acum, tot: tot });
+    }
+    function sorteo(acum, x) { var q = 0; while (q < acum.length - 1 && acum[q] <= x) q++; return q; }
+    /** El trabajo de quien no lo tiene en una parcela, y el día de cada persona. */
+    function destino(J, per) {
+      var r = U.lcg(per.sem), a = r(), b = r(), c = r();   // siempre tres sorteos: la serie de la agenda no depende de la rama
+      if (per.trabaja && !per.trabajo) {
+        var tipo = a < 0.75 && J.ofZonas.towers.length ? 'towers' : (J.ofZonas.warehouses.length ? 'warehouses' : 'towers'), lz = J.ofZonas[tipo];
+        if (lz.length) {
+          var g = gravedad(J, tipo, per.casa.zona), zo = lz[sorteo(g.acum, Math.floor(b * g.tot))];
+          per.trabajo = zo.lista[sorteo(zo.acum, Math.floor(c * zo.cap))];
+          V.empleo.oficinas++; V.empleo.porZona[zo.zona] = (V.empleo.porZona[zo.zona] || 0) + 1;
+        }
+      }
+      agenda(per, r);
     }
     function viaje(per, zona, t0, src, dst, vuelta, tipo) {
       var v = { id: V.viajes.length, p: per.id, zona: zona, t0: ((t0 % DIA) + DIA) % DIA, src: src, dst: dst, vuelta: !!vuelta, tipo: tipo };
@@ -813,7 +932,6 @@
      */
     function agenda(per, r) {
       var H = per.casa, W = per.trabajo, zh = H.zona;
-      r(); r(); r(); r();                        // los sorteos de la calle del metro de antes: la serie sigue igual
       if (W) {
         var sale = 7 * 3600 + Math.floor(r() * 9000), vuelve = 17 * 3600 + Math.floor(r() * 9000);
         var ida = 900 + Math.floor(r() * 1500), regreso = 900 + Math.floor(r() * 1500);
@@ -854,12 +972,13 @@
       if (r() < 0.02) viaje(per, zh, 23 * 3600 + Math.floor(r() * 21600), H, { nodo: Math.floor(r() * 1e9), lo: 8000, hi: 25000, bucle: true }, false, 'madrugada');
     }
     /**
-     * El camino de un viaje (se calcula la primera vez que hace falta y se guarda).
-     * Con `pres` (el cuadro), si este cuadro ya ha gastado su tiempo de caminos
-     * nuevos, devuelve undefined y el viaje espera al cuadro siguiente: sin eso,
-     * al llegar a un barrio o a la hora punta se calculaban de golpe cientos de
-     * caminos (la revisión midió pasos de 116 y 372 ms). Solo afecta a qué se
-     * dibuja este cuadro; `posicion` calcula siempre, y da lo mismo.
+     * El camino de un viaje (se calcula la primera vez que hace falta y se guarda;
+     * su duración queda además en `V.dur`, que no se poda). Con `pres` (el cuadro),
+     * si este cuadro ya ha gastado su tiempo de caminos nuevos, devuelve undefined
+     * y el viaje espera al cuadro siguiente sin dibujarse ni marcar sus pasos: sin
+     * eso, al llegar a un barrio o a la hora punta se calculaban de golpe cientos
+     * de caminos (la revisión midió pasos de 116 y 372 ms). `posicion` calcula
+     * siempre, y da lo mismo.
      */
     function rutaDe(v, pres) {
       var R = V.cache[v.id];
@@ -892,6 +1011,7 @@
       if (R2) horario(R2, v, per);
       if (R2 && R2.dur > DMAX) R2 = null;
       V.cache[v.id] = R2; V.uso[v.id] = V.nCuadro; V.nCache++;
+      if (V.dur) V.dur[v.id] = R2 ? R2.dur : -1;
       return R2;
     }
     /**
@@ -905,7 +1025,7 @@
       for (k = 0; k < R.ceb.length; k += 3) {
         var d0 = R.ceb[k + 1], d1 = R.ceb[k + 2], id = R.ceb[k];
         if (d0 < d) d0 = d;
-        var ta = t + (d0 - d) / per.v, fase = mezcla(id, 97) % CICLO;
+        var fc = V.faseCebra[id], ta = t + (d0 - d) / per.v, fase = fc !== undefined ? fc : mezcla(id, 97) % CICLO;
         var loc = (((v.t0 + ta - fase) % CICLO) + CICLO) % CICLO, w = loc < VENTANA ? 0 : CICLO - loc;
         if (w > 0) esp.push(d0, ta, ta + w);
         var entra = ta + w, sale = entra + Math.max(0, d1 - d0) / per.v;
@@ -943,12 +1063,23 @@
       out.dx = dx / l; out.dz = dz / l;
       return out;
     }
-    /** Los segundos desde la salida de un viaje en el instante T, o −1 si no está en la calle (o si su camino espera turno). */
+    /**
+     * Los segundos desde la salida de un viaje en el instante T, o −1 si no está
+     * en la calle (o si su camino espera turno). Con la duración ya sabida
+     * (`V.dur`), un viaje acabado no necesita su camino; el camino de un viaje
+     * acabado se suelta de la caché (ronda 2): así la caché guarda solo a quien
+     * está en la calle. Antes guardaba también todo lo que salió en los últimos
+     * DMAX segundos, que con parcelas pasaba de CACHE_MAX en hora punta, y la
+     * poda la vaciaba entera 28 veces por minuto (la gente parpadeaba).
+     */
     function transcurrido(v, T, pres) {
+      var el = ((T - v.t0) % DIA + DIA) % DIA, du = V.dur ? V.dur[v.id] : NaN;
+      if (du === du && (du < 0 || el >= du)) return -1;
       var R = rutaDe(v, pres); if (!R) return -1;
-      var el = ((T - v.t0) % DIA + DIA) % DIA;
-      return el >= R.dur ? -1 : el;
+      if (el >= R.dur) { suelta(v.id); return -1; }
+      return el;
     }
+    function suelta(id) { if (V.cache[id] !== undefined) { delete V.cache[id]; delete V.uso[id]; V.nCache--; } }
     /** La posición del peatón i en T, o null si está dentro de algún sitio. Función pura de (datos, i, T). */
     function posicion(i, T) {
       var per = V.personas[i]; if (!per) return null;
@@ -961,21 +1092,34 @@
       }
       return null;
     }
-    /** Los viajes en la calle a la hora T de las zonas de la lista `zonas`, en ese orden. */
-    function enLaCalle(T, zonas, cada, pres) {
+    /** Los viajes de las zonas `zonas` (en ese orden) que salieron entre T − ancho y T. */
+    function enVentana(T, ancho, zonas, cada) {
       var zi, j;
+      T = ((T % DIA) + DIA) % DIA;
       for (zi = 0; zi < zonas.length; zi++) {
         var Z = zonas[zi]; if (!Z.t0s || !Z.t0s.length) continue;
-        var rangos = T - DMAX >= 0 ? [[T - DMAX, T]] : [[0, T], [T - DMAX + DIA, DIA]];
+        var rangos = T - ancho >= 0 ? [[T - ancho, T]] : [[0, T], [T - ancho + DIA, DIA]];
         for (var q = 0; q < rangos.length; q++) {
           var a = rangos[q][0], b = rangos[q][1], lo = 0, hi = Z.t0s.length;
           while (lo < hi) { var mid = (lo + hi) >> 1; if (Z.t0s[mid] < a) lo = mid + 1; else hi = mid; }
-          for (j = lo; j < Z.t0s.length && Z.t0s[j] <= b; j++) {
-            var v = Z.viajes[j], el = transcurrido(v, T, pres);
-            if (el >= 0) cada(v, el, Z);
-          }
+          for (j = lo; j < Z.t0s.length && Z.t0s[j] <= b; j++) cada(Z.viajes[j], Z);
         }
       }
+    }
+    /** Los viajes en la calle a la hora T de las zonas de la lista `zonas`, en ese orden. */
+    function enLaCalle(T, zonas, cada, pres) {
+      enVentana(T, DMAX, zonas, function (v, Z) { var el = transcurrido(v, T, pres); if (el >= 0) cada(v, el, Z); });
+    }
+    /** Las zonas a menos de R_PROC (más su radio) de `f`, de la más cercana a la más lejana. */
+    function zonasCerca(f) {
+      var zs = [], i;
+      for (i = 0; i < V.zonas.length; i++) {
+        var Zq = V.zonas[i], zx = Zq.x - f.x, zz = Zq.z - f.z, lim = R_PROC + Zq.R;
+        if (zx * zx + zz * zz < lim * lim) zs.push([zx * zx + zz * zz, Zq]);
+      }
+      zs.sort(function (a, b) { return (a[0] - b[0]) || (a[1].id - b[1].id); });
+      for (i = 0; i < zs.length; i++) zs[i] = zs[i][1];
+      return zs;
     }
 
     // ---- El reloj -----------------------------------------------------------------
@@ -1081,13 +1225,7 @@
       var f = foco(), cam = new THREE.Vector3().setFromMatrixPosition(ctx.camera.matrixWorld), lista = [], r2 = tp.r * tp.r, activos = 0;
       // Las zonas cercanas, de la más cercana a la más lejana: si el tiempo de
       // caminos nuevos se acaba, lo que espera es lo más lejano.
-      var zs = [];
-      for (i = 0; i < V.zonas.length; i++) {
-        var Zq = V.zonas[i], zx = Zq.x - f.x, zz = Zq.z - f.z, lim = R_PROC + Zq.R;
-        if (zx * zx + zz * zz < lim * lim) zs.push([zx * zx + zz * zz, Zq]);
-      }
-      zs.sort(function (a, b) { return (a[0] - b[0]) || (a[1].id - b[1].id); });
-      for (i = 0; i < zs.length; i++) zs[i] = zs[i][1];
+      var zs = zonasCerca(f);
       enLaCalle(T, zs, function (v, el, Z) {
         var R = rutaDe(v), k, per = V.personas[v.p], a = andadoEn(R, per.v, el);
         activos++;
@@ -1104,20 +1242,25 @@
       if (lista.length > tp.n) lista.length = tp.n;
       V.activos = activos; V.dibujados = lista; V.nOcupadas = V.marcadas.length;
       dibuja(lista);
-      // Unos 1,2 kB por camino: con más de 8.000 guardados se quitan los que no
-      // se han usado en los últimos 120 cuadros (se recalculan igual). Antes se
-      // borraban todos, y el cuadro siguiente recalculaba de golpe los de la calle.
+      // Unos 1,2 kB por camino: con más de CACHE_MAX guardados se sueltan los que
+      // no se han usado en los últimos PODA_CUADROS cuadros (se recalculan igual).
       if (V.nCache > CACHE_MAX) poda();
     }
+    /**
+     * Suelta los caminos que no se han usado en PODA_CUADROS cuadros. Nunca vacía
+     * la caché entera (ronda 2): hasta la ronda 1, si más del 90 % estaba en uso,
+     * la borraba toda, y con parcelas en hora punta eso pasaba 28 veces por
+     * minuto. Lo que está en uso es quien está en la calle cerca del foco (los
+     * viajes acabados ya se soltaron), así que si pasa de CACHE_MAX la caché
+     * crece hasta ese número en vez de tirar lo que se está dibujando.
+     */
     function poda() {
-      var k, n = 0, lim = V.nCuadro - 120, nuevo = {}, uso = {};
+      var k, n = 0, lim = V.nCuadro - PODA_CUADROS, nuevo = {}, uso = {};
       for (k in V.cache) {
         if (!Object.prototype.hasOwnProperty.call(V.cache, k)) continue;
         if (V.uso[k] >= lim) { nuevo[k] = V.cache[k]; uso[k] = V.uso[k]; n++; }
       }
-      // Si todos se usan (una hora punta enorme a la vista), se vacía como antes.
-      if (n > CACHE_MAX * 0.9) { nuevo = {}; uso = {}; n = 0; }
-      V.cache = nuevo; V.uso = uso; V.nCache = n;
+      V.cache = nuevo; V.uso = uso; V.nCache = n; V.podas = (V.podas || 0) + 1;
     }
 
     return {
@@ -1137,7 +1280,7 @@
         var f = firmaCiudad();
         if (!V.listo || f === V.firma) return;
         V.firma = f;
-        if (ctx.Q().clusters >= 1) V.trabajo = trabajoNuevo(); else { V.hecho = false; V.trabajo = null; }
+        if (ctx.Q().clusters >= 1) V.trabajo = trabajoNuevo(true); else { V.hecho = false; V.trabajo = null; }
       },
       calidad: function (nombre, Q) {
         // El grafo se hace con el catastro completo (calidades media, alta y
@@ -1162,7 +1305,7 @@
         o.vida = { zonas: V.zonas.length, aristas: V.nAristas, accesos: V.accesos.length, personas: V.personas.length, viajes: V.viajes.length,
                    enLaCalle: V.activos, dibujados: V.dibujados.length, triangulos: Math.round(V.triangulos || 0), pasosOcupados: V.nOcupadas,
                    caminos: V.nCache, arboles: V.arboles, construccionMs: V.ms, trozos: V.trozos || 1, trozoMaxMs: V.trozoMax, faseDelTrozoMax: V.faseMax, fasesMs: V.fasesMs,
-                   reconstruyendo: !!V.trabajo, aplazados: V.aplazados, reloj: Math.round(V.T || 0), tope: tope().n, radio: tope().r };
+                   reconstruyendo: !!V.trabajo, aplazados: V.aplazados, podas: V.podas || 0, calentados: V.calentados || 0, reloj: Math.round(V.T || 0), tope: tope().n, radio: tope().r };
       },
       soltar: function () { quitaMallas(); },
       publico: {
@@ -1197,9 +1340,12 @@
         viaje: function (vid) { var v = V.viajes[vid]; return v ? { p: v.p, t0: v.t0, zona: v.zona, tipo: v.tipo, vuelta: v.vuelta } : null; },
         ruta: function (vid) { var v = V.viajes[vid], R = v && rutaDe(v); return R ? { x: Array.prototype.slice.call(R.x), y: Array.prototype.slice.call(R.y), z: Array.prototype.slice.call(R.z), L: R.L, dur: R.dur, ceb: R.ceb.slice() } : null; },
         /** Borra caminos y árboles guardados (para comprobar que se recalculan igual). */
-        limpia: function () { V.cache = {}; V.uso = {}; V.nCache = 0; for (var i = 0; i < V.zonas.length; i++) V.zonas[i].arbol = {}; },
+        limpia: function () {
+          V.cache = {}; V.uso = {}; V.nCache = 0; for (var i = 0; i < V.zonas.length; i++) V.zonas[i].arbol = {};
+          if (V.dur) for (i = 0; i < V.dur.length; i++) V.dur[i] = NaN;
+        },
         /** De una vez; con `porTrozos`, como al cambiar las parcelas (avanza en cada cuadro). */
-        reconstruye: function (porTrozos) { if (porTrozos) { V.trabajo = trabajoNuevo(); return 0; } construye(); return V.ms; },
+        reconstruye: function (porTrozos) { if (porTrozos) { V.trabajo = trabajoNuevo(true); return 0; } construye(); return V.ms; },
         reconstruyendo: function () { return !!V.trabajo; },
         paradas: function (zi) { var Z = V.zonas[zi]; return Z && Z.paradas ? Z.paradas.map(function (id) { var b = bordilloDe(Z, id); return { nodo: id, x: b[0], y: b[1], z: b[2] }; }) : []; },
         zona: function (i) { var Z = V.zonas[i]; return Z ? { tipo: Z.tipo, kind: Z.kind, x: Z.x, z: Z.z, R: Z.R, aristas: Z.aristas ? Z.aristas.length : 0, accesos: Z.accesos.length, viajes: Z.viajes.length, q: Z.q, T: Z.T, Dc: Z.Dc, m: Z.m } : null; },
@@ -1208,7 +1354,40 @@
         /** ¿Cae (x, z) en la calzada de alguna calle (la del paso que se cruza incluida)? Para las pruebas. */
         enCalzada: function (x, z) { return V.asfalto ? enAsfalto(x, z, -2) : null; },
         /** Por qué un portal se quedó sin acera (recuentos de la última construcción). */
-        diagnostico: function () { return V.diag; }
+        diagnostico: function () { return V.diag; },
+        /**
+         * La prueba de márgenes: reconstruye con los puntos desplazados (dx, dz)
+         * metros y devuelve la huella del genotipo (aristas, accesos, trabajo y
+         * viajes de cada persona); sin argumentos, la huella de lo que hay.
+         * Después reconstruye sin desplazar.
+         */
+        huella: function (dx, dz) {
+          if (dx !== undefined) { SONDA.x = dx; SONDA.z = dz; try { construye(); } finally { SONDA.x = 0; SONDA.z = 0; } }
+          // Por partes: el grafo (qué aristas y pasos existen), sus pesos en cm, los
+          // accesos (arista) y su sitio en cm, el trabajo de cada persona y los viajes.
+          var hs = [0, 0, 0, 0, 0, 0], n = [0, 0, 0, 0], i, k;
+          function mete(q, x) { hs[q] = mezcla(hs[q], x | 0); }
+          for (i = 0; i < V.zonas.length; i++) {
+            var Z = V.zonas[i]; if (!Z.aristas) continue;
+            for (k = 0; k < Z.aristas.length; k++) { var e = Z.aristas[k]; mete(0, e.a); mete(0, e.b); mete(0, e.cebra); mete(1, e.peso); n[0]++; }
+          }
+          for (i = 0; i < V.accesos.length; i++) { var a = V.accesos[i]; mete(2, a.zona); mete(2, a.e === undefined ? -1 : a.e); mete(3, Math.round((a.u || 0) * 100)); n[1]++; }
+          for (i = 0; i < V.personas.length; i++) { var p = V.personas[i]; mete(4, p.casa.id); mete(4, p.trabajo ? p.trabajo.id : -1); n[2]++; }
+          for (i = 0; i < V.viajes.length; i++) { var v = V.viajes[i]; mete(5, v.t0); mete(5, v.zona); mete(5, v.src.id); n[3]++; }
+          var h = 0; for (i = 0; i < hs.length; i++) h = mezcla(h, hs[i]);
+          // El margen de los redondeos a centímetros (pesos del grafo y sitio del
+          // acceso): lo más cerca que cae un valor de la mitad entre dos enteros.
+          var mr = Infinity;
+          function margen(x) { var f = x - Math.floor(x); mr = Math.min(mr, Math.abs(f - 0.5)); }
+          for (i = 0; i < V.zonas.length; i++) if (V.zonas[i].aristas) for (k = 0; k < V.zonas[i].aristas.length; k++) margen(V.zonas[i].aristas[k].len * 100);
+          for (i = 0; i < V.accesos.length; i++) if (V.accesos[i].u !== undefined) margen(V.accesos[i].u * 100);
+          var out = { huella: h, partes: { grafo: hs[0], pesosCm: hs[1], accesos: hs[2], sitioAccesoCm: hs[3], trabajos: hs[4], viajes: hs[5] },
+                      aristas: n[0], accesos: n[1], personas: n[2], viajes: n[3], margenRedondeoCm: mr };
+          if (dx !== undefined) construye();
+          return out;
+        },
+        /** Cuántos trabajan en las parcelas (y cuántos puestos suman sus plantillas) y cuántos en las oficinas, por barrio. */
+        empleo: function () { return V.empleo || null; }
       }
     };
     /**
