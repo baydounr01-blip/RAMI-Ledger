@@ -2251,7 +2251,12 @@
         // esbeltez y su color del sector con el ropaje. Se escribe en metros en
         // la malla de su tesela, con el portal hacia el frente de la parcela
         // (+y de la cuadrícula, donde arranca el paseo a pie).
-        var sr = SECTOR_SRGB[kind], ed = parcelaPartes(arch, CELL, { v: real01(semillaMorfologia(x, y, 13)), v2: real01(semillaMorfologia(x, y, 14)), sy: sy, T: [Math.min(1, sr[0] * v), Math.min(1, sr[1] * v), Math.min(1, sr[2] * v)] });
+        // La pátina (v0.11.0, módulo «memoria»): el tono se templa y se apaga con
+        // los bloques transcurridos desde `since`; la curva vive en el módulo
+        // (`servicios.patina`) y sin él el color es el de siempre.
+        var sr = SECTOR_SRGB[kind], TP0 = [Math.min(1, sr[0] * v), Math.min(1, sr[1] * v), Math.min(1, sr[2] * v)];
+        if (!pend && ctx && typeof ctx.servicios.patina === 'function') TP0 = ctx.servicios.patina(d.height | 0, pc.since | 0, TP0) || TP0;
+        var ed = parcelaPartes(arch, CELL, { v: real01(semillaMorfologia(x, y, 13)), v2: real01(semillaMorfologia(x, y, 14)), sy: sy, T: TP0 });
         var y0 = S.cellH[ci] + 0.5 - ed.suelo, clave = Math.floor(w.x / TESELA_VIA) + ':' + Math.floor(w.z / TESELA_VIA);
         var TT = teselas[clave] || (teselas[clave] = { acc: newAcc(), abase: [], aflags: [] });
         _m4b.compose(_pv.set(w.x, y0, w.z), _q.setFromEuler(_e.set(0, rotR, 0)), _sv.set(1, 1, 1));

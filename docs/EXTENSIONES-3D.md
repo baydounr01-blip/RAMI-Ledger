@@ -112,6 +112,30 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
   `servicios.sonido` y `umbral` lo usa si está). `handle` (la API pública,
   disponible tras el montaje).
 
+## Servicios y opciones que usa hoy algún módulo
+
+- **`servicios.patina(altura, desde, rgb)`** (lo pone `memoria`): el núcleo lo
+  llama en `applyCity` con el color sRGB del cuerpo de cada edificio de parcela
+  (no pendiente), la altura de la cabeza y el `since` de la parcela, y usa el
+  color que devuelve. Sin el módulo, el color es el de la v0.10.16. Es el único
+  punto del núcleo que toca `memoria` (dos líneas en la línea del color).
+- **`opts.irA(destino)`**: el panel lo pasa a `RamiCity3D.mount`; un módulo lo
+  llama para llevar al jugador a otra vista del panel (`'minar'`, `'recibir'`,
+  cualquier vista de `views`) o a la tarjeta del perfil (`'perfil'`). Lo usa la
+  guía del día uno.
+- **`handle.ext.memoria.jugador({ perfil, saldo })`**: el panel cuenta al módulo
+  lo que el visor no ve (si hay perfil en la cadena y el saldo), cada 2,5 s con
+  la pestaña de la ciudad abierta.
+- **`window.RamiMemoria`**: `memoria.js` publica sus funciones puras
+  (`nivelPatina`, `patina`, `encargos`) aunque no haya visor, para las pruebas.
+- **Etiquetas de los módulos**: `ctx.etiquetas(ls)` recorta los conjuntos de
+  los módulos los últimos, detrás de los rótulos de barrio, de hito y de venta:
+  la etiqueta que chocaría con uno de ellos no se dibuja. Los encargos de
+  `memoria` se registran así; para que choquen poco se anclan en una empresa
+  del distrito (no en su centro, donde cae el rótulo del barrio) y llevan un
+  texto corto. Un conjunto registrado y oculto (`mesh.visible = false`) sigue
+  pasando por el recorte, pero como va el último no le quita sitio a nadie.
+
 ## Reglas de la casa
 
 - **Genotipo en enteros, fenotipo en coma flotante** (`docs/METAVERSO.md` §1).
