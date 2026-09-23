@@ -327,11 +327,11 @@ pub fn afinidad(distrito_id: u8, sector_id: u8) -> u32 {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Trade {
     pub height: u64,
-    /// 0 parcela, 1 activo.
+    /// 0 parcela, 1 activo, 2 vivienda (escritura de vivienda, v0.11.0).
     pub kind: u8,
     pub x: u16,
     pub y: u16,
-    /// Sector de la parcela (parcela) o tipo del activo (activo).
+    /// Sector de la parcela (parcela y vivienda) o tipo del activo (activo).
     pub sector: u8,
     pub distrito: u8,
     pub price: Amount,
@@ -644,6 +644,8 @@ pub fn nueva_parcela(owner: AccountId, name: String, kind: u8, since: u64) -> Pa
         insumos_pagados: 0,
         importado: 0,
         ventas: 0,
+        unidades: 0,
+        units: Vec::new(),
     }
 }
 

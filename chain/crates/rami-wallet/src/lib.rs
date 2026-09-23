@@ -419,7 +419,11 @@ pub fn sign_into(firma: &FirmaCtx, kp: &KeyPair, mut tx: Tx) -> Tx {
         | Tx::BuyAsset { sig: s, .. }
         | Tx::SellParcel { sig: s, .. }
         | Tx::BuyParcel { sig: s, .. }
-        | Tx::SetProfile { sig: s, .. } => *s = sig,
+        | Tx::SetProfile { sig: s, .. }
+        | Tx::DivideParcel { sig: s, .. }
+        | Tx::TransferUnit { sig: s, .. }
+        | Tx::SellUnit { sig: s, .. }
+        | Tx::BuyUnit { sig: s, .. } => *s = sig,
         Tx::Coinbase { .. } => {}
     }
     tx
@@ -506,6 +510,24 @@ pub fn build_sell_parcel(firma: &FirmaCtx, kp: &KeyPair, x: u16, y: u16, price: 
 /// Compra una parcela en venta pagando como mucho `max_price`.
 pub fn build_buy_parcel(firma: &FirmaCtx, kp: &KeyPair, x: u16, y: u16, max_price: u64, fee: u64, nonce: u64) -> Tx {
     sign_into(firma, kp, Tx::BuyParcel { who: kp.public_bytes(), x, y, max_price, fee, nonce, sig: [0u8; 64] })
+}
+
+// ---------- Escritura de vivienda (v0.11.0) ----------
+/// Divide una parcela propia en `unidades` viviendas (1..=64), todas tuyas.
+pub fn build_divide_parcel(firma: &FirmaCtx, kp: &KeyPair, x: u16, y: u16, unidades: u16, fee: u64, nonce: u64) -> Tx {
+    sign_into(firma, kp, Tx::DivideParcel { who: kp.public_bytes(), x, y, unidades, fee, nonce, sig: [0u8; 64] })
+}
+/// Transfiere tu vivienda `n` de la parcela (x, y) a `to`.
+pub fn build_transfer_unit(firma: &FirmaCtx, kp: &KeyPair, x: u16, y: u16, n: u16, to: AccountId, fee: u64, nonce: u64) -> Tx {
+    sign_into(firma, kp, Tx::TransferUnit { from: kp.public_bytes(), x, y, n, to, fee, nonce, sig: [0u8; 64] })
+}
+/// Pone tu vivienda `n` en venta (`price` 0 retira la venta).
+pub fn build_sell_unit(firma: &FirmaCtx, kp: &KeyPair, x: u16, y: u16, n: u16, price: u64, fee: u64, nonce: u64) -> Tx {
+    sign_into(firma, kp, Tx::SellUnit { who: kp.public_bytes(), x, y, n, price, fee, nonce, sig: [0u8; 64] })
+}
+/// Compra la vivienda `n` en venta pagando como mucho `max_price`.
+pub fn build_buy_unit(firma: &FirmaCtx, kp: &KeyPair, x: u16, y: u16, n: u16, max_price: u64, fee: u64, nonce: u64) -> Tx {
+    sign_into(firma, kp, Tx::BuyUnit { who: kp.public_bytes(), x, y, n, max_price, fee, nonce, sig: [0u8; 64] })
 }
 
 // ---------- Dubái RAMI (fase 2, v0.10.0): identidad ----------

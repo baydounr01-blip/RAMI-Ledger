@@ -29,10 +29,10 @@ use rami_core::tx::{txid, FirmaCtx, Tx};
 use rami_node::{spawn, NodeConfig, NodeHandle};
 use rami_wallet::calibracion;
 use rami_wallet::{
-    build_buy_asset, build_buy_parcel, build_claim_parcel, build_commit, build_harvest, build_list_lease,
-    build_mint_asset, build_rent, build_reveal, build_sell_asset, build_sell_parcel, build_set_profile, build_stake,
-    build_transfer, build_transfer_asset, default_keystore_path, fmt_ram, load_reveal, parse_pubkey, parse_ram, save_reveal,
-    Keystore,
+    build_buy_asset, build_buy_parcel, build_buy_unit, build_claim_parcel, build_commit, build_divide_parcel, build_harvest,
+    build_list_lease, build_mint_asset, build_rent, build_reveal, build_sell_asset, build_sell_parcel, build_sell_unit,
+    build_set_profile, build_stake, build_transfer, build_transfer_asset, build_transfer_unit, default_keystore_path, fmt_ram,
+    load_reveal, parse_pubkey, parse_ram, save_reveal, Keystore,
 };
 
 use http::{Request, Response};
@@ -284,6 +284,17 @@ fn query_u16(req: &Request, key: &str) -> Result<u16, String> {
     let v: u64 = req.query_get(key).and_then(|s| s.parse().ok()).ok_or_else(|| format!("falta ?{key}="))?;
     if v >= rami_core::ciudad::CITY_SIZE_DUBAI as u64 {
         return Err("coordenada fuera de la ciudad".into());
+    }
+    Ok(v as u16)
+}
+
+/// Número de vivienda (1..=64) o de viviendas en que se divide. La cota
+/// exacta (cuántas tiene la parcela) la pone el nodo al admitir la tx; aquí
+/// solo se acota la forma.
+fn unidad_num(b: &Value, key: &str) -> Result<u16, String> {
+    let v = b.get(key).and_then(|v| v.as_u64()).ok_or_else(|| format!("falta {key}"))?;
+    if v == 0 || v > rami_core::tx::MAX_UNIDADES_POR_PARCELA as u64 {
+        return Err(format!("{key} fuera de rango (de 1 a {})", rami_core::tx::MAX_UNIDADES_POR_PARCELA));
     }
     Ok(v as u16)
 }
@@ -837,6 +848,40 @@ fn route(g: &Gui, req: Request) -> Response {
             let max_price = match parse_ram(str_field(&b, "max_price")) { Ok(a) => a, Err(e) => return err(e) };
             let fee = fee_of(&b);
             signed_submit(g, move |firma, kp, nonce| build_buy_asset(firma, kp, asset, max_price, fee, nonce))
+        }
+        // Escritura de vivienda (v0.11.0): mismas defensas y mismo camino que
+        // /api/city/sell y /api/city/buy_asset (host, origen, JSON, token,
+        // forma aquí; las reglas, en el nodo al admitir la tx).
+        ("POST", "/api/city/divide") => {
+            let b = body_json(&req);
+            let (x, y) = match (coord(&b, "x"), coord(&b, "y")) { (Ok(x), Ok(y)) => (x, y), (Err(e), _) | (_, Err(e)) => return err(e) };
+            let unidades = match unidad_num(&b, "unidades") { Ok(n) => n, Err(e) => return err(e) };
+            let fee = fee_of(&b);
+            signed_submit(g, move |firma, kp, nonce| build_divide_parcel(firma, kp, x, y, unidades, fee, nonce))
+        }
+        ("POST", "/api/city/unit_transfer") => {
+            let b = body_json(&req);
+            let (x, y) = match (coord(&b, "x"), coord(&b, "y")) { (Ok(x), Ok(y)) => (x, y), (Err(e), _) | (_, Err(e)) => return err(e) };
+            let n = match unidad_num(&b, "n") { Ok(n) => n, Err(e) => return err(e) };
+            let to = match parse_pubkey(str_field(&b, "to")) { Ok(a) => a, Err(e) => return err(e) };
+            let fee = fee_of(&b);
+            signed_submit(g, move |firma, kp, nonce| build_transfer_unit(firma, kp, x, y, n, to, fee, nonce))
+        }
+        ("POST", "/api/city/unit_sell") => {
+            let b = body_json(&req);
+            let (x, y) = match (coord(&b, "x"), coord(&b, "y")) { (Ok(x), Ok(y)) => (x, y), (Err(e), _) | (_, Err(e)) => return err(e) };
+            let n = match unidad_num(&b, "n") { Ok(n) => n, Err(e) => return err(e) };
+            let price = match parse_ram(str_field(&b, "price")) { Ok(a) => a, Err(e) => return err(e) };
+            let fee = fee_of(&b);
+            signed_submit(g, move |firma, kp, nonce| build_sell_unit(firma, kp, x, y, n, price, fee, nonce))
+        }
+        ("POST", "/api/city/unit_buy") => {
+            let b = body_json(&req);
+            let (x, y) = match (coord(&b, "x"), coord(&b, "y")) { (Ok(x), Ok(y)) => (x, y), (Err(e), _) | (_, Err(e)) => return err(e) };
+            let n = match unidad_num(&b, "n") { Ok(n) => n, Err(e) => return err(e) };
+            let max_price = match parse_ram(str_field(&b, "max_price")) { Ok(a) => a, Err(e) => return err(e) };
+            let fee = fee_of(&b);
+            signed_submit(g, move |firma, kp, nonce| build_buy_unit(firma, kp, x, y, n, max_price, fee, nonce))
         }
         ("POST", "/api/city/claim") => {
             let b = body_json(&req);
@@ -1467,10 +1512,12 @@ fn real_main(args: Vec<String>) -> ExitCode {
     let params = if is_testnet {
         Params::testnet()
     } else {
-        // Regtest: activación de la regla de firma v2 y de Dubái solo si se fuerza (pruebas).
+        // Regtest: activación de la regla de firma v2, de Dubái y de la escritura
+        // de vivienda solo si se fuerza (pruebas).
         Params::regtest()
             .con_firma_v2_desde(arg(&args, "--firma-v2-desde").and_then(|s| s.parse::<u64>().ok()))
             .con_dubai_desde(arg(&args, "--dubai-desde").and_then(|s| s.parse::<u64>().ok()))
+            .con_vivienda_desde(arg(&args, "--vivienda-desde").and_then(|s| s.parse::<u64>().ok()))
     };
     let net_name = if is_testnet { "testnet" } else { "regtest" };
 

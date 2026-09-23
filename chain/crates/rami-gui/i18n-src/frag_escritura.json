@@ -1,0 +1,176 @@
+{
+ "De 1 a 64 viviendas, una sola vez. Todas nacen tuyas y solo cuesta la comisión. No se divide una parcela en venta.": {
+  "en": "From 1 to 64 homes, only once. They all start out as yours and it costs only the fee. A parcel that is for sale is not divided.",
+  "ru": "От 1 до 64 квартир, только один раз. Все они изначально ваши, платится только комиссия. Участок, выставленный на продажу, не делится.",
+  "sw": "Kuanzia nyumba 1 hadi 64, mara moja tu. Zote zinaanza kuwa zako na gharama ni ada tu. Kiwanja kilicho sokoni hakigawanywi.",
+  "zh": "1 至 64 套住宅，只能分割一次。全部归你所有，只需支付手续费。出售中的地块不能分割。"
+ },
+ "De 1 a 64 viviendas.": {
+  "en": "From 1 to 64 homes.",
+  "ru": "От 1 до 64 квартир.",
+  "sw": "Kuanzia nyumba 1 hadi 64.",
+  "zh": "1 至 64 套住宅。"
+ },
+ "Dividir en viviendas": {
+  "en": "Divide into homes",
+  "ru": "Разделить на квартиры",
+  "sw": "Gawanya kuwa nyumba",
+  "zh": "分割为住宅"
+ },
+ "Dividirás la parcela en": {
+  "en": "You will divide the parcel into",
+  "ru": "Вы разделите участок на",
+  "sw": "Utagawanya kiwanja kuwa",
+  "zh": "你将把地块分割为"
+ },
+ "Esta red no tiene fecha de activación de la escritura de vivienda (regtest sin --vivienda-desde). ": {
+  "en": "This network has no activation date for the housing deed (regtest without --vivienda-desde). ",
+  "ru": "У этой сети нет даты активации права собственности на жильё (regtest без --vivienda-desde). ",
+  "sw": "Mtandao huu hauna tarehe ya kuanzishwa kwa hati ya nyumba (regtest bila --vivienda-desde). ",
+  "zh": "本网络没有住宅产权规则的启用日期（regtest 未设置 --vivienda-desde）。 "
+ },
+ "Gestionar": {
+  "en": "Manage",
+  "ru": "Управлять",
+  "sw": "Simamia",
+  "zh": "管理"
+ },
+ "Hasta entonces la parcela es una sola escritura: solo su dueño acuña en ella.": {
+  "en": "Until then the parcel is a single deed: only its owner mints on it.",
+  "ru": "До этого участок — одно право собственности: выпускать активы на нём может только его владелец.",
+  "sw": "Hadi wakati huo kiwanja ni hati moja: mmiliki wake pekee ndiye anayetengeneza mali juu yake.",
+  "zh": "在此之前，地块只有一份产权：只有其所有者可以在上面铸造。"
+ },
+ "La escritura de vivienda rige desde el": {
+  "en": "The housing deed applies from",
+  "ru": "Право собственности на жильё действует с",
+  "sw": "Hati ya nyumba inaanza kutumika tarehe",
+  "zh": "住宅产权规则的生效时间："
+ },
+ "La parcela está en venta: las viviendas de su dueño van con ella y no se venden ni se transfieren sueltas.": {
+  "en": "The parcel is for sale: its owner's homes go with it and are not sold or transferred separately.",
+  "ru": "Участок выставлен на продажу: квартиры его владельца переходят вместе с ним и не продаются и не передаются по отдельности.",
+  "sw": "Kiwanja kiko sokoni: nyumba za mmiliki wake zinaenda pamoja nacho na haziuzwi wala kuhamishwa peke yake.",
+  "zh": "地块正在出售：其所有者的住宅随地块一起转让，不单独出售或转让。"
+ },
+ "Número de viviendas": {
+  "en": "Number of homes",
+  "ru": "Число квартир",
+  "sw": "Idadi ya nyumba",
+  "zh": "住宅数量"
+ },
+ "Quien tiene una vivienda puede acuñar activos en esta parcela. Una vivienda no cobra del fondo de la ciudad: ese reparto es de la empresa.": {
+  "en": "Whoever owns a home can mint assets on this parcel. A home does not collect from the city fund: that payout belongs to the company.",
+  "ru": "Владелец квартиры может выпускать активы на этом участке. Квартира не получает выплат из фонда города: эти выплаты принадлежат компании.",
+  "sw": "Mwenye nyumba anaweza kutengeneza mali kwenye kiwanja hiki. Nyumba haipokei chochote kutoka mfuko wa jiji: mgao huo ni wa kampuni.",
+  "zh": "拥有住宅的人可以在这块地块上铸造资产。住宅不从城市基金领取任何分配：那部分分配属于企业。"
+ },
+ "Retira la venta de la parcela para dividirla.": {
+  "en": "Withdraw the parcel from sale to divide it.",
+  "ru": "Снимите участок с продажи, чтобы разделить его.",
+  "sw": "Ondoa kiwanja sokoni ili ukigawanye.",
+  "zh": "撤回地块的出售后才能分割。"
+ },
+ "Sin dividir: la parcela es una sola escritura.": {
+  "en": "Not divided: the parcel is a single deed.",
+  "ru": "Не разделён: участок — одно право собственности.",
+  "sw": "Hakijagawanywa: kiwanja ni hati moja.",
+  "zh": "未分割：地块只有一份产权。"
+ },
+ "Tienes": {
+  "en": "You have",
+  "ru": "У вас",
+  "sw": "Una",
+  "zh": "你有"
+ },
+ "Tope por cuenta: 16 viviendas en parcelas de otros; las de tu propia parcela no cuentan.": {
+  "en": "Limit per account: 16 homes on other people's parcels; those on your own parcel do not count.",
+  "ru": "Лимит на счёт: 16 квартир на чужих участках; квартиры на вашем собственном участке не считаются.",
+  "sw": "Kikomo kwa akaunti: nyumba 16 kwenye viwanja vya wengine; zilizo kwenye kiwanja chako hazihesabiwi.",
+  "zh": "每个账户上限：在他人地块上最多 16 套住宅；你自己地块上的住宅不计入。"
+ },
+ "Vivienda": {
+  "en": "Home",
+  "ru": "Квартира",
+  "sw": "Nyumba",
+  "zh": "住宅"
+ },
+ "Viviendas": {
+  "en": "Homes",
+  "ru": "Квартиры",
+  "sw": "Nyumba",
+  "zh": "住宅"
+ },
+ "operación(es) de vivienda pendiente(s): se aplican al minarse el próximo bloque.": {
+  "en": "pending housing operation(s): they apply when the next block is mined.",
+  "ru": "операц. с жильём ожидают подтверждения: применятся, когда будет добыт следующий блок.",
+  "sw": "shughuli za nyumba zinazosubiri: zitatumika bloku ijayo itakapochimbwa.",
+  "zh": "项住宅操作待确认：将在下一个区块被挖出时生效。"
+ },
+ "parcela dividida": {
+  "en": "parcel divided",
+  "ru": "участок разделён",
+  "sw": "kiwanja kimegawanywa",
+  "zh": "地块已分割"
+ },
+ "tuyas": {
+  "en": "yours",
+  "ru": "ваши",
+  "sw": "zako",
+  "zh": "属于你"
+ },
+ "vivienda transferida": {
+  "en": "home transferred",
+  "ru": "квартира передана",
+  "sw": "nyumba imehamishwa",
+  "zh": "住宅已转让"
+ },
+ "viviendas": {
+  "en": "homes",
+  "ru": "квартир",
+  "sw": "nyumba",
+  "zh": "套住宅"
+ },
+ "viviendas. Solo se divide una vez. ¿Continuar?": {
+  "en": "homes. A parcel is divided only once. Continue?",
+  "ru": "квартир. Участок делится только один раз. Продолжить?",
+  "sw": "nyumba. Kiwanja kinagawanywa mara moja tu. Endelea?",
+  "zh": "套住宅。地块只能分割一次。继续吗？"
+ },
+ "Importe inválido: usa coma o punto para los decimales y ningún separador de miles.": {
+  "en": "Invalid amount: use a comma or a point for decimals and no thousands separator.",
+  "ru": "Неверная сумма: для дробной части используйте запятую или точку, без разделителя тысяч.",
+  "sw": "Kiasi si sahihi: tumia koma au nukta kwa desimali na usitumie kitenganishi cha maelfu.",
+  "zh": "金额无效：小数请用逗号或句点，不要使用千位分隔符。"
+ },
+ "Se leerá como": {
+  "en": "It will be read as",
+  "ru": "Будет прочитано как",
+  "sw": "Kitasomwa kama",
+  "zh": "将被读作"
+ },
+ "Para escribir miles, escribe el número sin separador. ¿Continuar?": {
+  "en": "To write thousands, type the number without a separator. Continue?",
+  "ru": "Чтобы написать тысячи, введите число без разделителя. Продолжить?",
+  "sw": "Kuandika maelfu, andika nambari bila kitenganishi. Uendelee?",
+  "zh": "如需输入千位数，请直接输入数字，不加分隔符。继续吗？"
+ },
+ "Tienes una vivienda en esta parcela: puedes acuñar activos en ella y serán tuyos.": {
+  "en": "You own a home in this parcel: you can mint assets in it and they will be yours.",
+  "ru": "У вас есть квартира на этом участке: вы можете выпускать на нём активы, и они будут вашими.",
+  "sw": "Una nyumba katika kiwanja hiki: unaweza kutengeneza mali ndani yake na zitakuwa zako.",
+  "zh": "你在这块地块上拥有一套住宅：可以在此铸造资产，资产归你所有。"
+ },
+ "1 vivienda": {
+  "en": "1 home",
+  "ru": "1 квартира",
+  "sw": "nyumba 1",
+  "zh": "1 套住宅"
+ },
+ "1 tuya": {
+  "en": "1 yours",
+  "ru": "1 ваша",
+  "sw": "1 ni yako",
+  "zh": "1 套属于你"
+ }
+}

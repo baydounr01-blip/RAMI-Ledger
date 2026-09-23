@@ -15,8 +15,19 @@
 #      nueva mina bloques con firmas ligadas a la red y la antigua vuelve a
 #      abrir el directorio sin romperse (se queda en su altura, como pasará
 #      en la testnet con quien no se actualice).
+#   5. Activación de la escritura de vivienda (v0.11.0), forzada en regtest
+#      con Dubái: la nueva reclama, divide, vende y compra viviendas y mina;
+#      sin las fechas (o con Dubái y sin vivienda) la MISMA versión se queda
+#      en el bloque anterior; un nodo antiguo conectado a uno nuevo se queda
+#      en su altura sin caerse; la antigua vuelve a abrir el directorio y
+#      falla limpia en la línea que no entiende (un tipo de transacción que no
+#      conoce: ver docs/VIVIENDA.md, §7) sin tocar el fichero; y la nueva, ante
+#      un bloque de una versión POSTERIOR en medio del fichero, lo salta y
+#      sigue abriendo.
 #
 # Uso: tools/compat/roundtrip.sh [OLD_TAG]   (desde la raíz del repositorio)
+# CARGO_TARGET_DIR, si está definida, vale para la versión nueva; la antigua
+# se compila siempre en su propio árbol (no pisa los binarios nuevos).
 set -euo pipefail
 
 OLD_TAG="${1:-v0.7.0}"
@@ -31,17 +42,24 @@ mkdir -p "$RAMI_HOME/.rami"
 
 log() { printf '\n== %s\n' "$*"; }
 falla() { printf '✗ %s\n' "$*" >&2; exit 1; }
+# `orden | contiene PATRÓN`: lee TODA la salida y después busca. Con
+# `set -o pipefail`, `orden | grep -q` falla aunque el patrón esté: grep sale
+# en la primera coincidencia, la orden vuelve a escribir en el tubo cerrado,
+# el println! de Rust entra en pánico (Broken pipe, salida 101) y pipefail lo
+# cuenta como fallo. `rami-node mine` escribe una línea por bloque y un
+# resumen al final: con grep -q fallaban 23 de 30 ejecuciones.
+contiene() { local salida; salida=$(cat); grep -q -- "$1" <<<"$salida"; }
 
 log "compilando la versión nueva (este árbol)"
 cargo build --release --locked --manifest-path "$ROOT/chain/Cargo.toml" -p rami-wallet -p rami-node >/dev/null
-NEW="$ROOT/chain/target/release"
+NEW="${CARGO_TARGET_DIR:-$ROOT/chain/target}/release"
 
 log "compilando la versión publicada $OLD_TAG"
 if [ ! -d "$OLD_SRC" ]; then
   git -C "$ROOT" fetch --no-tags origin "tag" "$OLD_TAG" >/dev/null 2>&1 || true
   git -C "$ROOT" worktree add -f "$OLD_SRC" "$OLD_TAG" >/dev/null
 fi
-cargo build --release --locked --manifest-path "$OLD_SRC/chain/Cargo.toml" -p rami-wallet -p rami-node >/dev/null
+CARGO_TARGET_DIR="$OLD_SRC/chain/target" cargo build --release --locked --manifest-path "$OLD_SRC/chain/Cargo.toml" -p rami-wallet -p rami-node >/dev/null
 OLD="$OLD_SRC/chain/target/release"
 
 KS="$RAMI_HOME/.rami/wallet.json"
@@ -135,4 +153,79 @@ ALTURA_FIN=$("$NEW/rami-node" status --chain "$D" --network regtest --firma-v2-d
 [ "$ALTURA_FIN" = "$ALTURA_V2" ] || falla "la cabeza v2 cambió tras minar la antigua ($ALTURA_V2 → $ALTURA_FIN)"
 echo "activación: antes $ALTURA_ANTES · nueva con v2 $ALTURA_V2 · antigua se queda en $ALTURA_OLD_V2 · sin la fecha $ALTURA_SIN"
 
-log "OK: ida y vuelta $OLD_TAG ⇄ versión nueva sin pérdidas, activación v2 incluida (directorio: $WORK)"
+# ── 5. Escritura de vivienda (v0.11.0), forzada en regtest con Dubái ──
+log "escritura de vivienda: la nueva divide, vende y compra; sin la fecha no avanza; $OLD_TAG vuelve a abrir"
+V="$WORK/vivienda"; rm -rf "$V"; cp -r "$C" "$V"; rm -f "$V/mempool.jsonl"
+DESDE_V=$(( $(date +%s) - 1 ))
+VIV="--dubai-desde $DESDE_V --vivienda-desde $DESDE_V"
+# shellcheck disable=SC2086
+nuevo() { "$NEW/rami-node" "$1" --chain "$V" --network regtest $VIV "${@:2}"; }
+# shellcheck disable=SC2086
+cartera() { "$NEW/rami-wallet" "$1" --chain "$V" --network regtest $VIV --keystore "$KS" "${@:2}"; }
+ALTURA_V0=$(nuevo status | awk '/altura/{print $3}')
+# (21,45): desierto, 5 RAMI; fuera de la cuadrícula de 32×32 de antes de Dubái.
+cartera claim --x 21 --y 45 --name Residencial --kind 7 --label yo >/dev/null || falla "claim con la nueva"
+nuevo mine --address "$YO" --blocks 1 | contiene "2 tx" || falla "el bloque de la parcela no lleva la reclamación"
+cartera divide --x 21 --y 45 --unidades 4 --label yo >/dev/null || falla "divide con la nueva"
+nuevo mine --address "$YO" --blocks 1 | contiene "2 tx" || falla "el bloque de la división no la lleva"
+cartera divide --x 21 --y 45 --unidades 8 --label yo >/dev/null 2>"$WORK/viv-dos-veces.err" && falla "se dividió dos veces"
+grep -q "ya está dividida" "$WORK/viv-dos-veces.err" || falla "la segunda división no dio el motivo: $(cat "$WORK/viv-dos-veces.err")"
+cartera unit-sell --x 21 --y 45 --n 2 --price 1 --label yo >/dev/null || falla "unit-sell"
+cartera unit-buy --x 21 --y 45 --n 2 --max-price 1 --label otro >/dev/null || falla "unit-buy desde la otra cuenta"
+cartera unit-transfer --x 21 --y 45 --n 3 --to "$OTRO" --label yo >/dev/null || falla "unit-transfer"
+nuevo mine --address "$YO" --blocks 1 | contiene "4 tx" || falla "el bloque de venta, compra y transferencia no las lleva"
+cartera unit-buy --x 21 --y 45 --n 2 --max-price 1 --label otro >/dev/null 2>"$WORK/viv-ya.err" && falla "se compró una vivienda que ya era suya"
+grep -q "no está en venta" "$WORK/viv-ya.err" || falla "la compra repetida no dio el motivo: $(cat "$WORK/viv-ya.err")"
+nuevo verify | contiene "íntegra" || falla "verify de la nueva con la vivienda activada"
+ALTURA_VIV=$(nuevo status | awk '/altura/{print $3}')
+[ "$ALTURA_VIV" = "$((ALTURA_V0 + 3))" ] || falla "la nueva con vivienda no avanzó 3 bloques ($ALTURA_V0 → $ALTURA_VIV)"
+# La regla depende de los parámetros: sin fechas no pasa de la parcela de
+# 64×64; con Dubái y sin vivienda, no pasa de la división.
+ALTURA_SIN=$("$NEW/rami-node" status --chain "$V" --network regtest 2>/dev/null | awk '/altura/{print $3}')
+[ "$ALTURA_SIN" = "$ALTURA_V0" ] || falla "sin fechas se admitieron bloques de Dubái ($ALTURA_V0 → $ALTURA_SIN)"
+ALTURA_SOLO_DUBAI=$("$NEW/rami-node" status --chain "$V" --network regtest --dubai-desde "$DESDE_V" 2>/dev/null | awk '/altura/{print $3}')
+[ "$ALTURA_SOLO_DUBAI" = "$((ALTURA_V0 + 1))" ] || falla "con Dubái y sin vivienda debería quedarse en $((ALTURA_V0 + 1)) y está en $ALTURA_SOLO_DUBAI"
+# Por red: un nodo ANTIGUO (sobre el directorio anterior) conectado a uno
+# nuevo con los bloques de vivienda se queda en su altura y no se cae.
+VN="$WORK/vivienda-red"; rm -rf "$VN"; cp -r "$C" "$VN"; rm -f "$VN/node.key" "$VN/peers.json" "$VN/known-identities.json" "$VN/peer-grades.json" "$VN/mempool.jsonl"
+# shellcheck disable=SC2086
+timeout 16 "$NEW/rami-node" run --chain "$V" --network regtest $VIV --listen 30495 --no-lan --no-portmap >"$WORK/viv-new-node.log" 2>&1 &
+NUEVO_PID=$!
+sleep 2
+timeout 10 "$OLD/rami-node" run --chain "$VN" --network regtest --listen 30496 --connect 127.0.0.1:30495 --no-lan --no-portmap >"$WORK/viv-old-node.log" 2>&1 || true
+wait "$NUEVO_PID" 2>/dev/null || true
+grep -qi "panic" "$WORK/viv-old-node.log" && falla "el nodo antiguo cayó frente a un nodo con vivienda: $(head -3 "$WORK/viv-old-node.log")"
+grep -q 30495 "$VN/peers.json" || falla "el nodo antiguo no llegó a hablar con el nuevo (¿protocolo?)"
+ALTURA_OLD_RED=$("$OLD/rami-node" status --chain "$VN" --network regtest 2>/dev/null | awk '/altura/{print $3}')
+[ "$ALTURA_OLD_RED" = "$ALTURA_V0" ] || falla "el nodo antiguo debería quedarse en $ALTURA_V0 y está en $ALTURA_OLD_RED"
+# La ANTIGUA abre el directorio escrito por la nueva: la línea de la división
+# trae un tipo de transacción que no conoce y está en MEDIO del fichero; su
+# cargador (igual hasta la v0.10.16) aborta con un error limpio, sin pánico y
+# sin tocar el fichero. Es la vuelta atrás de versión sobre el mismo
+# directorio; por red no ocurre (el nodo antiguo ni siquiera lee esos bloques).
+SUMA_V=$(sha256sum "$V/chain.jsonl" | cut -d' ' -f1)
+if "$OLD/rami-node" verify --chain "$V" --network regtest >"$WORK/old-verify-viv.out" 2>"$WORK/old-verify-viv.err"; then
+  falla "la antigua leyó un chain.jsonl con transacciones de vivienda (¿no se escribió la división?)"
+fi
+grep -q "bloque JSON inválido" "$WORK/old-verify-viv.err" || falla "la antigua no dio el motivo esperado: $(cat "$WORK/old-verify-viv.err")"
+grep -qi "panic" "$WORK/old-verify-viv.err" && falla "la antigua entró en pánico"
+[ "$(sha256sum "$V/chain.jsonl" | cut -d' ' -f1)" = "$SUMA_V" ] || falla "la antigua modificó chain.jsonl"
+"$OLD/rami-wallet" address --label yo --keystore "$KS" | tail -1 | grep -q "$YO" || falla "la antigua no lee el monedero tras la vivienda"
+# Y la nueva sigue abriendo lo mismo.
+[ "$(nuevo status | awk '/altura/{print $3}')" = "$ALTURA_VIV" ] || falla "la nueva no reabre tras la antigua"
+# Desde la v0.11.0 la vuelta atrás ya no rompe: ante un bloque bien formado
+# con un tipo de transacción que no conoce (aquí, la división renombrada como
+# si viniera de una versión posterior), la nueva lo salta, avisa, y se queda en
+# la altura anterior, igual que un nodo sin actualizar por red.
+F="$WORK/vivienda-futura"; rm -rf "$F"; cp -r "$V" "$F"
+sed -i 's/"DivideParcel"/"TxDeUnaVersionPosterior"/' "$F/chain.jsonl"
+grep -q TxDeUnaVersionPosterior "$F/chain.jsonl" || falla "no se pudo simular el bloque de una versión posterior"
+# shellcheck disable=SC2086
+"$NEW/rami-node" verify --chain "$F" --network regtest $VIV 2>"$WORK/new-verify-futuro.err" | contiene "íntegra" || falla "la nueva no abre un directorio con un bloque de una versión posterior: $(cat "$WORK/new-verify-futuro.err")"
+grep -q "versión posterior" "$WORK/new-verify-futuro.err" || falla "la nueva no avisó del bloque que no entiende"
+# shellcheck disable=SC2086
+ALTURA_FUT=$("$NEW/rami-node" status --chain "$F" --network regtest $VIV 2>/dev/null | awk '/altura/{print $3}')
+[ "$ALTURA_FUT" = "$((ALTURA_V0 + 1))" ] || falla "con el bloque desconocido debería quedarse en $((ALTURA_V0 + 1)) y está en $ALTURA_FUT"
+echo "vivienda: antes $ALTURA_V0 · nueva con vivienda $ALTURA_VIV · sin fechas $ALTURA_SIN · solo Dubái $ALTURA_SOLO_DUBAI · antigua por red $ALTURA_OLD_RED · bloque de versión posterior $ALTURA_FUT"
+
+log "OK: ida y vuelta $OLD_TAG ⇄ versión nueva sin pérdidas, activaciones v2 y de vivienda incluidas (directorio: $WORK)"

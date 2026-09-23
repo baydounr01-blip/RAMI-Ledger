@@ -1282,7 +1282,9 @@
     var elR = document.getElementById("conRegla");
     if(!elR) return;
     if(!c){ elR.textContent = "—"; return; }
-    var vig = c.regla_vigente || 1, sop = c.regla_soportada || 1;
+    // regla_entendida está en la misma escala que regla_vigente (1–4);
+    // regla_soportada es la de Status.rule (1–5) y no se compara con ella.
+    var vig = c.regla_vigente || 1, sop = c.regla_entendida || c.regla_soportada || 1;
     elR.textContent = "v"+vig;
     document.getElementById("conSoporta").textContent = t("este monedero entiende hasta")+" v"+sop;
     var d = document.getElementById("conDesde");
@@ -1947,7 +1949,7 @@
       if(op.op === "claim"){
         var cur = city.pIdx[k];
         if(!cur){
-          var np = { x:op.x, y:op.y, owner:op.who, name:op.name, kind:op.kind, since:(d.height||0)+1, harvests:0, last_harvest:null, assets:0, pending:true, distrito:0, sale:null, ingresos:0, ultimo_ingreso:0, ventas:0, importado:0, insumos_pagados:0 };
+          var np = { x:op.x, y:op.y, owner:op.who, name:op.name, kind:op.kind, since:(d.height||0)+1, harvests:0, last_harvest:null, assets:0, pending:true, distrito:0, sale:null, ingresos:0, ultimo_ingreso:0, ventas:0, importado:0, insumos_pagados:0, unidades:0, units:[] };
           city.pIdx[k] = np; merged.push(np);
         } else cur.pendingRename = true;
       }
@@ -2108,6 +2110,26 @@
   document.getElementById("cyAddr").addEventListener("keydown", function(e){ if(e.key==="Enter") document.getElementById("cyLocateBtn").click(); });
   var TERMS = [["3 meses (129 600"+t(" bloques")+")",129600],["1 mes (43 200)",43200],["1 semana (10 080)",10080],["1 día (1 440)",1440],["100"+t(" bloques")+" (prueba)",100]];
   function ramFmt(n){ n = Number(n)||0; return (n/1e8).toLocaleString("es-ES",{maximumFractionDigits:8}); }
+  // Importe EXACTO para el nodo ("X.YYYYYYYY", aritmética entera, sin
+  // separadores): ramFmt es para leer y escribe «2,5» o «1.000», que el nodo
+  // lee como «importe inválido» o como 1 RAMI.
+  function ramExacto(n){ n = Math.max(0, Math.floor(Number(n)||0)); var dec = String(n % 1e8); while(dec.length < 8) dec = "0"+dec; return Math.floor(n/1e8)+"."+dec; }
+  // Para rellenar un campo que la persona puede editar: como lo escribe el
+  // panel al mostrarlo (coma decimal, «2,5») y sin separador de miles.
+  function ramEntrada(n){ return ramExacto(n).replace(/\.?0+$/, "").replace(".", ","); }
+  // Lo que teclea la persona en un campo de importe: coma o punto decimal
+  // («2,5» o «2.5»), hasta 8 decimales, sin separador de miles. Devuelve el
+  // texto para el nodo («2.5») o null si no es un importe.
+  function ramTecleado(s){ s = String(s||"").replace(/\s+/g, ""); return /^\d+([.,]\d{0,8})?$/.test(s) ? s.replace(",", ".") : null; }
+  // ramTecleado para los campos de la ciudad: si no es un importe, lo dice en
+  // cityStatus y devuelve null; si se lee de dos maneras («1.500»: ¿uno y
+  // medio o mil quinientos?), pregunta enseñando cómo se va a leer.
+  function ramCampo(s){
+    var v = ramTecleado(s);
+    if(v === null){ document.getElementById("cityStatus").textContent = "✗ "+t("Importe inválido: usa coma o punto para los decimales y ningún separador de miles."); return null; }
+    if(/^\d{1,3}[.,]\d{3}$/.test(String(s).replace(/\s+/g, "")) && !confirm(t("Se leerá como")+" "+ramEntrada(Math.round(Number(v)*1e8))+" RAMI. "+t("Para escribir miles, escribe el número sin separador. ¿Continuar?"))) return null;
+    return v;
+  }
   function ramShort(n){ n = Number(n)||0; return (n/1e8).toLocaleString("es-ES",{maximumFractionDigits:(n >= 1e8 ? 2 : 4)}); }
   function shortAddr(h){ return h ? h.slice(0,8)+"…"+h.slice(-6) : "—"; }
   function dhms(sec){ sec = Math.max(0, sec|0); var d = Math.floor(sec/86400), h = Math.floor(sec%86400/3600), m = Math.floor(sec%3600/60); return (d ? d+" d " : "") + h+" h "+m+" min"; }
@@ -2221,16 +2243,11 @@
       if(mine){
         if(dubai){
           h += cityForm('<strong>'+t("Vender la empresa")+'</strong>'+
-            '<label class="field" style="margin-top:10px"><span class="cap">'+t("Precio (RAMI)")+'</span><input id="cySalePrice" placeholder="'+ramShort(price*2)+'" inputmode="decimal" value="'+(p.sale ? ramFmt(p.sale) : "")+'"></label>'+
+            '<label class="field" style="margin-top:10px"><span class="cap">'+t("Precio (RAMI)")+'</span><input id="cySalePrice" placeholder="'+ramEntrada(price*2)+'" inputmode="decimal" value="'+(p.sale ? ramEntrada(p.sale) : "")+'"></label>'+
             '<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn" id="cySell">'+t("Publicar venta")+'</button>'+(p.sale ? '<button class="btn ghost" id="cyUnsell">'+t("Retirar de la venta")+'</button>' : '')+'</div>'+
             '<p class="note">'+t("Quien compre paga el precio a tu dirección; la operación queda en la cadena y alimenta la cotización.")+'</p>');
         }
-        var kinds = ASSET_NAMES.slice(0, dubai ? 4 : 2), akSel = '<select id="cyAKind">'+kinds.map(function(k,i){ if(i===2 && p.kind!==SECTOR_CONCESIONARIO) return ""; return '<option value="'+i+'">'+t(k)+'</option>'; }).join("")+'</select>';
-        var mintNote = dubai ? t("Precio quemado: planta u objeto 1 RAMI, vehículo 5 RAMI (solo concesionarios), local 20 RAMI.") : t("Precio quemado: 1 RAMI.");
-        h += cityForm('<strong>'+t("Acuñar activo")+'</strong>'+
-          '<label class="field" style="margin-top:10px"><span class="cap">Tipo</span>'+akSel+'</label>'+
-          '<label class="field"><span class="cap">'+t("Descripción (máx. 64 bytes)")+'</span><input id="cyMeta" placeholder="'+t("Planta #1 · lote primavera")+'"></label>'+
-          '<button class="btn" id="cyMint">'+t("Acuñar")+'</button><p class="note">'+mintNote+'</p>');
+        h += acunarHtml(p, dubai, "");
         if(p.kind===SECTOR_GRANJA){
           h += cityForm('<strong>'+t("Repartir cosecha")+'</strong>'+
             '<label class="field" style="margin-top:10px"><span class="cap">'+t("Total a repartir (RAMI, de tu saldo)")+'</span><input id="cyTotal" placeholder="9" inputmode="decimal"></label>'+
@@ -2241,6 +2258,12 @@
           '<label class="field" style="margin-top:10px"><span class="cap">'+t("Nombre")+'</span><input id="cyName" value="'+esc(p.name)+'"></label>'+
           '<label class="field"><span class="cap">'+t("Sector")+'</span>'+sectorSelect(p.kind, dubai)+'</label>'+
           '<button class="btn ghost" id="cyClaim">'+t("Guardar (solo comisión)")+'</button>');
+      }
+      h += viviendasHtml(p, me, d, pend);
+      // Escritura de vivienda: quien tiene una vivienda en la parcela también
+      // acuña en ella (el consenso lo admite desde la activación).
+      if(!mine && d.vivienda && me && (p.units||[]).some(function(u){ return u.owner===me; })){
+        h += acunarHtml(p, dubai, t("Tienes una vivienda en esta parcela: puedes acuñar activos en ella y serán tuyos."));
       }
     }
     if(assets.length){
@@ -2270,6 +2293,115 @@
     acts.innerHTML = h;
     loadMentor(x, y);
   }
+  // ---- Escritura de vivienda (v0.11.0): la parcela dividida en viviendas ----
+  // Hechos del nodo (/api/city: unidades, units, vivienda*); las reglas y los
+  // topes los aplica el consenso, aquí solo se muestran y se piden.
+  var VIV_MAX_PARCELA = 64, VIV_MAX_CUENTA = 16;
+  // El formulario de acuñar: para el dueño de la parcela y, desde la
+  // escritura de vivienda, para el dueño de cualquiera de sus viviendas.
+  function acunarHtml(p, dubai, nota){
+    var kinds = ASSET_NAMES.slice(0, dubai ? 4 : 2), akSel = '<select id="cyAKind">'+kinds.map(function(k,i){ if(i===2 && p.kind!==SECTOR_CONCESIONARIO) return ""; return '<option value="'+i+'">'+t(k)+'</option>'; }).join("")+'</select>';
+    var mintNote = dubai ? t("Precio quemado: planta u objeto 1 RAMI, vehículo 5 RAMI (solo concesionarios), local 20 RAMI.") : t("Precio quemado: 1 RAMI.");
+    return cityForm('<strong>'+t("Acuñar activo")+'</strong>'+(nota ? '<p class="note" style="margin-top:6px">'+nota+'</p>' : '')+
+      '<label class="field" style="margin-top:10px"><span class="cap">Tipo</span>'+akSel+'</label>'+
+      '<label class="field"><span class="cap">'+t("Descripción (máx. 64 bytes)")+'</span><input id="cyMeta" placeholder="'+t("Planta #1 · lote primavera")+'"></label>'+
+      '<button class="btn" id="cyMint">'+t("Acuñar")+'</button><p class="note">'+mintNote+'</p>');
+  }
+  function viviendaDueno(u, me){
+    if(me && u.owner===me) return "<b style='color:var(--accent)'>"+t("tú")+"</b>";
+    return u.handle ? "<b>@"+esc(u.handle)+"</b>" : esc(shortAddr(u.owner));
+  }
+  // Viviendas de `me` en parcelas de otros: lo que cuenta para el tope por cuenta.
+  function viviendasAjenas(me){
+    var n = 0;
+    if(!me || !city.data) return 0;
+    (city.data.parcels||[]).forEach(function(q){ (q.units||[]).forEach(function(u){ if(u.owner===me && q.owner!==me) n++; }); });
+    return n;
+  }
+  // El panel se vuelve a pintar con cada bloque: lo abierto y lo tecleado en
+  // esta sección se guarda antes y se repone después (clave x,y,n).
+  var viv = { abiertas:{}, valores:{} };
+  function vivGuardaEstado(){
+    var acts = document.getElementById("cityActions"); if(!acts) return;
+    viv.abiertas = {}; viv.valores = {};
+    Array.prototype.forEach.call(acts.querySelectorAll("details.cyVivDet"), function(el){ if(el.open) viv.abiertas[el.getAttribute("data-k")] = true; });
+    Array.prototype.forEach.call(acts.querySelectorAll("input.cyVivPrice, input.cyVivTo, input.cyVivN"), function(el){ viv.valores[el.className+"|"+el.getAttribute("data-k")] = el.value; });
+  }
+  function vivValor(cls, k, defecto){ var v = viv.valores[cls+"|"+k]; return v == null ? defecto : v; }
+  function viviendasHtml(p, me, d, pend){
+    vivGuardaEstado();
+    var h = '<div class="card" style="margin-top:10px;padding:12px"><strong>🏠 '+t("Viviendas")+'</strong>';
+    if(!d.vivienda){
+      var cuando = d.vivienda_desde ? new Date(d.vivienda_desde*1000).toLocaleDateString(undefined, {day:"numeric", month:"long", year:"numeric", timeZone:"UTC"})+" 00:00 UTC" : "";
+      h += '<p class="note" style="margin-top:6px">⏳ '+(cuando ? t("La escritura de vivienda rige desde el")+" "+esc(cuando)+" · "+t("faltan")+" "+dhms(d.vivienda_faltan_segundos)+". " : t("Esta red no tiene fecha de activación de la escritura de vivienda (regtest sin --vivienda-desde). "))+
+        t("Hasta entonces la parcela es una sola escritura: solo su dueño acuña en ella.")+'</p></div>';
+      return h;
+    }
+    var mine = !!(me && p.owner===me), units = p.units || [];
+    var pendViv = (pend||[]).filter(function(o){ return o.op==="divide" || o.op.indexOf("unit_")===0; });
+    if(pendViv.length) h += '<div class="note" style="margin-top:6px">⏳ '+pendViv.length+" "+t("operación(es) de vivienda pendiente(s): se aplican al minarse el próximo bloque.")+'</div>';
+    if(!p.unidades){
+      h += '<p class="note" style="margin-top:6px">'+t("Sin dividir: la parcela es una sola escritura.")+'</p>';
+      if(mine && !p.sale && !pendViv.length){
+        h += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><input class="cyVivN" data-k="'+p.x+","+p.y+'" type="number" min="1" max="'+VIV_MAX_PARCELA+'" value="'+esc(vivValor("cyVivN", p.x+","+p.y, "8"))+'" style="width:80px" aria-label="'+t("Número de viviendas")+'">'+
+          '<button class="btn small cyDivide">'+t("Dividir en viviendas")+'</button></div>'+
+          '<p class="note">'+t("De 1 a 64 viviendas, una sola vez. Todas nacen tuyas y solo cuesta la comisión. No se divide una parcela en venta.")+'</p>';
+      } else if(mine && p.sale){
+        h += '<p class="note">'+t("Retira la venta de la parcela para dividirla.")+'</p>';
+      }
+      return h+'</div>';
+    }
+    var enVenta = units.filter(function(u){ return u.sale; }).length, mias = units.filter(function(u){ return me && u.owner===me; }).length;
+    h += '<div class="note" style="margin-top:6px">'+(p.unidades === 1 ? t("1 vivienda") : p.unidades+" "+t("viviendas"))+" · "+enVenta+" "+t("en venta")+
+      (mias ? " · "+(mias === 1 ? t("1 tuya") : mias+" "+t("tuyas")) : "")+'</div>';
+    if(p.sale) h += '<div class="note">'+t("La parcela está en venta: las viviendas de su dueño van con ella y no se venden ni se transfieren sueltas.")+'</div>';
+    h += '<div style="max-height:320px;overflow-y:auto;margin-top:6px">';
+    // Una línea por vivienda (hasta 64): número, dueño, venta; lo de quien
+    // mira, a mano: comprar la que está en venta, o «Gestionar» las suyas.
+    units.forEach(function(u){
+      var umine = !!(me && u.owner===me), congelada = !!(p.sale && u.owner===p.owner), k = p.x+","+p.y+","+u.n;
+      var row = '<div style="border-top:1px solid var(--border);padding:5px 0;font-size:13px"><b>'+t("Vivienda")+' '+u.n+'</b> <span style="color:var(--muted)">· '+t("dueño ")+viviendaDueno(u, me)+'</span>'+
+        (u.sale ? ' · 💰 '+t("en venta por")+' <b>'+ramShort(u.sale)+' RAMI</b>' : '');
+      if(!umine && u.sale && !congelada){
+        row += ' <button class="btn small cyVivBuy" data-n="'+u.n+'" data-price="'+u.sale+'">'+t("Comprar por ")+ramShort(u.sale)+' RAMI</button>';
+      }
+      if(umine){
+        row += '<details class="cyVivDet" data-k="'+k+'" style="margin-top:4px"'+(viv.abiertas[k] ? " open" : "")+'><summary class="muted" style="cursor:pointer">'+t("Gestionar")+'</summary><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">';
+        if(!congelada){
+          row += '<input class="cyVivPrice" data-n="'+u.n+'" data-k="'+k+'" placeholder="'+t("precio RAMI")+'" inputmode="decimal" style="width:110px" value="'+esc(vivValor("cyVivPrice", k, u.sale ? ramEntrada(u.sale) : ""))+'">'+
+            '<button class="btn small cyVivSell" data-n="'+u.n+'">'+t("Vender por ese precio")+'</button>';
+        }
+        if(u.sale) row += '<button class="btn small ghost cyVivUnsell" data-n="'+u.n+'">'+t("Retirar venta")+'</button>';
+        if(!u.sale && !congelada){
+          row += '<input class="cyVivTo" data-n="'+u.n+'" data-k="'+k+'" placeholder="'+t("transferir a (dirección hex)")+'" style="min-width:200px" value="'+esc(vivValor("cyVivTo", k, ""))+'">'+
+            '<button class="btn small ghost cyVivXfer" data-n="'+u.n+'">'+t("Transferir")+'</button>';
+        }
+        row += '</div></details>';
+      }
+      h += row+'</div>';
+    });
+    h += '</div>';
+    h += '<p class="note">'+t("Tope por cuenta: 16 viviendas en parcelas de otros; las de tu propia parcela no cuentan.")+(me ? " "+t("Tienes")+" "+viviendasAjenas(me)+"/"+VIV_MAX_CUENTA+"." : "")+" "+
+      t("Quien tiene una vivienda puede acuñar activos en esta parcela. Una vivienda no cobra del fondo de la ciudad: ese reparto es de la empresa.")+'</p>';
+    return h+'</div>';
+  }
+  document.getElementById("cityActions").addEventListener("click", function(e){
+    var b = e.target.closest("button"); if(!b || !city.sel) return;
+    var x = city.sel.x, y = city.sel.y, n = Number(b.getAttribute("data-n"));
+    function campo(cls){ var el = document.querySelector("."+cls+'[data-n="'+n+'"]'); return el ? el.value.trim() : ""; }
+    if(b.classList.contains("cyDivide")){
+      var el = document.querySelector(".cyVivN"), v = el ? Math.floor(Number(el.value)) : 0;
+      if(!(v >= 1 && v <= VIV_MAX_PARCELA)){ document.getElementById("cityStatus").textContent = "✗ "+t("De 1 a 64 viviendas."); return; }
+      if(confirm(t("Dividirás la parcela en")+" "+v+" "+t("viviendas. Solo se divide una vez. ¿Continuar?"))) cityAct("/api/city/divide", {x:x, y:y, unidades:v}, t("parcela dividida"));
+    }
+    else if(b.classList.contains("cyVivSell")){ var pv = ramCampo(campo("cyVivPrice")); if(pv !== null) cityAct("/api/city/unit_sell", {x:x, y:y, n:n, price:pv}, t("venta publicada")); }
+    else if(b.classList.contains("cyVivUnsell")) cityAct("/api/city/unit_sell", {x:x, y:y, n:n, price:"0"}, t("venta retirada"));
+    else if(b.classList.contains("cyVivXfer")) cityAct("/api/city/unit_transfer", {x:x, y:y, n:n, to:campo("cyVivTo")}, t("vivienda transferida"));
+    else if(b.classList.contains("cyVivBuy")){
+      var pr = Number(b.getAttribute("data-price"));
+      if(confirm(t("Pagarás")+" "+ramShort(pr)+" RAMI "+t("al dueño. ¿Continuar?"))) cityAct("/api/city/unit_buy", {x:x, y:y, n:n, max_price:ramExacto(pr)}, t("compra enviada"));
+    }
+  });
   // ---- El mentor: una regla pública que explica y estima con el estado actual ----
   function loadMentor(x, y){
     var key = x+","+y+"@"+(city.data ? city.data.height : 0)+":"+(city.data ? city.data.parcels.length : 0);
@@ -2374,14 +2506,14 @@
     var x = city.sel.x, y = city.sel.y, id = b.getAttribute("data-id"), p = parcelAt(x,y);
     if(b.id==="cyClaim"){ cityAct("/api/city/claim", {x:x,y:y,name:document.getElementById("cyName").value.trim(),kind:Number(document.getElementById("cyKind").value)}, t("parcela reclamada")); }
     else if(b.id==="cyMint"){ cityAct("/api/city/mint", {x:x,y:y,kind:Number(document.getElementById("cyAKind").value),meta:document.getElementById("cyMeta").value.trim()}, t("activo acuñado")); }
-    else if(b.id==="cyHarvest"){ if(confirm(t("Repartirás ese total de TU saldo entre los arrendatarios activos. ¿Continuar?"))) cityAct("/api/city/harvest", {x:x,y:y,total:document.getElementById("cyTotal").value.trim()}, t("cosecha repartida")); }
-    else if(b.id==="cySell"){ cityAct("/api/city/sell", {x:x,y:y,price:document.getElementById("cySalePrice").value.trim()}, t("venta publicada")); }
+    else if(b.id==="cyHarvest"){ var tv = ramCampo(document.getElementById("cyTotal").value); if(tv !== null && confirm(t("Repartirás ese total de TU saldo entre los arrendatarios activos. ¿Continuar?"))) cityAct("/api/city/harvest", {x:x,y:y,total:tv}, t("cosecha repartida")); }
+    else if(b.id==="cySell"){ var sv = ramCampo(document.getElementById("cySalePrice").value); if(sv !== null) cityAct("/api/city/sell", {x:x,y:y,price:sv}, t("venta publicada")); }
     else if(b.id==="cyUnsell"){ cityAct("/api/city/sell", {x:x,y:y,price:"0"}, t("venta retirada")); }
-    else if(b.id==="cyBuy"){ if(p && p.sale && confirm(t("Pagarás")+" "+ramShort(p.sale)+" RAMI "+t("al dueño. ¿Continuar?"))) cityAct("/api/city/buy", {x:x,y:y,max_price:ramFmt(p.sale)}, t("compra enviada")); }
-    else if(b.classList.contains("cyList")){ cityAct("/api/city/list", {asset:id, price:document.querySelector('.cyPrice[data-id="'+id+'"]').value.trim(), term:Number(document.querySelector('.cyTerm[data-id="'+id+'"]').value)}, t("alquiler publicado")); }
-    else if(b.classList.contains("cySellA")){ cityAct("/api/city/sell_asset", {asset:id, price:document.querySelector('.cyPrice[data-id="'+id+'"]').value.trim()}, t("venta publicada")); }
+    else if(b.id==="cyBuy"){ if(p && p.sale && confirm(t("Pagarás")+" "+ramShort(p.sale)+" RAMI "+t("al dueño. ¿Continuar?"))) cityAct("/api/city/buy", {x:x,y:y,max_price:ramExacto(p.sale)}, t("compra enviada")); }
+    else if(b.classList.contains("cyList")){ var lv = ramCampo(document.querySelector('.cyPrice[data-id="'+id+'"]').value); if(lv !== null) cityAct("/api/city/list", {asset:id, price:lv, term:Number(document.querySelector('.cyTerm[data-id="'+id+'"]').value)}, t("alquiler publicado")); }
+    else if(b.classList.contains("cySellA")){ var av = ramCampo(document.querySelector('.cyPrice[data-id="'+id+'"]').value); if(av !== null) cityAct("/api/city/sell_asset", {asset:id, price:av}, t("venta publicada")); }
     else if(b.classList.contains("cyUnsellA")){ cityAct("/api/city/sell_asset", {asset:id, price:"0"}, t("venta retirada")); }
-    else if(b.classList.contains("cyBuyA")){ var pr = Number(b.getAttribute("data-price")); if(confirm(t("Pagarás")+" "+ramShort(pr)+" RAMI "+t("al dueño. ¿Continuar?"))) cityAct("/api/city/buy_asset", {asset:id, max_price:ramFmt(pr)}, t("compra enviada")); }
+    else if(b.classList.contains("cyBuyA")){ var pr = Number(b.getAttribute("data-price")); if(confirm(t("Pagarás")+" "+ramShort(pr)+" RAMI "+t("al dueño. ¿Continuar?"))) cityAct("/api/city/buy_asset", {asset:id, max_price:ramExacto(pr)}, t("compra enviada")); }
     else if(b.classList.contains("cyRent")){ cityAct("/api/city/rent", {asset:id}, t("activo alquilado")); }
     else if(b.classList.contains("cyXfer")){ cityAct("/api/city/transfer", {asset:id, to:document.querySelector('.cyTo[data-id="'+id+'"]').value.trim()}, t("activo transferido")); }
   });
@@ -2560,6 +2692,7 @@
     var m = id.match(/^PARCELA-(.+)_RAMI$/), a = id.match(/^ACTIVO-(.+)_RAMI$/);
     if(m){ var ds = city.data && city.data.districts, k = m[1].toLowerCase(), i; if(ds) for(i=0;i<ds.length;i++) if(ds[i].clave===k) return t("Parcela")+" · "+ds[i].nombre; return t("Parcela")+" · "+k; }
     if(a){ var names = {PLANTA:ASSET_NAMES[0], OBJETO:ASSET_NAMES[1], VEHICULO:ASSET_NAMES[2], LOCAL:ASSET_NAMES[3]}; return t(names[a[1]] || a[1]); }
+    if(id === "VIVIENDA_RAMI") return t("Vivienda");
     return id;
   }
   function loadMarket(){
@@ -2589,7 +2722,7 @@
     var me = city.data && city.data.me, od = "";
     (d.orders||[]).forEach(function(o){
       var mine = me && o.owner===me;
-      var what = o.kind==="parcel" ? (esc(o.name||"")+" · "+sectorName(o.sector)) : (t(ASSET_NAMES[o.sector]||ASSET_NAMES[1])+" "+esc(o.name||""));
+      var what = o.kind==="parcel" ? (esc(o.name||"")+" · "+sectorName(o.sector)) : o.kind==="unit" ? (t("Vivienda")+" "+esc(o.asset)+" · "+esc((o.name||"").split(" · ")[0])) : (t(ASSET_NAMES[o.sector]||ASSET_NAMES[1])+" "+esc(o.name||""));
       var where = t("parcela")+" ("+o.x+","+o.y+")";
       var btn = mine ? '<span class="muted">'+t("tuya")+'</span>' : '<button class="btn small mkBuy" data-kind="'+o.kind+'" data-x="'+o.x+'" data-y="'+o.y+'" data-asset="'+esc(o.asset)+'" data-price="'+o.price+'">'+t("Comprar")+'</button>';
       od += "<tr><td>"+what+"</td><td>"+where+"</td><td>"+esc(shortAddr(o.owner))+"</td><td>"+ramShort(o.price)+" RAMI</td><td>"+btn+"</td></tr>";
@@ -2603,8 +2736,9 @@
     var b = e.target.closest("button.mkBuy"); if(!b) return;
     var pr = Number(b.getAttribute("data-price")), st = document.getElementById("mkStatus");
     if(!confirm(t("Pagarás")+" "+ramShort(pr)+" RAMI "+t("al dueño. ¿Continuar?"))) return;
-    var body = b.getAttribute("data-kind")==="parcel" ? {x:Number(b.getAttribute("data-x")), y:Number(b.getAttribute("data-y")), max_price:ramFmt(pr)} : {asset:b.getAttribute("data-asset"), max_price:ramFmt(pr)};
-    var path = b.getAttribute("data-kind")==="parcel" ? "/api/city/buy" : "/api/city/buy_asset";
+    var kind = b.getAttribute("data-kind"), bx = Number(b.getAttribute("data-x")), by = Number(b.getAttribute("data-y"));
+    var body = kind==="parcel" ? {x:bx, y:by, max_price:ramExacto(pr)} : kind==="unit" ? {x:bx, y:by, n:Number(b.getAttribute("data-asset")), max_price:ramExacto(pr)} : {asset:b.getAttribute("data-asset"), max_price:ramExacto(pr)};
+    var path = kind==="parcel" ? "/api/city/buy" : kind==="unit" ? "/api/city/unit_buy" : "/api/city/buy_asset";
     st.textContent = t("Enviando…");
     jpost(path, body).then(function(r){ st.textContent = r.ok ? "✓ "+t("compra enviada")+" (txid "+String(r.txid).slice(0,12)+"…)" : "✗ "+(r.error||"error"); setTimeout(loadMarket, 800); setTimeout(loadCity, 800); }).catch(function(){ st.textContent = t("✗ sin conexión con el nodo"); });
   });

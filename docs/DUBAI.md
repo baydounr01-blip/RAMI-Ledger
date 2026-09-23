@@ -193,3 +193,16 @@ Un binario v0.8.0 sigue abriendo todos sus ficheros. Desde la activación:
 3. Si mantienes un nodo público de mercado (`rami-node market`), arráncalo
    con la v0.9.0: antes de la fecha publica pares sin operaciones.
 4. Regtest: `--dubai-desde <unix>` en `rami-node`, `rami-wallet` y `rami-gui`.
+
+## 10. Después: la escritura de vivienda (v0.11.0)
+
+Desde el **1 de marzo de 2027, 00:00 UTC** (`VIVIENDA_DESDE_TESTNET`), y solo
+donde ya rige Dubái, una parcela se puede dividir en viviendas (de 1 a 64) que
+se transfieren, se venden y se compran sueltas, con un tope de 16 viviendas por
+cuenta en parcelas de otros, y el dueño de una vivienda acuña activos en su
+parcela. Es un cambio de consenso aparte, con su propia fecha, la misma
+disciplina (un bit por bloque, sin vuelta atrás dentro de una rama) y
+`--vivienda-desde <unix>` en regtest. La regla, los topes, el porqué de cada
+decisión, los errores y cómo se prueba están en `docs/VIVIENDA.md`. Ahí está
+también lo que cambia en el caso de §6: desde la v0.11.0, un bloque de una
+versión posterior en medio de `chain.jsonl` se salta en vez de abortar la carga.
