@@ -1093,7 +1093,7 @@
     try{
       setConnection(state.connected);
       if(state.status) renderStatus(state.status);
-      if(typeof renderCityPanel === "function" && city && city.data) renderCityPanel();
+      if(typeof renderCityPanel === "function" && city && city.data){ renderCityPanel(); renderEncargos(); }
       if(lastUpdate) renderUpdate(lastUpdate);
     }catch(e){}
   }
@@ -2150,7 +2150,11 @@
   }
   function ramShort(n){ n = Number(n)||0; return (n/1e8).toLocaleString("es-ES",{maximumFractionDigits:(n >= 1e8 ? 2 : 4)}); }
   function shortAddr(h){ return h ? h.slice(0,8)+"…"+h.slice(-6) : "—"; }
-  function dhms(sec){ sec = Math.max(0, sec|0); var d = Math.floor(sec/86400), h = Math.floor(sec%86400/3600), m = Math.floor(sec%3600/60); return (d ? d+" d " : "") + h+" h "+m+" min"; }
+  // Con las unidades en el idioma del panel (la misma frase que dhm() de city/memoria.js).
+  function dhms(sec){ sec = Math.max(0, sec|0); var v = {d:Math.floor(sec/86400), h:Math.floor(sec%86400/3600), m:Math.floor(sec%3600/60)};
+    return (v.d ? t("{d} d {h} h {m} min") : t("{h} h {m} min")).replace(/\{(\w)\}/g, function(x, k){ return v[k]; }); }
+  // Una fecha de activación (medianoche UTC) como fecha larga en el idioma del panel, igual que la guía del visor.
+  function fechaUTC(s){ try{ return new Date(s*1000).toLocaleDateString(LANG, {day:"numeric", month:"long", year:"numeric", timeZone:"UTC"}); }catch(e){ return new Date(s*1000).toISOString().slice(0,10); } }
   function renderLegend(){
     var el = document.getElementById("cityLegend"), h = "", k;
     var present = {}; (city.data && city.data.parcels || []).forEach(function(p){ present[p.kind] = (present[p.kind]||0)+1; });
@@ -2193,8 +2197,10 @@
   function renderEncargos(){
     var el = document.getElementById("cityEncargos"), d = city.data; if(!el || !d) return;
     if(!d.dubai){
-      el.innerHTML = "⏳ "+t("Los encargos salen de la economía de Dubái, que aún no rige en esta cadena: todavía no hay parcelas ni empresas.")+" "+
-        (d.dubai_desde ? t("Dubái se activa el {f}; quedan {t}.").replace("{f}", esc(new Date(d.dubai_desde*1000).toLocaleString())).replace("{t}", dhms(d.dubai_faltan_segundos)) : t("Esta red no tiene fecha de activación de Dubái (regtest sin --dubai-desde)."));
+      // La fase 0 sí tiene parcelas; lo que no tiene es la economía de los
+      // sectores (insumos, importaciones, fondo), que empieza con Dubái.
+      el.innerHTML = "⏳ "+t("Los encargos salen de la economía de Dubái, que aún no rige en esta cadena: las parcelas de la fase 0 no compran insumos ni importan nada.")+" "+
+        (d.dubai_desde != null ? t("Dubái se activa el {f}; quedan {t}.").replace("{f}", esc(fechaUTC(d.dubai_desde))).replace("{t}", dhms(d.dubai_faltan_segundos)) : t("Esta red no tiene fecha de activación de Dubái (regtest sin --dubai-desde)."));
       return;
     }
     var L = encargosDe(d);
