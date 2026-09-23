@@ -53,18 +53,6 @@
   "ru": "Выставочный зал",
   "sw": "Chumba cha maonyesho"
  },
- "coche": {
-  "en": "car",
-  "zh": "辆车",
-  "ru": "автомобиль",
-  "sw": "gari"
- },
- "coches": {
-  "en": "cars",
-  "zh": "辆车",
-  "ru": "автомобилей",
-  "sw": "magari"
- },
  "planta": {
   "en": "floor",
   "zh": "楼层",
@@ -196,5 +184,11 @@
   "zh": "恢复家具布置",
   "ru": "Вернуть мебель на место",
   "sw": "Rejesha fanicha"
+ },
+ "Coches expuestos": {
+  "en": "Cars on display",
+  "zh": "展出车辆",
+  "ru": "Автомобили в экспозиции",
+  "sw": "Magari yanayoonyeshwa"
  }
 }

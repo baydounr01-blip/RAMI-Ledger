@@ -10,11 +10,13 @@
  * 1. EL PORTAL SALE DEL CATÁLOGO, NO DE UNA COPIA. Cada edificio (los 3.052 de
  *    barrio y los de las parcelas) se vuelve a pedir al catálogo de cuerpos del
  *    núcleo (`edificioPartes`, `parcelaPartes`) y en la lista de piezas se busca
- *    la puerta por su firma: el tono de puerta y un hueco de persona (≤ 3,5 m).
- *    Así el portal está exactamente donde se dibuja en cada variante —lámina,
- *    en L, en U, gemelas, villa, nave, cada sector— sin repetir una sola fórmula.
- *    Los portales van en una rejilla de 64 m y la búsqueda del cercano corre
- *    cada 0,1 s mirando nueve celdas.
+ *    la puerta por su firma: el tono de puerta que publica el núcleo
+ *    (ctx.geom.colores.PUERTA) y un hueco de persona (≤ 3,5 m). Así el portal
+ *    está exactamente donde se dibuja en cada variante —lámina, en L, en U,
+ *    gemelas, villa, nave, cada sector— sin repetir una sola fórmula. Los
+ *    portales van en una rejilla de 64 m y la búsqueda del cercano corre cada
+ *    0,1 s mirando nueve celdas. Los patios de las L y las U se andan hasta la
+ *    puerta del fondo (el catastro los tiene por macizos).
  *
  * 2. EL EDIFICIO ES EL ÚNICO HUECO DE LA CIUDAD. La malla de los edificios es de
  *    caras frontales: desde dentro no se dibuja. El interior es una envolvente
@@ -25,7 +27,9 @@
  *    envolvente tiene un hueco la primera pasada no escribe, y queda lo que el
  *    visor ya había dibujado: la ciudad real, a la altura real. Solo se dibuja el
  *    espacio en el que está la cámara (zaguán, cabina o planta), para que ningún
- *    otro trozo del interior se proyecte por una ventana.
+ *    otro trozo del interior se proyecte por una ventana. Desde la calle, al
+ *    entrar y al salir, el zaguán se ve por la puerta y la vidriera del portal
+ *    (la «vista por la puerta», en el sombreador) y sus hojas se abren solas.
  *
  * 3. GENOTIPO EN ENTEROS. La distribución del piso, los colores, la planta de
  *    muestra y los coches de exposición salen de `semillaMorfologia` del
@@ -51,6 +55,7 @@
 
     // ---- Medidas ----------------------------------------------------------------
     var ALCANCE = 3.0;            // m desde el punto de llegada del portal para ofrecer «Entrar»
+    var MARGEN_PATIO = 1.5;       // m que el rectángulo de un patio sale fuera de la huella del edificio
     var PASO_BUSCA = 0.1;         // s entre dos búsquedas del portal cercano
     var REJILLA = 64;             // m: celda del índice de portales
     var R_JUGADOR = 0.3;          // m: el jugador dentro, un círculo
@@ -89,29 +94,84 @@
       '#include <color_pars_vertex>',
       '#include <logdepthbuf_pars_vertex>',
       'attribute float aLamp; attribute float aDesliza;',
-      'uniform float uAbre;',
-      'varying vec3 vN; varying vec3 vW; varying float vLamp;',
+      'uniform float uAbre; uniform float uDespY;',
+      'varying vec3 vN; varying vec3 vW; varying vec3 vL; varying float vLamp;',
       '#ifdef MAPA', 'varying vec2 vUv;', '#endif',
       'void main(){',
       '  #include <color_vertex>',
       '  #ifdef MAPA', '  vUv = uv;', '  #endif',
       '  vec3 p = position; p.x += aDesliza * uAbre;',
+      // vL: la posición en el marco local del edificio (números pequeños y exactos);
+      // gl_Position con modelViewMatrix, que el visor compone en doble precisión:
+      // con las coordenadas de mundo (decenas de km) la profundidad de la vista por
+      // la puerta temblaba milímetros de un fragmento a otro y las piezas vecinas se
+      // peleaban en puntos.
+      '  vL = vec3(p.x, p.y + uDespY, p.z);',
       '  vec4 wp = modelMatrix * vec4(p, 1.0); vW = wp.xyz;',
       '  vN = normalize(mat3(modelMatrix) * normal); vLamp = aLamp;',
-      '  gl_Position = projectionMatrix * viewMatrix * wp;',
+      '  gl_Position = projectionMatrix * (modelViewMatrix * vec4(p, 1.0));',
       '  #include <logdepthbuf_vertex>',
       '}'].join('\n');
+    // Dos cosas del sombreador de fragmentos trabajan en el marco local del edificio
+    // (`vL`, y la cámara en ese marco, `uCamL`, que el JS calcula en doble precisión):
+    //
+    // · Cada lámpara alumbra solo su zona (`uLampRect`, rectángulo local x0, z0,
+    //   x1, z1): sin eso la luz atravesaba los tabiques —la del rellano, siempre
+    //   encendida, alumbraba el salón de noche con todas las del piso apagadas—.
+    //   Los rectángulos de las zonas acaban en el eje de cada tabique, así que la
+    //   cara de un tabique que da a una habitación recibe la luz de esa y no la de
+    //   la de al lado.
+    //
+    // · LA VISTA POR LA PUERTA (`uPuerta` = 1). Desde la calle, mientras se entra o
+    //   se sale, el interior se ve a través de la puerta y de la vidriera del portal
+    //   del catálogo, que se dibujan opacas antes que él. Cada fragmento del interior
+    //   se queda solo si el rayo de la cámara hasta él cruza uno de los dos
+    //   rectángulos (`uPuA`, `uPuB`: centro x, medio ancho, alto y plano z locales:
+    //   la cara de fuera de la caja de la puerta y la de la vidriera) y escribe como
+    //   profundidad la del punto de cruce, entre un 1 % y un 0,05 % más cerca según
+    //   su distancia real (1 − e^(−d/10 m): cuanto más lejos, más cerca del plano),
+    //   que conserva el orden entre sus piezas. Así tapa la caja negra de la puerta
+    //   y el cristal (que están en ese plano), no tapa lo que haya delante (una
+    //   farola, un peatón: más de un 1 % más cerca, 3 cm a 3 m) y entre sus propias
+    //   piezas se ordena bien: una alfombra a 1,2 cm del suelo queda a 13 pasos del
+    //   búfer de profundidad de 24 bits (logarítmico, 7,5·10⁻⁷ relativo por paso)
+    //   a 1 m del plano, y a 2 pasos a 20 m. La vidriera se corta a 3,75 m sobre el suelo, bajo la
+    //   marquesina (a 3,8 m), que la atraviesa: por encima, marquesina y cristal
+    //   quedaban a menos de ese margen y se peleaban en franjas. Hace falta
+    //   profundidad por fragmento (la del búfer logarítmico, que el visor usa); sin
+    //   ella no hay vista por la puerta y el interior aparece al cruzar el umbral.
     var FS = [
       '#include <common>',
       '#include <color_pars_fragment>',
       '#include <logdepthbuf_pars_fragment>',
       'uniform vec3 uSun, uSunColor, uSkyColor; uniform float uNight;',
-      'uniform vec3 uLampPos[8]; uniform float uLampOn[8]; uniform vec3 uLampCol[8];',
+      'uniform vec3 uLampPos[8]; uniform float uLampOn[8]; uniform vec3 uLampCol[8]; uniform vec4 uLampRect[8];',
       'uniform vec3 uVenN; uniform float uVenD; uniform float uVentanas; uniform float uK;',
-      'varying vec3 vN; varying vec3 vW; varying float vLamp;',
+      'uniform vec3 uCamL; uniform float uSueloPuerta; uniform float uPuerta; uniform vec4 uPuA; uniform vec4 uPuB;',
+      'varying vec3 vN; varying vec3 vW; varying vec3 vL; varying float vLamp;',
       '#ifdef MAPA', 'uniform sampler2D uMapa; varying vec2 vUv;', '#endif',
+      // Fracción del rayo cámara→fragmento en el plano del rectángulo r (o −1 si no lo cruza por dentro).
+      'float cruce(vec4 r, vec2 lc, vec2 lf, float yc, float yf) {',
+      '  if (r.y <= 0.0 || lc.y <= r.w || lf.y >= r.w) return -1.0;',
+      '  float f = (r.w - lc.y) / (lf.y - lc.y);',
+      '  float hx = lc.x + f * (lf.x - lc.x) - r.x, hy = yc + f * (yf - yc) - uSueloPuerta;',
+      '  return (abs(hx) <= r.y && hy >= 0.0 && hy <= r.z) ? f : -1.0;',
+      '}',
       'void main(){',
-      '  #include <logdepthbuf_fragment>',
+      '  vec2 lw = vL.xz;',
+      '#if defined( USE_LOGDEPTHBUF ) && defined( USE_LOGDEPTHBUF_EXT )',
+      '  float fd = vFragDepth;',
+      '  if (uPuerta > 0.5) {',
+      '    float f = cruce(uPuA, uCamL.xz, lw, uCamL.y, vL.y);',
+      '    if (f < 0.0) f = cruce(uPuB, uCamL.xz, lw, uCamL.y, vL.y);',
+      '    if (f < 0.0) discard;',
+      '    float wF = vFragDepth - 1.0, wH = f * wF;',
+      '    fd = 1.0 + wH * (0.99 + 0.0095 * (1.0 - exp(-(wF - wH) / 10.0)));',
+      '  }',
+      '  gl_FragDepthEXT = vIsPerspective == 0.0 ? gl_FragCoord.z : log2(fd) * logDepthBufFC * 0.5;',
+      '#else',
+      '  if (uPuerta > 0.5) discard;',
+      '#endif',
       '  vec3 base = vec3(1.0);',
       '  #ifdef USE_COLOR', '  base = vColor.rgb;', '  #endif',
       '  #ifdef MAPA', '  base *= texture2D(uMapa, vUv).rgb;', '  #endif',
@@ -129,7 +189,9 @@
       '  for (int i = 0; i < 8; i++) {',
       '    vec3 d = uLampPos[i] - vW; float r2 = dot(d, d);',
       '    float nd = max(dot(n, d * inversesqrt(max(r2, 1e-4))), 0.0);',
-      '    luz += uLampCol[i] * uLampOn[i] * (0.30 + 0.70 * nd) * 2.4 / (1.0 + r2 * 0.22);',
+      '    vec4 zr = uLampRect[i];',
+      '    float zona = step(zr.x, lw.x) * step(lw.x, zr.z) * step(zr.y, lw.y) * step(lw.y, zr.w);',
+      '    luz += uLampCol[i] * uLampOn[i] * zona * (0.30 + 0.70 * nd) * 2.4 / (1.0 + r2 * 0.22);',
       '    brillo += uLampOn[i] * (1.0 - step(0.5, abs(vLamp - float(i + 1))));',
       '  }',
       '  vec3 col = base * luz + base * brillo * 1.7;',
@@ -141,9 +203,12 @@
     var UNI = {
       uSun: sh.uSun, uSunColor: sh.uSunColor, uSkyColor: sh.uSkyColor, uNight: sh.uNight,
       uLampPos: { value: [] }, uLampOn: { value: [] }, uLampCol: { value: [] },
-      uVenN: { value: new THREE.Vector3(0, 0, 1) }, uVenD: { value: 0 }, uVentanas: { value: 0 }
+      uLampRect: { value: [] },
+      uVenN: { value: new THREE.Vector3(0, 0, 1) }, uVenD: { value: 0 }, uVentanas: { value: 0 },
+      uCamL: { value: new THREE.Vector3() }, uSueloPuerta: { value: 0 }, uPuerta: { value: 0 },
+      uPuA: { value: new THREE.Vector4(0, 0, 0, 0) }, uPuB: { value: new THREE.Vector4(0, 0, 0, 0) }
     };
-    for (var il = 0; il < MAX_LAMPARAS; il++) { UNI.uLampPos.value.push(new THREE.Vector3()); UNI.uLampOn.value.push(0); UNI.uLampCol.value.push(new THREE.Vector3(1, 0.72, 0.45)); }
+    for (var il = 0; il < MAX_LAMPARAS; il++) { UNI.uLampPos.value.push(new THREE.Vector3()); UNI.uLampOn.value.push(0); UNI.uLampCol.value.push(new THREE.Vector3(1, 0.72, 0.45)); UNI.uLampRect.value.push(new THREE.Vector4(-1e5, -1e5, 1e5, 1e5)); }
     /**
      * Un material del interior. Va en la lista de los transparentes (sin mezcla:
      * el color sale opaco) para dibujarse DESPUÉS de todo lo del visor, incluidos
@@ -159,7 +224,7 @@
       op = op || {};
       var u = {}, k;
       for (k in UNI) u[k] = UNI[k];
-      u.uAbre = op.uAbre || { value: 0 }; u.uK = { value: op.k === undefined ? 1 : op.k };
+      u.uAbre = op.uAbre || { value: 0 }; u.uK = { value: op.k === undefined ? 1 : op.k }; u.uDespY = op.despY || { value: 0 };
       if (op.mapa) u.uMapa = { value: op.mapa };
       var m = new THREE.ShaderMaterial({ uniforms: u, vertexShader: VS, fragmentShader: FS, vertexColors: op.color !== false, fog: false, lights: false, defines: op.mapa ? { MAPA: 1 } : {},
         transparent: true, blending: THREE.NoBlending, depthWrite: true });
@@ -167,9 +232,10 @@
       return m;
     }
     var MAT = null;                   // se crean al primer uso y se reutilizan (un programa)
+    var DESP_CAB = { value: 0 };      // la cota de la cabina en el marco del edificio (su grupo sube y baja)
     function mats() {
-      if (!MAT) MAT = { fondo: material({ soloFondo: true }), env: material(), dec: material(), fondoCab: material({ soloFondo: true, k: 0 }), envCab: material({ k: 0 }), hojas: { value: 0 } };
-      if (!MAT.cabDec) MAT.cabDec = material({ k: 0, uAbre: MAT.hojas });
+      if (!MAT) MAT = { fondo: material({ soloFondo: true }), env: material(), dec: material(), fondoCab: material({ soloFondo: true, k: 0, despY: DESP_CAB }), envCab: material({ k: 0, despY: DESP_CAB }), hojas: { value: 0 } };
+      if (!MAT.cabDec) MAT.cabDec = material({ k: 0, uAbre: MAT.hojas, despY: DESP_CAB });
       return MAT;
     }
 
@@ -211,22 +277,33 @@
     // =====================================================================================
     // 1. PORTALES: dónde está la puerta de cada edificio
     // =====================================================================================
+    // Los tonos con los que el catálogo marca la puerta y la vidriera los publica
+    // el núcleo (ctx.geom.colores); la copia literal queda solo para un núcleo
+    // anterior que no los publique.
+    var TONO_PUERTA = (G.colores && G.colores.PUERTA) || [0.06, 0.07, 0.09];
+    var TONO_VIDRIERA = (G.colores && G.colores.VIDRIERA) || [0.5, 0.66, 0.86];
+    function mismoTono(c, t0) { return !!c && Math.abs(c[0] - t0[0]) < 1e-6 && Math.abs(c[1] - t0[1]) < 1e-6 && Math.abs(c[2] - t0[2]) < 1e-6; }
     /** La puerta en una lista de piezas del catálogo: tono de puerta y hueco de persona. */
-    function esPuerta(p) {
-      var c = p.c;
-      return !p.g && c && Math.abs(c[0] - 0.06) < 1e-6 && Math.abs(c[1] - 0.07) < 1e-6 && Math.abs(c[2] - 0.09) < 1e-6 && (p.sx || 1) <= 3.5 && (p.sy || 1) <= 3.3;
-    }
+    function esPuerta(p) { return !p.g && mismoTono(p.c, TONO_PUERTA) && (p.sx || 1) <= 3.5 && (p.sy || 1) <= 3.3; }
     /**
-     * { px, zf, dw, dh }: el centro del hueco en x, el plano de la fachada (la
-     * puerta del portal es una caja de 0,6 m que sobresale de zf; la de villas y
-     * naves, de 0,5 m desde zf − 0,05), el ancho y el alto de la puerta.
+     * { px, zf, zo, dw, dh, vw, vh, vz }: el centro del hueco en x, el plano de la
+     * fachada (la puerta del portal es una caja de 0,6 m que sobresale de zf; la de
+     * villas y naves, de 0,5 m desde zf − 0,05), la cara de fuera de esa caja, el
+     * ancho y el alto de la puerta y, si el portal tiene vidriera (una caja de
+     * 0,4 m centrada en zf), su medio ancho, su alto y su cara de fuera.
      */
     function puertaDe(piezas) {
-      for (var i = 0; i < piezas.length; i++) {
-        var p = piezas[i];
-        if (esPuerta(p)) return { px: p.x || 0, zf: (p.z || 0) - p.sz / 2 + (p.sz < 0.55 ? 0.05 : 0), dw: p.sx, dh: p.sy };
+      var i, p, r = null;
+      for (i = 0; i < piezas.length && !r; i++) {
+        p = piezas[i];
+        if (esPuerta(p)) r = { px: p.x || 0, zf: (p.z || 0) - p.sz / 2 + (p.sz < 0.55 ? 0.05 : 0), zo: (p.z || 0) + p.sz / 2, dw: p.sx, dh: p.sy, vw: 0, vh: 0, vz: 0 };
       }
-      return null;
+      if (!r) return null;
+      for (i = 0; i < piezas.length; i++) {
+        p = piezas[i];
+        if (!p.g && mismoTono(p.c, TONO_VIDRIERA) && Math.abs((p.x || 0) - r.px) < 0.01 && Math.abs((p.z || 0) - r.zf) < 0.05) { r.vw = p.sx / 2; r.vh = p.sy; r.vz = (p.z || 0) + p.sz / 2; break; }
+      }
+      return r;
     }
     var portales = [], indice = {}, porId = {};
     function claveRejilla(x, z) { return Math.floor(x / REJILLA) + ':' + Math.floor(z / REJILLA); }
@@ -236,27 +313,65 @@
       (indice[k] || (indice[k] = [])).push(po);
       portales.push(po);
     }
-    /** El punto de llegada: delante de la puerta o, si está en un patio (L, U), en la boca del patio. */
-    function completaPortal(po) {
-      var m = marco(po.o, po.yaw), pz = po.puerta, zA;
-      if (pz.zf < po.hd - 0.3 && pz.zf > -po.hd && Math.abs(pz.px) < po.hw) { zA = po.hd + 0.75; po.patio = true; }
-      else { zA = pz.zf + 1.35; po.patio = false; }
-      po.m = m; po.zA = zA;
-      po.A = aMundo(m, pz.px, zA); po.D = aMundo(m, pz.px, pz.zf);
+    /**
+     * El punto de llegada, 1,35 m delante de la puerta. Si la puerta está al fondo
+     * de un patio (L, U), el patio: el rectángulo local entre las alas que llegan
+     * más allá de la fachada de la puerta (o hasta 1,5 m fuera de la huella por el
+     * lado abierto de una L) y desde la puerta hasta 1,5 m fuera de la boca. El
+     * catastro del núcleo tiene la huella entera del edificio como un sólido, que
+     * para al jugador a 0,42 m de ella; en ese rectángulo anda el módulo con su
+     * colisión (gancho andar, `andaPatio`) y se llega andando hasta la puerta,
+     * donde se ofrece entrar a menos de 3 m. El margen de 1,5 m cubre también la
+     * huella girada al revés del catastro de la base (medido: paraba a 0,57 m de
+     * la boca en una L de 25 m girada 91°), que la rama «vida» corrige.
+     */
+    function completaPortal(po, piezas) {
+      var m = marco(po.o, po.yaw), pz = po.puerta, i;
+      po.patio = pz.zf < po.hd - 0.3 && pz.zf > -po.hd && Math.abs(pz.px) < po.hw;
+      po.m = m; po.zA = pz.zf + 1.35;
+      po.A = aMundo(m, pz.px, po.zA); po.D = aMundo(m, pz.px, pz.zf);
+      if (po.patio) {
+        var a = -po.hw - MARGEN_PATIO, b = po.hw + MARGEN_PATIO, ca = false, cb = false;
+        for (i = 0; i < piezas.length; i++) {
+          if (!esCuerpo(piezas[i], po.suelo)) continue;
+          var r = rect(piezas[i]);
+          if (r.z1 < pz.zf + 0.3 || r.z0 > po.hd) continue;                                    // el cuerpo de la puerta o uno que no llega al patio
+          if (r.x1 <= pz.px + 0.01 && r.x1 > a) { a = r.x1; ca = true; }
+          else if (r.x0 >= pz.px - 0.01 && r.x0 < b) { b = r.x0; cb = true; }
+        }
+        po.pat = { x0: a, x1: b, cerradoA: ca, cerradoB: cb, z0: pz.zf, z1: po.hd + MARGEN_PATIO };
+      }
       return po;
+    }
+    // Los patios, en su propia rejilla (cada uno en todas las celdas que toca): el
+    // gancho andar mira una sola celda por cuadro.
+    var indicePatio = {};
+    function indexaPatio(po, quitar) {
+      var p = po.pat, xs = [p.x0, p.x1], zs = [p.z0, p.z1], i, j, x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9, w = {};
+      for (i = 0; i < 2; i++) for (j = 0; j < 2; j++) { aMundo(po.m, xs[i], zs[j], w); x0 = Math.min(x0, w.x); x1 = Math.max(x1, w.x); z0 = Math.min(z0, w.z); z1 = Math.max(z1, w.z); }
+      for (i = Math.floor(x0 / REJILLA); i <= Math.floor(x1 / REJILLA); i++) for (j = Math.floor(z0 / REJILLA); j <= Math.floor(z1 / REJILLA); j++) {
+        var k = i + ':' + j, l = indicePatio[k];
+        if (quitar) { if (l && l.indexOf(po) >= 0) l.splice(l.indexOf(po), 1); }
+        else (l || (indicePatio[k] = [])).push(po);
+      }
     }
     var TIPO_BARRIO = { towers: 'Torre', blocks: 'Bloque', villas: 'Villa', warehouses: 'Nave' };
     /** Los portales de los barrios: una vez, al tener el mundo. */
     function indexaBarrios() {
-      var i, j, t0 = performance.now(), n = 0;
+      var i, j, t0 = performance.now(), n = 0, sinPuerta = 0;
       for (i = 0; i < S.edificios.length; i++) for (j = 0; j < S.edificios[i].length; j++) {
-        var e = S.edificios[i][j], pz = puertaDe(G.edificioPartes(e));
-        if (!pz) continue;
-        indexa(completaPortal({ id: 'b:' + Math.round(e.x) + ':' + Math.round(e.z), tipo: 'barrio', e: e, bi: i, bj: j, o: { x: e.x, y: e.y, z: e.z }, yaw: e.yaw, suelo: 1,
-          puerta: pz, hw: e.w / 2, hd: e.d / 2, kind: e.kind, nombre: e.barrio || '', sx: Math.round(e.x), sz: Math.round(e.z) }));
+        var e = S.edificios[i][j], piezas = G.edificioPartes(e), pz = puertaDe(piezas);
+        if (!pz) { sinPuerta++; continue; }
+        var po = completaPortal({ id: 'b:' + Math.round(e.x) + ':' + Math.round(e.z), tipo: 'barrio', e: e, bi: i, bj: j, o: { x: e.x, y: e.y, z: e.z }, yaw: e.yaw, suelo: 1,
+          puerta: pz, hw: e.w / 2, hd: e.d / 2, kind: e.kind, nombre: e.barrio || '', sx: Math.round(e.x), sz: Math.round(e.z) }, piezas);
+        indexa(po);
+        if (po.patio) { indexaPatio(po); medidas.patios++; }
         n++;
       }
-      medidas.portalesBarrio = n; medidas.msIndice = performance.now() - t0;
+      medidas.portalesBarrio = n; medidas.barriosSinPuerta = sinPuerta; medidas.msIndice = performance.now() - t0;
+      // Todos los edificios del catálogo tienen puerta: si no se encuentra ninguna,
+      // el catálogo ha cambiado la marca de la pieza y hay que decirlo.
+      if (!n && sinPuerta && global.console) global.console.warn('umbral: 0 portales en ' + sinPuerta + ' edificios; la pieza de la puerta del catálogo no lleva el tono ctx.geom.colores.PUERTA');
     }
     /** Los datos del edificio de una parcela, con las mismas cuentas que applyCity. */
     function edificioParcela(pc) {
@@ -275,6 +390,7 @@
         var po = portalesParcela[i]; delete porId[po.id];
         lista = indice[claveRejilla(po.A.x, po.A.z)]; if (lista) { k = lista.indexOf(po); if (k >= 0) lista.splice(k, 1); }
         k = portales.indexOf(po); if (k >= 0) portales.splice(k, 1);
+        if (po.patio) indexaPatio(po, true);
       }
       portalesParcela = [];
       var ps = (S.city && S.city.parcels) || [], N = ctx.N();
@@ -284,8 +400,9 @@
         var ep = edificioParcela(pc), pz = puertaDe(ep.ed.p);
         if (!pz) continue;
         var p2 = completaPortal({ id: 'p:' + (pc.x | 0) + ':' + (pc.y | 0), tipo: 'parcela', pc: pc, cx: pc.x | 0, cy: pc.y | 0, o: ep.o, yaw: ctx.rotR(), suelo: ep.ed.suelo,
-          puerta: pz, hw: ep.ed.hw, hd: ep.ed.hd, arch: ep.arch, kind: ep.kind, nombre: pc.name || MU.sectorName(ep.kind), sx: pc.x | 0, sz: pc.y | 0 });
+          puerta: pz, hw: ep.ed.hw, hd: ep.ed.hd, arch: ep.arch, kind: ep.kind, nombre: pc.name || '', alto: ep.ed.top, sx: pc.x | 0, sz: pc.y | 0 }, ep.ed.p);
         indexa(p2); portalesParcela.push(p2);
+        if (p2.patio) indexaPatio(p2);
       }
     }
     /** ¿Se dibuja hoy ese edificio? (calidad y ocultos bajo una parcela) */
@@ -298,9 +415,9 @@
     function nombrePortal(po) {
       if (po.tipo === 'barrio') return t(TIPO_BARRIO[po.kind] || 'Edificio') + (po.nombre ? ' · ' + po.nombre : '');
       var h = po.pc && po.pc.handle ? ' · @' + po.pc.handle : '';
-      return (po.nombre || t(MU.sectorName(po.kind))) + h;
+      return (po.nombre || t(MU.sectorName(po.kind))) + h;                                   // sin nombre, el del sector, traducido
     }
-    var medidas = { busquedas: 0, msBusqueda: 0, msBusquedaMax: 0, msBusquedaTotal: 0, portalesBarrio: 0, msIndice: 0, msConstruir: 0 };
+    var medidas = { busquedas: 0, msBusqueda: 0, msBusquedaMax: 0, msBusquedaTotal: 0, portalesBarrio: 0, barriosSinPuerta: 0, patios: 0, pasosPatio: 0, msIndice: 0, msConstruir: 0, lejosCiego: false, reaperturas: 0 };
     /** El portal al que se está mirando a menos de ALCANCE, o null. */
     function buscaCercano() {
       var t0 = performance.now(), px = walk.pos.x, pz = walk.pos.z;
@@ -517,6 +634,12 @@
       }
       pieza(cur, a1, 0, alto, true);
     }
+    /** Los huecos de una fachada que dan a la ciudad, en cajas locales (y sobre el suelo del espacio). */
+    function aberturas(huecos, z0, z1) {
+      var l = [], i;
+      for (i = 0; i < huecos.length; i++) l.push({ x0: huecos[i].a, x1: huecos[i].b, y0: huecos[i].y0, y1: huecos[i].y1, z0: z0, z1: z1 });
+      return l;
+    }
     /** Carpintería de una ventana: cerco, montante central y vierteaguas interior. */
     function ventana(E, eje, a, b, b0, b1, y0, y1, c) {
       var yb = E.yb, g = 0.06, m = (a + b) / 2, e0 = b0 - 0.03, e1 = b1 + 0.03;
@@ -537,11 +660,31 @@
       caja(E.env, x0, E.yb - 0.2, z0, x1, E.yb, z1, cs);
       caja(E.env, x0, E.yb + alto, z0, x1, E.yb + alto + 0.2, z1, ct);
     }
-    /** Una lámpara de techo (pantalla que brilla) en el espacio. */
-    function lamparaTecho(E, idx, x, z, alto, on, nombre, fija) {
+    /** Una lámpara de techo (pantalla que brilla) en el espacio; `zona`: el rectángulo local que alumbra. */
+    function lamparaTecho(E, idx, x, z, alto, on, nombre, fija, zona) {
       pon(E.dec, { g: 'cyl', a: 14, sx: 0.55, sy: 0.07, sz: 0.55, x: x, y: E.yb + alto - 0.08, z: z, c: PANTALLA_LUZ }, idx + 1);
       pon(E.dec, { g: 'cyl', a: 6, sx: 0.04, sy: 0.02, sz: 0.04, x: x, y: E.yb + alto - 0.02, z: z, c: ACERO });
-      E.lamparas[idx] = { x: x, y: E.yb + alto - 0.35, z: z, on: !!on, col: [1, 0.78, 0.52], nombre: nombre, fija: !!fija, techo: true };
+      E.lamparas[idx] = { x: x, y: E.yb + alto - 0.35, z: z, on: !!on, col: [1, 0.78, 0.52], nombre: nombre, fija: !!fija, techo: true, zona: zona || null };
+    }
+
+    /**
+     * Las hojas de la puerta de la calle, automática: dos de vidrio tintado con
+     * cerco de acero, en el grueso del muro (z0..z1), que se abren hacia los lados
+     * con el `uAbre` del material del decorado (aDesliza = ∓1): se ven cerradas
+     * desde la calle, se abren al acercarse y se cruza el hueco andando.
+     */
+    function hojasCalle(E, x, ancho, z0, z1, alto) {
+      var zc0 = z0 + (z1 - z0) * 0.4, zc1 = z0 + (z1 - z0) * 0.6, h = ancho / 2, g = 0.05, e0 = zc0 - 0.012, e1 = zc1 + 0.012, lado;
+      for (lado = -1; lado <= 1; lado += 2) {
+        var xa = lado < 0 ? x - h : x, xb = lado < 0 ? x : x + h;
+        caja(E.dec, xa, E.yb + 0.1, zc0, xb, E.yb + alto - g, zc1, [0.3, 0.38, 0.42], 0, lado);
+        caja(E.dec, xa, E.yb, e0, xa + g, E.yb + alto, e1, ACERO, 0, lado);
+        caja(E.dec, xb - g, E.yb, e0, xb, E.yb + alto, e1, ACERO, 0, lado);
+        caja(E.dec, xa, E.yb + alto - g, e0, xb, E.yb + alto, e1, ACERO, 0, lado);
+        caja(E.dec, xa, E.yb, e0, xb, E.yb + 0.1, e1, ACERO, 0, lado);
+        caja(E.dec, lado < 0 ? xb - 0.14 : xa + 0.1, E.yb + 0.9, e1, lado < 0 ? xb - 0.1 : xa + 0.14, E.yb + 1.5, e1 + 0.04, ACERO, 0, lado);   // el tirador
+      }
+      E.hojas = { x: x, ancho: ancho };
     }
 
     // =====================================================================================
@@ -671,7 +814,9 @@
         hv.push({ a: pa, b: pb, y0: 0, y1: 2.3 });
       }
       pared(E, 'x', x0 - 0.3, x1 + 0.3, zI, zI + 0.3, alto, hv, cp, carp);
+      if (entrada.lado === 'frente') hojasCalle(E, entrada.x, entrada.ancho, zI, zI + 0.3, 2.3);
       E.ventanas = hv.filter(function (h) { return h.ventana; });
+      E.aberturas = aberturas(hv, zI, zI + 0.3);
       // Laterales y muro de atrás (con la puerta del rellano).
       pared(E, 'z', z0 - 0.15, zI, x0 - 0.3, x0, alto, [], cp);
       pared(E, 'z', z0 - 0.15, zI, x1, x1 + 0.3, alto, [], cp);
@@ -687,10 +832,14 @@
       var bp = espejo ? { a: ban.x1 - 1.3, b: ban.x1 - 0.4 } : { a: ban.x0 + 0.4, b: ban.x0 + 1.3 };
       pared(E, 'x', ban.x0, ban.x1, zm - tp, zm + tp, alto, [{ a: bp.a, b: bp.b, y0: 0, y1: 2.1 }], pal.azulejo, carp);
       // Zócalo claro bajo las ventanas del salón (detalle) y lámparas de techo.
-      lamparaTecho(E, 1, (sal.x0 + sal.x1) / 2, (sal.z0 + sal.z1) / 2, alto, false, 'salón');
-      lamparaTecho(E, 2, (coc.x0 + coc.x1) / 2, (coc.z0 + coc.z1) / 2, alto, false, 'cocina');
-      lamparaTecho(E, 4, (ban.x0 + ban.x1) / 2, (ban.z0 + ban.z1) / 2, alto, false, 'baño');
-      lamparaTecho(E, 5, (dor.x0 + dor.x1) / 2, (dor.z0 + dor.z1) / 2 + 0.4, alto, false, 'dormitorio');
+      // Zonas de luz: salón, cocina y recibidor son un solo espacio abierto (no hay
+      // tabique entre ellos); dormitorio y baño, cada uno la suya.
+      var dia = { x0: sal.x0, x1: sal.x1, z0: z0, z1: zI };
+      E.zonas = { dia: dia, dormitorio: dor, bano: ban };
+      lamparaTecho(E, 1, (sal.x0 + sal.x1) / 2, (sal.z0 + sal.z1) / 2, alto, false, 'salón', false, dia);
+      lamparaTecho(E, 2, (coc.x0 + coc.x1) / 2, (coc.z0 + coc.z1) / 2, alto, false, 'cocina', false, dia);
+      lamparaTecho(E, 4, (ban.x0 + ban.x1) / 2, (ban.z0 + ban.z1) / 2, alto, false, 'baño', false, ban);
+      lamparaTecho(E, 5, (dor.x0 + dor.x1) / 2, (dor.z0 + dor.z1) / 2 + 0.4, alto, false, 'dormitorio', false, dor);
       // Cocina fija: nevera y encimera contra la pared de atrás, con muebles altos.
       var dirK = espejo ? -1 : 1, kx0 = espejo ? coc.x1 : coc.x0, kL = Math.max(1.2, coc.x1 - coc.x0 - 0.9);
       var nev = kx0 + dirK * 0.4;
@@ -737,8 +886,8 @@
       var mes = mueble('mesilla', 'mesilla', dor, camaIzq ? dor.x0 + 0.26 : dor.x1 - 0.26, cD + 1.3, camaIzq ? 1 : 3, pal.mueble);
       mes.lampara = 3;
       mueble('armario', 'armario', dor, camaIzq ? dor.x1 - 0.35 : dor.x0 + 0.35, (dor.z0 + dor.z1) / 2 + 0.6, camaIzq ? 3 : 1, pal.mueble);
-      E.lamparas[0] = { on: false, col: [1, 0.74, 0.46], nombre: 'pie', mueble: pie };
-      E.lamparas[3] = { on: false, col: [1, 0.72, 0.44], nombre: 'mesilla', mueble: mes };
+      E.lamparas[0] = { on: false, col: [1, 0.74, 0.46], nombre: 'pie', mueble: pie, zona: dia };
+      E.lamparas[3] = { on: false, col: [1, 0.72, 0.44], nombre: 'mesilla', mueble: mes, zona: dor };
       E.limites = { x0: x0, x1: x1, z0: z0, z1: zI };
       E.ventana = { z: zI + 0.3, k: 1 };
       E.salon = sal;
@@ -775,15 +924,17 @@
       if (vid > hueco / 2 + 1) { hf.push({ a: px - vid + 0.2, b: px - hueco / 2 - 0.3, y0: 0.3, y1: Math.min(3.9, alto - 0.2), ventana: true }); hf.push({ a: px + hueco / 2 + 0.3, b: px + vid - 0.2, y0: 0.3, y1: Math.min(3.9, alto - 0.2), ventana: true }); }
       if (plan.tipo === 'concesionario') hf = [{ a: px - hueco / 2, b: px + hueco / 2, y0: 0, y1: 3.0 }, { a: Math.max(Z.x0 + 0.4, px - 6.8), b: px - hueco / 2 - 0.3, y0: 0.2, y1: 4.2, ventana: true }, { a: px + hueco / 2 + 0.3, b: Math.min(Z.x1 - 0.4, px + 6.8), y0: 0.2, y1: 4.2, ventana: true }];
       pared(E, 'x', Z.x0 - 0.2, Z.x1 + 0.2, Z.z1, Z.z1 + 0.2, alto, hf, cp, carp);
+      hojasCalle(E, px, hueco, Z.z1, Z.z1 + 0.2, hf[0].y1);
       E.salida = { x: px, ancho: hueco, z: Z.z1 };
+      E.aberturas = aberturas(hf, Z.z1, Z.z1 + 0.2);
       pared(E, 'z', Z.z0 - 0.2, Z.z1 + 0.2, Z.x0 - 0.2, Z.x0, alto, [], cp);
       pared(E, 'z', Z.z0 - 0.2, Z.z1 + 0.2, Z.x1, Z.x1 + 0.2, alto, [], cp);
       pared(E, 'x', Z.x0 - 0.2, Z.x1 + 0.2, Z.z0 - 0.2, Z.z0, alto, [{ a: ex - 0.55, b: ex + 0.55, y0: 0, y1: 2.2 }], cp);
       marcoAscensor(E, plan);
       // Luz: tres plafones encendidos (se apagan y se encienden como las demás).
-      var lz = (Z.z0 + Z.z1) / 2, nl = plan.tipo === 'concesionario' ? 3 : 2;
-      for (var i = 0; i < nl; i++) lamparaTecho(E, i, Z.x0 + (Z.x1 - Z.x0) * (i + 0.5) / nl, lz, alto, true, 'techo');
-      lamparaTecho(E, 2 + (nl === 3 ? 1 : 0), ex, Z.z0 + 1.4, alto, true, 'ascensor');
+      var lz = (Z.z0 + Z.z1) / 2, nl = plan.tipo === 'concesionario' ? 3 : 2, zr = { x0: Z.x0, x1: Z.x1, z0: Z.z0, z1: Z.z1 };
+      for (var i = 0; i < nl; i++) lamparaTecho(E, i, Z.x0 + (Z.x1 - Z.x0) * (i + 0.5) / nl, lz, alto, true, 'techo', false, zr);
+      lamparaTecho(E, 2 + (nl === 3 ? 1 : 0), ex, Z.z0 + 1.4, alto, true, 'ascensor', false, zr);
       var ladoEsc = (ex - Z.x0) > (Z.x1 - ex) ? -1 : 1;                                          // la escalera, en el lado contrario al ascensor
       if (plan.tipo === 'torre') {
         escalera(E, ladoEsc > 0 ? Z.x1 - 1.35 : Z.x0 + 0.15, Z.z0 + 0.3, alto, cp, r);
@@ -819,7 +970,9 @@
       E.solidos.push({ x0: x0, x1: x0 + huella, z0: z0, z1: z1 });
     }
     function buzones(E, xPared, zc, haciaDentro, plan) {
-      var n = clamp(plan.plantas.length * plan.upp, 4, 48), cols = Math.min(8, Math.max(4, Math.ceil(Math.sqrt(n * 1.6))));
+      // Uno por vivienda: las unidades de consenso si la parcela está dividida;
+      // si no, plantas × unidades por planta. Como mucho 48 (la textura es de uno).
+      var pc = plan.po.pc, n = pc && (pc.unidades | 0) > 0 ? clamp(pc.unidades | 0, 1, 48) : clamp(plan.plantas.length * plan.upp, 4, 48), cols = Math.min(8, Math.max(4, Math.ceil(Math.sqrt(n * 1.6))));
       var tb = texturaBuzones(n, cols), w = cols * 0.34, h = tb.filas * 0.26, x = xPared + haciaDentro * 0.02;
       caja(E.dec, Math.min(x, x + haciaDentro * 0.3), E.yb + 1.55 - h / 2 - 0.03, zc - w / 2 - 0.03, Math.max(x, x + haciaDentro * 0.3), E.yb + 1.55 + h / 2 + 0.03, zc + w / 2 + 0.03, [0.55, 0.57, 0.6]);
       var g = new THREE.PlaneGeometry(w, h);
@@ -872,7 +1025,7 @@
       var dx = Z.x1 - 3;
       caja(E.dec, dx - 1.2, E.yb, Z.z1 - 4, dx + 1.2, E.yb + 0.76, Z.z1 - 3.2, [0.95, 0.95, 0.96]);                  // la mesa del vendedor
       E.solidos.push({ x0: dx - 1.2, x1: dx + 1.2, z0: Z.z1 - 4, z1: Z.z1 - 3.2 });
-      E.letrero = t('Sala de exposición') + ' · ' + n + ' ' + (n === 1 ? t('coche') : t('coches'));
+      E.letrero = t('Sala de exposición') + ' · ' + t('Coches expuestos') + ': ' + n;       // sin plural: «: n» vale en los cinco idiomas
       E.coches = n;
     }
     /** La cabina del ascensor (en su propio grupo, que sube y baja con el jugador). */
@@ -903,7 +1056,7 @@
       pared(E, 'z', z0 - 0.2, z1, x1, x1 + 0.2, alto, [], cp);
       pared(E, 'x', x0 - 0.2, x1 + 0.2, z0 - 0.2, z0, alto, [{ a: ex - 0.55, b: ex + 0.55, y0: 0, y1: 2.2 }], cp);
       marcoAscensor(E, plan);
-      lamparaTecho(E, LAMPARA_RELLANO, (x0 + x1) / 2, (z0 + z1) / 2, alto, true, 'rellano', true);
+      lamparaTecho(E, LAMPARA_RELLANO, (x0 + x1) / 2, (z0 + z1) / 2, alto, true, 'rellano', true, { x0: x0, x1: x1, z0: z0, z1: z1 });
       E.interact.push({ tipo: 'ascensor', x: ex, y: E.yb + 1.3, z: z0, caja: { x0: ex - 0.8, x1: ex + 0.8, y0: E.yb, y1: E.yb + 2.4, z0: z0 - 0.3, z1: z0 + 0.3 } });
       E.rellano = { x0: x0, x1: x1, z0: z0, z1: z1 };
       return { x0: x0, x1: x1 };
@@ -939,7 +1092,10 @@
       var plan = casa.plan, N = plan.sala, E = nuevoEspacio('bajo', N.yb), r = lcg(semillaEdificio(plan.po, CANAL_PISO, 3)), alto = N.alto, px = plan.px;
       var cp = [0.78, 0.78, 0.76], cs = [0.55, 0.56, 0.57], i, j, k;
       losa(E, N.x0, N.z0, N.x1, N.z1, alto, cs, [0.62, 0.63, 0.64]);
-      pared(E, 'x', N.x0 - 0.2, N.x1 + 0.2, N.z1, N.z1 + 0.2, alto, [{ a: px - plan.hueco / 2, b: px + plan.hueco / 2, y0: 0, y1: 2.3 }], cp, [0.4, 0.42, 0.45]);
+      var hn = [{ a: px - plan.hueco / 2, b: px + plan.hueco / 2, y0: 0, y1: 2.3 }];
+      pared(E, 'x', N.x0 - 0.2, N.x1 + 0.2, N.z1, N.z1 + 0.2, alto, hn, cp, [0.4, 0.42, 0.45]);
+      hojasCalle(E, px, plan.hueco, N.z1, N.z1 + 0.2, 2.3);
+      E.aberturas = aberturas(hn, N.z1, N.z1 + 0.2);
       pared(E, 'z', N.z0 - 0.2, N.z1 + 0.2, N.x0 - 0.2, N.x0, alto, [], cp);
       pared(E, 'z', N.z0 - 0.2, N.z1 + 0.2, N.x1, N.x1 + 0.2, alto, [], cp);
       pared(E, 'x', N.x0 - 0.2, N.x1 + 0.2, N.z0 - 0.2, N.z0, alto, [], cp);
@@ -957,7 +1113,7 @@
       for (i = 0; i < 4; i++) { var ppx = N.x0 + 2 + i * 1.6; caja(E.dec, ppx, E.yb, N.z1 - 3, ppx + 1.2, E.yb + 0.15, N.z1 - 2, [0.7, 0.55, 0.35]); caja(E.dec, ppx + 0.1, E.yb + 0.15, N.z1 - 2.9, ppx + 1.1, E.yb + 0.95, N.z1 - 2.1, [0.72, 0.58, 0.38]); }
       E.solidos.push({ x0: N.x0 + 2, x1: N.x0 + 8, z0: N.z1 - 3, z1: N.z1 - 2 });
       var nl = Math.min(6, 2 + Math.floor((N.x1 - N.x0) / 14));
-      for (i = 0; i < nl; i++) lamparaTecho(E, i, N.x0 + (N.x1 - N.x0) * (i + 0.5) / nl, (N.z0 + N.z1) / 2, alto, true, 'foco');
+      for (i = 0; i < nl; i++) lamparaTecho(E, i, N.x0 + (N.x1 - N.x0) * (i + 0.5) / nl, (N.z0 + N.z1) / 2, alto, true, 'foco', false, { x0: N.x0, x1: N.x1, z0: N.z0, z1: N.z1 });
       E.limites = { x0: N.x0, x1: N.x1, z0: N.z0, z1: N.z1 };
       E.ventana = { z: N.z1 + 0.2, k: 0.25 };
       E.interact.push({ tipo: 'salida', x: px, y: E.yb + 1.3, z: N.z1 + 0.1, caja: { x0: px - plan.hueco / 2, x1: px + plan.hueco / 2, y0: E.yb, y1: E.yb + 2.3, z0: N.z1 - 0.1, z1: N.z1 + 0.4 } });
@@ -972,7 +1128,9 @@
       var M = mats(), g;
       g = geometria(E.env);
       if (g) {
-        E.mallas.push(malla(g, cabina ? M.fondoCab : M.fondo, 1000));
+        var fondo = malla(g, cabina ? M.fondoCab : M.fondo, 1000);
+        fondo.userData.fondo = true;                                                        // la pasada de solo profundidad: fuera de la vista por la puerta
+        E.mallas.push(fondo);
         E.mallas.push(malla(g, cabina ? M.envCab : M.env, 1001));
       }
       g = geometria(E.dec);
@@ -1037,21 +1195,24 @@
     // =====================================================================================
     // 7. DENTRO: estado, luces, recorridos guiados, colisión, ascensor
     // =====================================================================================
-    var casa = null, seq = null, sel = null, cercano = null, tBusca = 0, hud = null;
+    var casa = null, seq = null, sel = null, cercano = null, tBusca = 0, hud = null, congelado = false;
     function subeLamparas() {
       var E = casa && casa.visible, i, L;
       for (i = 0; i < MAX_LAMPARAS; i++) UNI.uLampOn.value[i] = 0;
       if (!casa) return;
-      var p = {};
+      var p = {}, M = casa.m;
+      function zona(i, z) { if (z) UNI.uLampRect.value[i].set(z.x0 - 0.04, z.z0 - 0.04, z.x1 + 0.04, z.z1 + 0.04); else UNI.uLampRect.value[i].set(-1e5, -1e5, 1e5, 1e5); }
       if (E) for (i = 0; i < E.lamparas.length && i < MAX_LAMPARAS; i++) {
         L = E.lamparas[i]; if (!L) continue;
-        aMundo(casa.m, L.x, L.z, p);
-        UNI.uLampPos.value[i].set(p.x, casa.m.oy + L.y, p.z); UNI.uLampOn.value[i] = L.on ? 1 : 0; UNI.uLampCol.value[i].set(L.col[0], L.col[1], L.col[2]);
+        aMundo(M, L.x, L.z, p);
+        UNI.uLampPos.value[i].set(p.x, M.oy + L.y, p.z); UNI.uLampOn.value[i] = L.on ? 1 : 0; UNI.uLampCol.value[i].set(L.col[0], L.col[1], L.col[2]);
+        zona(i, L.zona);
       }
       var c = casa.plan.cab;
       if (c && casa.cabina) {
-        aMundo(casa.m, casa.plan.ex, (c.z0 + c.z1) / 2, p);
-        UNI.uLampPos.value[LAMPARA_CABINA].set(p.x, casa.m.oy + casa.cabY + 2.1, p.z); UNI.uLampOn.value[LAMPARA_CABINA] = 1; UNI.uLampCol.value[LAMPARA_CABINA].set(1, 0.88, 0.7);
+        aMundo(M, casa.plan.ex, (c.z0 + c.z1) / 2, p);
+        UNI.uLampPos.value[LAMPARA_CABINA].set(p.x, M.oy + casa.cabY + 2.1, p.z); UNI.uLampOn.value[LAMPARA_CABINA] = 1; UNI.uLampCol.value[LAMPARA_CABINA].set(1, 0.88, 0.7);
+        zona(LAMPARA_CABINA, { x0: c.x0, x1: c.x1, z0: c.z0, z1: c.z1 - 0.1 });                  // sin la cara de fuera del frente, que da al zaguán
       }
       // La luz del día entra por el plano de la fachada del espacio visible.
       if (E && E.ventana) {
@@ -1118,6 +1279,8 @@
       if (casa.grupo.parent) casa.grupo.parent.remove(casa.grupo);
       casa = null; seq = null; sel = null;
       for (var i = 0; i < MAX_LAMPARAS; i++) UNI.uLampOn.value[i] = 0;
+      UNI.uPuerta.value = 0; modoPuerta = false;
+      if (MAT) MAT.dec.uniforms.uAbre.value = 0;
       marcaSeleccion();
     }
 
@@ -1219,6 +1382,7 @@
       var po = casa.po, pz = po.puerta, fuera = aMundo(casa.m, pz.px, po.zA + 1.2), yf = ctx.mundo.groundH(fuera.x, fuera.z) - casa.m.oy;
       casa.entrado = false; sel = null;
       corre([pasoAndar([{ x: pz.px, z: casa.bajo.salida.z - 0.3 }, { x: pz.px, z: pz.zf + 0.4 }, { x: pz.px, z: po.zA + 1.2, y: yf }], Math.PI), pasoFn(function () { cierraCasa(); })]);
+      seq.salida = true;
       return true;
     }
     /** Salir sin andar: delante del portal, mirando a la calle (Escape en un piso, órbita, VR). */
@@ -1316,6 +1480,125 @@
       if (!(E.salida && Math.abs(q.x - E.salida.x) < E.salida.ancho / 2)) q.z = clamp(q.z, L.z0 + 0.05, L.z1 - 0.05);
       ponLocal(q.x, q.z, E.yb);
       if (E.salida && q.z > E.salida.z - 0.12 && Math.abs(q.x - E.salida.x) < E.salida.ancho / 2) salirAndando();
+    }
+
+    // ---- El patio de una L o de una U: se anda hasta la puerta del fondo --------------------
+    var _pl = { x: 0, z: 0 };
+    /** El patio en el que está (x, z) de mundo, o null: una celda del índice, casi siempre vacía. */
+    function patioEn(x, z) {
+      var l = indicePatio[claveRejilla(x, z)], i;
+      if (!l) return null;
+      for (i = 0; i < l.length; i++) {
+        var po = l[i], P = po.pat;
+        aLocal(po.m, x, z, _pl);
+        if (_pl.x > P.x0 && _pl.x < P.x1 && _pl.z > P.z0 - 0.5 && _pl.z < P.z1 && dibujado(po)) return po;
+      }
+      return null;
+    }
+    /**
+     * Andar por un patio (gancho andar, fuera de un edificio): las mismas teclas y
+     * la misma velocidad que el visor, y como sólidos las alas, la fachada del
+     * fondo y la caja de la puerta. Al salir del rectángulo del patio (por la boca
+     * o por el lado abierto de una L) el visor vuelve a llevar al jugador.
+     */
+    function andaPatio(dt) {
+      if (!puedeEntrar()) return false;
+      var po = patioEn(walk.pos.x, walk.pos.z); if (!po) return false;
+      var P = po.pat, pz = po.puerta, k = ctx.keys(), mx = 0, mz = 0, q = { x: _pl.x, z: _pl.z }, R = 0.42;
+      if (k.w || k.arrowup) mz -= 1; if (k.s || k.arrowdown) mz += 1;
+      if (k.a || k.arrowleft) mx -= 1; if (k.d || k.arrowright) mx += 1;
+      if (mx || mz) {
+        var n = Math.sqrt(mx * mx + mz * mz), sp = 6 * (walk.speed || 1) * (k.shift ? 5 : 1) * dt, yl = angulo(walk.yaw - po.m.yaw);
+        mx /= n; mz /= n;
+        var fx = -Math.sin(yl), fz = -Math.cos(yl), rx = Math.cos(yl), rz = -Math.sin(yl);
+        q.x += (fx * -mz + rx * mx) * sp; q.z += (fz * -mz + rz * mx) * sp;
+      }
+      var solidos = [{ x0: -po.hw, x1: po.hw, z0: -po.hd, z1: P.z0 + 0.2 }, { x0: pz.px - pz.dw / 2, x1: pz.px + pz.dw / 2, z0: P.z0, z1: pz.zo }];
+      if (P.cerradoA) solidos.push({ x0: -po.hw, x1: P.x0, z0: -po.hd, z1: po.hd });
+      if (P.cerradoB) solidos.push({ x0: P.x1, x1: po.hw, z0: -po.hd, z1: po.hd });
+      empuja(q, R, solidos);
+      aMundo(po.m, q.x, q.z, _w);
+      walk.pos.x = _w.x; walk.pos.z = _w.z; walk.pos.y = MU.groundH(_w.x, _w.z); walk.fly = 0;
+      medidas.pasosPatio++;
+      return true;
+    }
+
+    // ---- La cámara dentro, la vista por la puerta y la puerta automática ------------------
+    var modoPuerta = false, _fr = new THREE.Frustum(), _pm = new THREE.Matrix4(), _vm = new THREE.Matrix4(), _cq = new THREE.Quaternion(), _ce = new THREE.Euler(0, 0, 0, 'YXZ'), _cv = new THREE.Vector3(), _bx = new THREE.Box3(), _bp = new THREE.Vector3();
+    var CERCA_DENTRO = 0.05, LEJOS_CIEGO = 90;
+    /** El ojo, en el marco local del edificio (x, z) y en cota de mundo (y). */
+    function ojoLocal() { aLocal(casa.m, walk.pos.x, walk.pos.z, _l); return { x: _l.x, z: _l.z, y: walk.pos.y + walk.fly + ctx.EYE }; }
+    /** ¿Se ve algún hueco a la ciudad desde aquí? Prueba conservadora: la caja de cada hueco, 0,3 m más ancha, contra el tronco de la cámara. */
+    function huecoALaVista(E) {
+      var ab = E && E.aberturas; if (!ab || !ab.length) return false;
+      var cam = ctx.camera, i, j, w = {};
+      _ce.set(walk.pitch, walk.yaw, 0, 'YXZ'); _cq.setFromEuler(_ce);
+      _cv.set(walk.pos.x, walk.pos.y + walk.fly + ctx.EYE, walk.pos.z);
+      _vm.compose(_cv, _cq, _s.set(1, 1, 1)).invert();
+      _fr.setFromProjectionMatrix(_pm.multiplyMatrices(cam.projectionMatrix, _vm));
+      for (i = 0; i < ab.length; i++) {
+        var a = ab[i]; _bx.makeEmpty();
+        for (j = 0; j < 4; j++) {
+          aMundo(casa.m, j & 1 ? a.x1 + 0.3 : a.x0 - 0.3, j & 2 ? a.z1 + 0.3 : a.z0 - 0.3, w);
+          _bx.expandByPoint(_bp.set(w.x, casa.m.oy + E.yb + a.y0 - 0.3, w.z)); _bx.expandByPoint(_bp.set(w.x, casa.m.oy + E.yb + a.y1 + 0.3, w.z));
+        }
+        if (_fr.intersectsBox(_bx)) return true;
+      }
+      return false;
+    }
+    /**
+     * Cada cuadro, con el interior en la escena (gancho cuadro, que corre después
+     * de colocar la cámara y antes de dibujar):
+     *
+     * · Plano cercano a 5 cm. El visor lo pone a 0,3 m a pie, lo mismo que el radio
+     *   del jugador dentro: pegado a una pared y mirando en diagonal, el trozo de
+     *   pared más cercano quedaba por delante del plano cercano, se recortaba y por
+     *   el hueco se veía la ciudad. Con 5 cm, recortar la pared exigiría un campo
+     *   de visión de más de 160°. El búfer de profundidad es logarítmico: su
+     *   precisión depende del plano lejano, no del cercano.
+     *
+     * · La vista por la puerta: con el ojo fuera de la cara de la caja de la
+     *   puerta, `uPuerta` = 1 y la pasada de solo profundidad no se dibuja (ver el
+     *   sombreador); dentro, la de siempre.
+     *
+     * · Plano lejano a 90 m cuando ningún hueco a la ciudad cae en el tronco de la
+     *   cámara (mirando a una pared, dentro de la cabina): lo que queda más allá no
+     *   se envía a la tarjeta. Con un hueco a la vista, el plano lejano del visor.
+     *
+     * · Las hojas de la puerta de la calle se abren al acercarse (a menos de 2,6 m
+     *   del hueco, en la planta baja) y mientras se entra o se sale, a 2 m/s.
+     */
+    function camaraDentro(dt) {
+      if (!casa || S.mode !== 'walk' || S.xr) return;
+      var cam = ctx.camera, pz = casa.po.puerta, o = ojoLocal(), E = espacioActual(), i, j;
+      var fuera = !casa.entrado || !!seq ? o.z > pz.zo - 0.02 : false;
+      if (fuera !== modoPuerta) {
+        modoPuerta = fuera;
+        var todos = [casa.bajo, casa.planta, casa.cabina];
+        for (i = 0; i < todos.length; i++) if (todos[i]) for (j = 0; j < todos[i].mallas.length; j++) if (todos[i].mallas[j].userData.fondo) todos[i].mallas[j].visible = !fuera;
+      }
+      UNI.uPuerta.value = fuera ? 1 : 0;
+      DESP_CAB.value = casa.cabY;
+      UNI.uCamL.value.set(o.x, o.y - casa.m.oy, o.z);
+      if (fuera) {
+        UNI.uSueloPuerta.value = casa.po.suelo;
+        UNI.uPuA.value.set(pz.px, pz.dw / 2, pz.dh, pz.zo + 0.005);
+        UNI.uPuB.value.set(pz.px, pz.vw, Math.min(pz.vh, 3.75), pz.vz + 0.005);
+      }
+      casa.grupo.visible = true;
+      cam.near = CERCA_DENTRO;
+      medidas.lejosCiego = false;
+      if (!fuera && casa.entrado && !huecoALaVista(E)) { cam.far = LEJOS_CIEGO; medidas.lejosCiego = true; }
+      cam.updateProjectionMatrix();
+      // La puerta automática.
+      var B = casa.bajo, h = B && B.hojas;
+      if (h) {
+        var cerca = casa.visible === B || !casa.entrado;
+        if (congelado) return;
+        var abrir = (seq && (!casa.entrado || seq.salida)) || (cerca && Math.abs(o.x - h.x) < h.ancho / 2 + 1.6 && Math.abs(o.z - B.salida.z) < 2.6);
+        casa.abre = clamp((casa.abre || 0) + (abrir ? 1 : -1) * dt * 2 / Math.max(h.ancho / 2, 0.5), 0, 1);
+        mats().dec.uniforms.uAbre.value = UT.smoothstep(casa.abre) * (h.ancho / 2 - 0.02);
+      }
     }
 
     // ---- Mirar, interactuar -------------------------------------------------------------------
@@ -1428,7 +1711,8 @@
     function pintaHud() {
       if (!hud) return;
       var lineas = null, boton = false;
-      if (casa && (casa.entrado || seq)) lineas = lineasDentro();
+      if (casa && casa.entrado) lineas = lineasDentro();
+      else if (casa) lineas = ['<b>' + escapa(nombrePortal(casa.po)) + '</b>'];                  // cruzando el patio o la puerta: todavía en la calle
       else if (cercano && !S.xr && S.mode === 'walk') lineas = ['<b>F · ' + escapa(t('Entrar')) + '</b>', escapa(nombrePortal(cercano.po))];
       if (casa && casa.visible && casa.visible.muebles.length && casa.entrado && !seq) boton = true;
       var html = lineas ? lineas.join('<br>') : '';
@@ -1473,14 +1757,22 @@
     // 9. GANCHOS
     // =====================================================================================
     function puedeEntrar() { return S.ready && S.mode === 'walk' && !S.xr && walk.fly < 2; }
-    function visibilidadTransito() {
-      // Mientras se cruza la puerta el interior se dibuja solo con la cámara ya en
-      // el hueco (la envolvente se pinta con la prueba «siempre»: vista desde la
-      // calle se vería a través de la fachada).
-      if (!casa) return;
-      if (casa.entrado) { casa.grupo.visible = true; return; }
-      var p = posLocal(), pz = casa.po.puerta;
-      casa.grupo.visible = p.z < pz.zf + 0.6 && Math.abs(p.x - pz.px) < casa.plan.hueco / 2 + 0.6;
+    /**
+     * El edificio de la parcela ha cambiado de altura (activos, pendiente): el plan
+     * (plantas, ático, unidades) es otro. Se rehace el interior; quien estaba en un
+     * piso sube al que le toca ahora, y quien estaba abajo sigue donde estaba.
+     */
+    function reabre(po) {
+      if (seq || !casa.entrado) return salirYa();
+      var enPlanta = casa.visible && casa.visible !== casa.bajo, p = posLocal(), q = { x: p.x, z: p.z }, yl = yawLocal(), pit = walk.pitch;
+      cierraCasa();
+      abreCasa(po, {});
+      casa.entrado = true; casa.grupo.visible = true; medidas.reaperturas++;
+      if (enPlanta && casa.cabina) { tomaAscensor(casa.piso, true); return true; }
+      var E = casa.bajo, L = E.limites;
+      empuja(q, R_JUGADOR, solidosDe(E));
+      ponLocal(clamp(q.x, L.x0 + 0.35, L.x1 - 0.35), clamp(q.z, L.z0 + 0.35, L.z1 - 0.35), E.yb); ponYawLocal(yl); walk.pitch = pit;
+      return true;
     }
     var ganchos = {
       listo: function () { creaHud(); indexaBarrios(); indexaParcelas(); },
@@ -1489,13 +1781,17 @@
         if (casa && casa.po.tipo === 'parcela') {                                             // la parcela ha cambiado: fuera si ya no es el mismo edificio
           var nuevo = porId[casa.po.id];
           if (!nuevo || nuevo.arch !== casa.po.arch || Math.abs(nuevo.o.y - casa.po.o.y) > 0.01) salirYa();
-          else { nuevo = porId[casa.po.id]; casa.po.pc = nuevo.pc; }
+          else if (Math.abs((nuevo.alto || 0) - (casa.po.alto || 0)) > 0.01) reabre(nuevo);       // otra altura: otro plan
+          else {
+            casa.po.pc = nuevo.pc;                                                            // el mismo edificio: dueño, venta y unidades al día
+            if (!seq && casa.entrado && casa.visible === casa.bajo && casa.cabina) casa.piso = eligePiso(casa.plan);
+          }
         }
       },
       calidad: function () { cercano = null; },
       andar: function (dt) {
-        if (!casa) return false;
-        if (seq) { avanza(dt); if (casa) visibilidadTransito(); return true; }
+        if (!casa) return andaPatio(dt);
+        if (seq) { if (!congelado) avanza(dt); return true; }
         if (!casa.entrado) { cierraCasa(); return false; }
         andaDentro(dt);
         return true;
@@ -1505,7 +1801,8 @@
         if (!casa && puedeEntrar()) {
           if (tBusca >= PASO_BUSCA) { tBusca = 0; cercano = buscaCercano(); }
         } else if (!casa) cercano = null;
-        if (casa) { visibilidadTransito(); if (seq && S.mode !== 'walk') salirYa(); }
+        if (casa && seq && S.mode !== 'walk') salirYa();
+        camaraDentro(dt);
         pintaHud();
       },
       tecla: function (k, e, abajo) {
@@ -1567,10 +1864,14 @@
         var E = espacioActual(), mallas = 0, tri = 0, i;
         if (casa) {
           var lista = [casa.bajo, casa.planta, casa.cabina];
-          for (i = 0; i < lista.length; i++) if (lista[i] && lista[i].grupo.visible) { mallas += lista[i].mallas.length + (lista[i].mMuebles ? 1 : 0); tri += lista[i].triangulos + (lista[i].trianMuebles || 0); }
+          for (i = 0; i < lista.length; i++) if (lista[i] && lista[i].grupo.visible) {
+            for (var j = 0; j < lista[i].mallas.length; j++) if (lista[i].mallas[j].visible) { mallas++; tri += cuentaTriangulos([lista[i].mallas[j]]); }
+            if (lista[i].mMuebles) { mallas++; tri += lista[i].trianMuebles || 0; }
+          }
           if (!casa.grupo.visible) { mallas = 0; tri = 0; }
         }
-        o.umbral = { portales: portales.length, dentro: !!casa, espacio: E ? E.nombre : 'fuera', mallas: mallas, triangulos: tri,
+        o.umbral = { portales: portales.length, patios: medidas.patios, dentro: !!casa, espacio: E ? E.nombre : 'fuera', mallas: mallas, triangulos: tri,
+          vistaPorLaPuerta: modoPuerta, lejosCiego: !!(casa && medidas.lejosCiego), cerca: casa ? CERCA_DENTRO : null, pasosPatio: medidas.pasosPatio, reaperturas: medidas.reaperturas,
           msBusqueda: +medidas.msBusqueda.toFixed(4), msBusquedaMax: +medidas.msBusquedaMax.toFixed(4), msBusquedaMedia: medidas.busquedas ? +(medidas.msBusquedaTotal / medidas.busquedas).toFixed(4) : 0, busquedas: medidas.busquedas, msIndice: +medidas.msIndice.toFixed(2), msConstruir: +medidas.msConstruir.toFixed(2) };
       },
       soltar: function () {
@@ -1589,7 +1890,8 @@
       return q.po || q;
     }
     function resumenPortal(po) {
-      return po ? { id: po.id, tipo: po.tipo, nombre: nombrePortal(po), x: po.D.x, z: po.D.z, llegada: { x: po.A.x, z: po.A.z }, yaw: po.yaw, patio: po.patio, dibujado: dibujado(po), interior: tipoInterior(po) } : null;
+      return po ? { id: po.id, tipo: po.tipo, nombre: nombrePortal(po), x: po.D.x, z: po.D.z, llegada: { x: po.A.x, z: po.A.z }, yaw: po.yaw, patio: po.patio, dibujado: dibujado(po), interior: tipoInterior(po),
+        origen: { x: po.o.x, y: po.o.y, z: po.o.z }, local: { px: po.puerta.px, zf: po.puerta.zf, zo: po.puerta.zo, hw: po.hw, hd: po.hd, patio: po.pat || null } } : null;
     }
     ganchos.publico = {
       version: 1,
@@ -1650,6 +1952,8 @@
         return false;
       },
       accion: function () { return accion(objetivo()); },
+      /** Para las pruebas: congela el recorrido guiado y la puerta automática (las capturas por software tardan segundos en dibujarse). */
+      congelar: function (si) { congelado = !!si; return congelado; },
       luz: function (i, on) { return conmuta(i, on); },
       seleccionar: function (id) { var E = casa && casa.visible, i; if (!E) return false; if (!id) return selecciona(null); for (i = 0; i < E.muebles.length; i++) if (E.muebles[i].id === id) return selecciona(E.muebles[i]); return false; },
       mover: function (adelante, derecha) { return mueveSel(adelante | 0, derecha | 0); },
@@ -1666,7 +1970,7 @@
           if (pl.plantas && pl.upp) { plantas += pl.plantas.length; unidades += pl.plantas.length * pl.upp; }
           if (tipoInterior(portales[i]) === 'torre' && pl.tipo === 'villa') sinPlantas++;
         }
-        return { portales: portales.length, interiores: cuenta, torresSinPlantaLibre: sinPlantas, plantas: plantas, unidades: unidades, fallos: fallos, ms: +(performance.now() - t0).toFixed(1) };
+        return { portales: portales.length, barriosSinPuerta: medidas.barriosSinPuerta, patios: medidas.patios, interiores: cuenta, torresSinPlantaLibre: sinPlantas, plantas: plantas, unidades: unidades, fallos: fallos, ms: +(performance.now() - t0).toFixed(1) };
       }
     };
     return ganchos;

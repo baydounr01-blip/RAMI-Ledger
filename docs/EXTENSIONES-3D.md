@@ -89,6 +89,11 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
   `cuerpoVilla`, `parcelaPartes`, `edificioPartes`), `carGeometry`,
   `avatarBodyGeometry`, `avatarLimbGeometry`, `palmGeometry`, las mallas
   instanciadas (`inst`, `place`, `finish`, `ensureCap`) y la paleta (`colores`).
+  En `colores` están también los tonos con los que el catálogo marca dos piezas
+  del portal, `PUERTA` (la caja de la puerta) y `VIDRIERA` (el cristal del
+  vestíbulo): el módulo «umbral» encuentra con ellos la puerta de cada edificio
+  en la lista de piezas, así que cambiar un tono en el núcleo no deja la ciudad
+  sin portales.
 - **Mundo** (`ctx.mundo`): `surfaceH`, `groundH`, `coarseH`, `insideMap`, la
   cuadrícula (`cellWorld`, `cellLocal`, `worldToCell`, `localToWorld`,
   `worldToLocal`, `latLonToCell`, `cellLatLon`, `rotOff`, `gridYaw`),
