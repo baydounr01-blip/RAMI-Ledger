@@ -147,17 +147,33 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
 
 - `handle.stats().trafico`: coches, dibujados, cuántos ceden y cuántos esperan
   ante un paso este cuadro, activaciones de la válvula de paciencia,
-  recolocados, rutas y pasos de peatones.
+  recolocados, desatascos (coches de un ciclo de esperas recolocados), cuántos
+  están dando la vuelta, rutas y pasos de peatones.
 - `handle._debug.trafico`: `estado()`, `rutas()`, `vivo(bool)` (recolocar los
   coches lejanos), `paciencia(s)` (la válvula; `Infinity` la quita),
   `escenario([{ ruta, t, dir, carril, vel, vmax }, …])` (deja solo esos coches)
-  y `normal()`; `pose(c)` y `puntoCarril(R, t, lateral)`.
+  y `normal()`; `pose(c)`, `puntoCarril(R, t, lateral)`, `geo(c, cf, y)` (dónde
+  se cortan los carriles de dos coches en un cruce) y `banda(c, cf)` (la calzada
+  ajena por el carril de un coche y su parada).
 - Cada coche lleva `motivo`: lo que más lo frena en el cuadro (`fila`, `cede`,
   `cajaOcupada`, `cajaTapada`, `salidaTapada`, `glorieta`, `anillo`, `peaton`,
   `jugador`), y `causa`: el coche que lo frena, si lo frena un coche. Un
-  bloqueo mutuo sería un ciclo de coches parados siguiendo `causa`.
+  bloqueo mutuo sería un ciclo de coches parados siguiendo `causa`. Mientras
+  da la vuelta al final de su ruta, `vu` ≥ 0 son los metros de arco recorridos
+  del semicírculo (−1 si no la está dando); los centros de la vuelta de cada
+  ruta son `tc0` y `tc1` (metros desde su principio).
+- Cada cruce de una ruta (`R.conf`, tipo `cede` o `manda`) lleva su marco:
+  `sab` (la tangente propia por la normal de la otra ruta: ± el seno del
+  ángulo) y `cos`; con ellos el núcleo calcula dónde se cortan de verdad los
+  carriles de dos coches (en un cruce oblicuo, lejos del centro). `alc` es lo
+  que ocupa el cruce a lo largo de la ruta y `par` el mismo cruce visto desde
+  la otra.
 - `handle.ext.vida` (los peatones): `reloj()`, `fijaReloj(T)`, `posicion(i, T)`
   (función pura de los datos, `i` y `T`), `enLaCalle(T, x, z, radio)`,
   `persona(i)`, `viaje(id)`, `ruta(id)`, `pasosDe(id)`, `zona(i)`,
-  `dibujados()`, `limpia()`, `reconstruye()`, `enCalzada(x, z)`,
-  `diagnostico()`; `stats().ext.vida` con las cifras.
+  `paradas(i)` (las paradas del barrio i, con su bordillo), `dibujados()`,
+  `limpia()`, `reconstruye(porTrozos)` (de una vez, o por trozos como al
+  cambiar las parcelas), `reconstruyendo()`, `enCalzada(x, z)`,
+  `diagnostico()`; `stats().ext.vida` con las cifras (entre ellas
+  `construccionMs`, `trozos`, `trozoMaxMs`, `fasesMs` de la última construcción
+  y `aplazados`, los caminos que este cuadro dejó para el siguiente).

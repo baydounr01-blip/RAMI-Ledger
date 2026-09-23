@@ -327,15 +327,18 @@ cruzando por el mismo sitio.
 **Hecho en la v0.11.0:** los coches van por los carriles pintados (seis por
 sentido en una troncal, tres en una arteria, dos en una secundaria y en las
 calles de barrio de 13 a 18 m, uno en las de 10), por todas las calles —las del
-mapa y las de la trama—, ceden en los 4.049 cruces con ruta a los dos lados
-según quién manda en resuelveCruces, dan la vuelta a las glorietas por el
-anillo y se paran ante los pasos de peatones ocupados; la ruta se corta donde
-se corta la cinta. Los peatones (`city/vida.js`) son una función pura del
+mapa y las de la trama—, ceden en los 3.905 cruces con ruta a los dos lados
+según quién manda en resuelveCruces, mirando dónde se cortan de verdad sus
+carriles (en un cruce oblicuo, lejos del centro), dan la vuelta a las glorietas
+por el anillo, se paran ante los pasos de peatones ocupados, no se paran dentro
+de un cruce y, al final de su calle, dan la vuelta por un semicírculo de su
+carril; la ruta se corta donde se corta la cinta. Los peatones (`city/vida.js`) son una función pura del
 tiempo de Dubái: 28.470 personas con casa en las villas y los bloques, trabajo
 en las empresas de las parcelas (o, sin parcelas, en las torres y naves del
 barrio de oficinas más cercano), horario por semilla y camino por las aceras
-cruzando solo por los pasos; misma posición en dos navegadores para el mismo
-instante. Las cifras y lo que queda, en las notas de la versión.
+cruzando solo por los pasos; quien viene de lejos aparece en el bordillo de una
+parada del barrio o en el de delante de su portal; misma posición en dos
+navegadores para el mismo instante. Las cifras y lo que queda, en las notas de la versión.
 
 ### Entrega 7 — ESPEJISMO recortado · 8–10 sesiones
 

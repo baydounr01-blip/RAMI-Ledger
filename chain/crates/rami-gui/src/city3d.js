@@ -2828,12 +2828,21 @@
     var R_VIVO = 1000, COCHES_DIBUJO = 1400;     // dónde viven y hasta dónde se dibujan (se reajustan en buildTraffic)
     var RUTA_CELDA = 400;                        // rejilla para encontrar calles cerca de la cámara
     var TANGENTE_MIRA = 45;                      // la misma tangente suavizada que la cinta
-    var ANILLO_V = 8, VUELTA_V = 3.5;            // velocidad en el anillo y al dar la vuelta
+    var ANILLO_V = 8, VUELTA_V = 4;              // velocidad en el anillo y tope al dar la vuelta
+    var VUELTA_TRAMO_MIN = 40;                   // metros entre los dos centros de vuelta para retrasarlos
+    // Un cruce más oblicuo que esto (seno 0,2: 11,5°) se trata como si fuera de
+    // 11,5°: el carril ajeno se estiraría sin fin por el propio.
+    var CRUCE_SENO_MIN = 0.2;
+    var CRUCE_HOLGURA = 0.6;                     // metros de aire entre dos carrocerías que se cruzan
+    var POP_MIN = 0.5;                           // un coche recolocado aparece a más de POP_MIN·R_VIVO de la cámara
+    var ATASCO_S = 40;                           // segundos parado en un ciclo de esperas antes del desatasco
+    var _cajas = [];                             // los cruces por delante de un coche: [d0, d1, …] en metros de marcha
     // La válvula, 30 s: en diez minutos de hora punta con 800 coches, sin ella
     // 163 coches pasaban de un minuto parados esperando un hueco en la preferente
     // (ninguno en un ciclo de esperas: siempre había un coche en marcha al final
     // de la cadena); con 45 s, 2; con 30 s, ninguno.
     var CEDE_MARGEN = 0.8, CEDE_PACIENCIA = 30;  // segundos de margen en la ventana, y la válvula
+    var CORTESIA_ANTES = 10;                     // la preferente empieza a dejar hueco 10 s antes de la válvula
     var COCHE_GEO = null;
     /** Los carriles de un sentido: el centro de cada hueco entre las líneas pintadas. */
     function carrilesDe(calzada) {
@@ -2848,8 +2857,119 @@
     }
     /** La velocidad de crucero de una calle, en m/s, por su ancho. */
     function vmaxDe(calzada) { return calzada >= 40 ? 30 : (calzada >= 24 ? 21 : (calzada >= 15 ? 15 : 11)); }
+    /**
+     * Lo que ocupa un cruce a lo largo de la ruta, en metros desde su centro: la
+     * calzada ajena vista desde cualquier carril propio y con el coche entero (en
+     * un cruce oblicuo, mucho más que la calzada por el eje), o la línea de
+     * detención si queda más lejos. En la glorieta, la cuerda y dos metros.
+     */
+    function alcanceConf(R, cf) {
+      if (cf.tipo === 'gl') return cf.d + 2;
+      var as = Math.abs(cf.sab), co = Math.abs(cf.cos);
+      return Math.max(cf.lin || 0, (cf.otra.semi + (R.semi + COCHE_HW) * co) / as + COCHE_HL);
+    }
+    /**
+     * Dónde da la vuelta el coche al final de la ruta (ronda 1). Hasta ahora el
+     * coche frenaba en el extremo y se iba de lado al carril simétrico cruzando en
+     * diagonal todos los carriles de los dos sentidos, sin mirar a nadie: en diez
+     * minutos, 44 solapes entre coches de la misma ruta. Ahora la vuelta es un
+     * semicírculo alrededor de un centro común en el eje (`tc1` al final, `tc0` al
+     * principio): el coche del carril k gira con radio igual a la distancia de su
+     * carril al eje y acaba en el carril k del otro sentido. Los semicírculos de
+     * los distintos carriles son concéntricos y están a 3,5 m unos de otros, así
+     * que todos los carriles pueden dar la vuelta a la vez sin tocarse; dentro de
+     * un carril se sigue la fila (ordenaColas). La zona de la vuelta —el centro, el
+     * medio coche de detrás y el semicírculo exterior con la carrocería— no puede
+     * pisar un cruce ni un paso de peatones: el centro se retrasa hasta que quede
+     * libre. Sin sitio (una ruta corta llena de cruces), la vuelta va en los
+     * extremos igual que antes del ajuste (`vueltaLibre` = false).
+     */
+    function centrosVuelta(R) {
+      var rmax = R.carriles[R.carriles.length - 1], need = Math.sqrt((rmax + COCHE_HW) * (rmax + COCHE_HW) + COCHE_HL * COCHE_HL) + 1;
+      var z = [], i, tc1 = R.len - need, tc0 = need, cambio = true, it = 0;
+      R.alcMax = 0;
+      for (i = 0; i < R.conf.length; i++) { var e = R.conf[i].alc = alcanceConf(R, R.conf[i]); R.alcMax = Math.max(R.alcMax, e); z.push([R.conf[i].t - e, R.conf[i].t + e]); }
+      for (i = 0; i < R.cebras.length; i++) z.push([R.cebras[i].t - R.cebras[i].med - 1, R.cebras[i].t + R.cebras[i].med + 1]);
+      while (cambio && it++ < 60) {
+        cambio = false;
+        for (i = 0; i < z.length; i++) if (z[i][1] > tc1 - COCHE_HL - 2 && z[i][0] < tc1 + need) { tc1 = z[i][0] - need - 0.01; cambio = true; }
+      }
+      cambio = true; it = 0;
+      while (cambio && it++ < 60) {
+        cambio = false;
+        for (i = 0; i < z.length; i++) if (z[i][0] < tc0 + COCHE_HL + 2 && z[i][1] > tc0 - need) { tc0 = z[i][1] + need + 0.01; cambio = true; }
+      }
+      R.vueltaLibre = tc1 - tc0 >= VUELTA_TRAMO_MIN;
+      if (!R.vueltaLibre) { tc0 = need; tc1 = R.len - need; }
+      R.tc0 = tc0; R.tc1 = tc1;
+    }
+    /**
+     * Los tramos de cada vía que van montados sobre otra casi paralela (ronda 1).
+     * La trama de un barrio a veces cae a lo largo de una vía del mapa: la calle
+     * 203 del barrio 7 corre 900 m junto a la troncal de 42 m con los ejes a
+     * entre 1,5 y 19 m (menos de 15° entre ellas, así que resuelveCruces no ve
+     * cruce). Con tráfico por las dos, los coches se atravesaban (38 solapes en
+     * diez minutos junto a la glorieta 0). Un punto de una vía está «tapado» si
+     * a menos de lo que ocupan los carriles de las dos (el carril exterior de
+     * cada una, el medio ancho de dos coches y medio metro) hay un tramo de otra
+     * vía de más rango (a igualdad, de índice menor) que va a menos de 30° de
+     * ella. Por los tramos tapados no circula nadie; el dibujo no cambia.
+     * Devuelve, por vía, los intervalos [s0, s1] tapados (con 5 m de margen).
+     */
+    function tapadosDe(vias) {
+      var CEL = 64, idx = {}, v, j, cx, cz, out = [];
+      for (v = 0; v < vias.length; v++) {
+        var m = vias[v].muestras;
+        for (j = 0; j + 1 < m.length; j++) {
+          var x0 = Math.min(m[j].x, m[j + 1].x), x1 = Math.max(m[j].x, m[j + 1].x), z0 = Math.min(m[j].z, m[j + 1].z), z1 = Math.max(m[j].z, m[j + 1].z);
+          for (cx = Math.floor(x0 / CEL); cx <= Math.floor(x1 / CEL); cx++) for (cz = Math.floor(z0 / CEL); cz <= Math.floor(z1 / CEL); cz++) {
+            var key = cx + ':' + cz; (idx[key] || (idx[key] = [])).push(v, j);
+          }
+        }
+      }
+      function prio(a, b) { return vias[a].rango > vias[b].rango || (vias[a].rango === vias[b].rango && a < b); }
+      for (v = 0; v < vias.length; v++) {
+        var V = vias[v], tot = V.arco[V.arco.length - 1], lista = [], abierto = null, cV = carrilesDe(V.calzada), offV = cV[cV.length - 1], sp;
+        for (sp = 0; sp <= tot; sp += 5) {
+          var p = puntoArco(V.muestras, V.arco, sp), pa = puntoArco(V.muestras, V.arco, Math.max(0, sp - 5)), pb = puntoArco(V.muestras, V.arco, Math.min(tot, sp + 5));
+          var tx = pb.x - pa.x, tz = pb.z - pa.z, tl = Math.sqrt(tx * tx + tz * tz) || 1, tapa = false, q;
+          tx /= tl; tz /= tl;
+          for (cx = Math.floor((p.x - 40) / CEL); !tapa && cx <= Math.floor((p.x + 40) / CEL); cx++) for (cz = Math.floor((p.z - 40) / CEL); !tapa && cz <= Math.floor((p.z + 40) / CEL); cz++) {
+            var l = idx[cx + ':' + cz]; if (!l) continue;
+            for (q = 0; q < l.length; q += 2) {
+              var w = l[q]; if (w === v || !prio(w, v)) continue;
+              var W = vias[w], a = W.muestras[l[q + 1]], b = W.muestras[l[q + 1] + 1], dx = b.x - a.x, dz = b.z - a.z, ll = dx * dx + dz * dz; if (ll < 1e-6) continue;
+              var u = clamp(((p.x - a.x) * dx + (p.z - a.z) * dz) / ll, 0, 1), ex = a.x + dx * u - p.x, ez = a.z + dz * u - p.z;
+              var cW = carrilesDe(W.calzada), lim = offV + cW[cW.length - 1] + 2 * COCHE_HW + 0.5;
+              if (ex * ex + ez * ez > lim * lim) continue;
+              var sn = Math.abs(tx * dz - tz * dx) / Math.sqrt(ll);
+              if (sn < 0.5) { tapa = true; break; }
+            }
+          }
+          if (tapa) { if (abierto) abierto[1] = sp + 5; else { abierto = [sp - 5, sp + 5]; lista.push(abierto); } } else abierto = null;
+        }
+        out.push(lista);
+      }
+      return out;
+    }
+    /** Resta a unos intervalos [a, b] otros intervalos. */
+    function restaTramos(vv, quita) {
+      var out = vv.map(function (x) { return [x[0], x[1]]; }), i, k;
+      for (k = 0; k < quita.length; k++) {
+        var nuevo = [];
+        for (i = 0; i < out.length; i++) {
+          var a = out[i][0], b = out[i][1], qa = quita[k][0], qb = quita[k][1];
+          if (qb <= a || qa >= b) { nuevo.push([a, b]); continue; }
+          if (qa > a) nuevo.push([a, qa]);
+          if (qb < b) nuevo.push([qb, b]);
+        }
+        out = nuevo;
+      }
+      return out;
+    }
     function buildTrafficPaths() {
-      var vias = S.vias || [], rutas = [], porVia = [], v, i, k, R, cr = S.cruces || [];
+      var vias = S.vias || [], rutas = [], porVia = [], v, i, k, R, cr = S.cruces || [], tapados = tapadosDe(vias);
+      S.tapados = tapados;
       // Una ruta no acaba dentro de una glorieta: al final de la ruta el coche da
       // la vuelta, y dentro de la cuerda la vuelta lo llevaba de un salto a la
       // otra mitad del anillo, encima de quien estuviera allí. El tramo vivo que
@@ -2861,7 +2981,7 @@
       }
       for (v = 0; v < vias.length; v++) {
         porVia.push([]);
-        var V = vias[v], vv = V.vivos || [], cu = cuerdas[v] || [];
+        var V = vias[v], vv = restaTramos(V.vivos || [], tapados[v]), cu = cuerdas[v] || [];
         for (i = 0; i < vv.length; i++) {
           var s0 = vv[i][0], s1 = vv[i][1];
           for (k = 0; k < cu.length; k++) {
@@ -2893,8 +3013,19 @@
         // La ventana: lo que tarda el que cede en cruzar desde parado —de la línea
         // a dejar atrás, con el coche entero, la calzada de la otra— más un margen.
         var ven = Math.sqrt(2 * (c.lin + vias[c.may].calzada * 0.5 / c.sen + 2 * COCHE_HL) / COCHE_ACEL) + CEDE_MARGEN;
-        RB.conf.push({ tipo: 'cede', t: c.sMen - RB.s0, lin: c.lin, caja: c.caja, otra: RA, tOtra: c.sMay - RA.s0, cajaOtra: c.cajaMay, ventana: ven });
-        RA.conf.push({ tipo: 'manda', t: c.sMay - RA.s0, caja: c.cajaMay, otra: RB, tOtra: c.sMen - RB.s0, cajaOtra: c.caja });
+        var fB = { tipo: 'cede', t: c.sMen - RB.s0, lin: c.lin, caja: c.caja, otra: RA, tOtra: c.sMay - RA.s0, cajaOtra: c.cajaMay, ventana: ven };
+        var fA = { tipo: 'manda', t: c.sMay - RA.s0, caja: c.cajaMay, otra: RB, tOtra: c.sMen - RB.s0, cajaOtra: c.caja };
+        // El marco del cruce (v0.11.0, ronda 1): las dos tangentes suavizadas, las
+        // mismas con las que puntoCarril aparta los carriles. `sab` es la tangente
+        // propia por la normal ajena (±seno del ángulo) y `cos` el coseno. Con ellos,
+        // geoCruce saca dónde se cortan DE VERDAD los carriles de dos coches: en un
+        // cruce oblicuo, el carril a u metros del eje corta la otra calle u·cot θ
+        // más allá que el eje, y la caja medida por el eje no lo veía.
+        puntoCarril(RB, fB.t, 0, _pe); puntoCarril(RA, fA.t, 0, _px);
+        var sBA = -_pe.tx * _px.tz + _pe.tz * _px.tx, coAB = _pe.tx * _px.tx + _pe.tz * _px.tz;
+        if (Math.abs(sBA) < CRUCE_SENO_MIN) sBA = sBA < 0 ? -CRUCE_SENO_MIN : CRUCE_SENO_MIN;
+        fB.sab = sBA; fA.sab = -sBA; fB.cos = fA.cos = coAB; fB.par = fA; fA.par = fB;
+        RB.conf.push(fB); RA.conf.push(fA);
       }
       var ce = S.cebras || [];
       for (i = 0; i < ce.length; i++) {
@@ -2906,6 +3037,7 @@
       var celdas = {};
       for (i = 0; i < rutas.length; i++) {
         R = rutas[i]; R.conf.sort(porT); R.cebras.sort(porT);
+        centrosVuelta(R);
         for (k = 0; k <= R.len; k += RUTA_CELDA * 0.5) {
           var p = puntoArco(R.V.muestras, R.V.arco, R.s0 + k), key = Math.floor(p.x / RUTA_CELDA) + ':' + Math.floor(p.z / RUTA_CELDA);
           var l2 = celdas[key] || (celdas[key] = []), ult = l2.length ? l2[l2.length - 1] : null;
@@ -2933,14 +3065,28 @@
      * La pose de un coche: x, z, y, su dirección de marcha (fx, fz) y, si va por
      * una glorieta, su ángulo en el anillo. Dentro de la cuerda de la glorieta
      * no va recto por la isla: da la vuelta por el anillo, en el sentido en que
-     * el centro le queda a la izquierda —el de las agujas del reloj visto desde
-     * arriba, que es el de circular por la derecha—, del punto por el que entra
-     * al punto por el que sale; en los extremos, el radio se funde con el del
-     * carril para que no haya salto.
+     * el centro le queda a la izquierda —el contrario al de las agujas del reloj
+     * visto desde arriba con el norte arriba (x al este, z al sur: el ángulo
+     * atan2(z, x) decrece), que es el de circular por la derecha—, del punto por
+     * el que entra al punto por el que sale; en los extremos, el radio se funde
+     * con el del carril para que no haya salto.
+     *
+     * Dando la vuelta al final de la ruta (`c.vu` ≥ 0, ronda 1): por el
+     * semicírculo de radio `c.off` alrededor del punto del eje `c.vtc`, del carril
+     * k de su sentido (`c.ve`) al carril k del otro; `c.vu` son los metros de arco
+     * recorridos. El desvío que quedara se va apagando hacia el radio del carril.
      */
     function poseCoche(c) {
       var R = c.R, i, a = null, lat = c.dir * (c.off + c.desvio);
       c.anillo = -1;
+      if (c.vu >= 0) {
+        var ph = clamp(c.vu / c.off, 0, Math.PI), rho = c.off + c.desvio, e = c.ve, sn = Math.sin(ph), cs = Math.cos(ph);
+        puntoCarril(R, clamp(c.vtc + e * rho * sn, 0, R.len), e * rho * cs, _cq);
+        c.x = _cq.x; c.z = _cq.z;
+        c.fx = e * (cs * _cq.tx + sn * _cq.tz); c.fz = e * (cs * _cq.tz - sn * _cq.tx);
+        c.y = cotaVia(R.V, R.s0 + clamp(c.vtc + e * rho * sn, 0, R.len));
+        return c;
+      }
       for (i = 0; i < R.anillos.length; i++) if (Math.abs(c.t - R.anillos[i].t) < R.anillos[i].d) { a = R.anillos[i]; break; }
       if (a) {
         var g = S.glorietas[a.gl], lat0 = c.dir * c.off;
@@ -2974,22 +3120,49 @@
       }
       return { lista: out, total: total, x: fx, z: fz };
     }
-    /** Pone un coche en una calle cercana al foco: ruta, punto, sentido y carril salen de la serie del tráfico. */
-    function colocaCoche(c, cand, rnd) {
+    /**
+     * Pone un coche en una calle cercana al foco: ruta, punto, sentido y carril
+     * salen de la serie del tráfico. Nunca en la zona de la vuelta, dentro de un
+     * cruce ni encima de otro coche de su carril (`porRuta`, la lista por ruta).
+     * Con `ojo` (la cámara, al recolocar) tampoco a menos de POP_MIN·R_VIVO de
+     * ella: la revisión contó 50 coches en diez minutos que aparecían de golpe a
+     * menos de 250 m del foco. Sin `ojo` (al montar el tráfico) el último intento
+     * vale aunque no cumpla; al recolocar, si ninguno cumple, el coche espera al
+     * turno siguiente.
+     */
+    function colocaCoche(c, cand, rnd, ojo, porRuta) {
       if (!cand.lista.length) return false;
-      var intento, e, k;
-      for (intento = 0; intento < 6; intento++) {
+      var intento, e, k, j, N = 12;
+      for (intento = 0; intento < N; intento++) {
         var pick = rnd() * cand.total;
         for (k = 0; k < cand.lista.length - 1 && cand.lista[k].acc < pick; k++) {}
         e = cand.lista[k];
-        var t = e.a + rnd() * (e.b - e.a), R = e.R;
-        var p = puntoArco(R.V.muestras, R.V.arco, R.s0 + t);
-        if ((p.x - cand.x) * (p.x - cand.x) + (p.z - cand.z) * (p.z - cand.z) > R_VIVO * R_VIVO && intento < 5) continue;
-        c.R = R; c.t = t; c.dir = rnd() < 0.5 ? 1 : -1;
-        c.k = Math.min(R.carriles.length - 1, Math.floor(rnd() * R.carriles.length)); c.off = R.carriles[c.k];
+        var t = e.a + rnd() * (e.b - e.a), R = e.R, dir = rnd() < 0.5 ? 1 : -1, kk = Math.min(R.carriles.length - 1, Math.floor(rnd() * R.carriles.length));
+        var ultimo = !ojo && intento === N - 1;
+        // Lejos de los centros de vuelta: un coche puesto a un metro del centro
+        // empezaba a girar en el cuadro siguiente encima del que ya giraba.
+        var mv = 2 * COCHE_HL + COCHE_FRENO + 4;
+        if (t < R.tc0 + mv || t > R.tc1 - mv) { if (!ultimo) continue; t = clamp(t, R.tc0 + mv, Math.max(R.tc0 + mv, R.tc1 - mv)); }
+        var p = puntoArco(R.V.muestras, R.V.arco, R.s0 + t), mal = false;
+        if ((p.x - cand.x) * (p.x - cand.x) + (p.z - cand.z) * (p.z - cand.z) > R_VIVO * R_VIVO) mal = true;
+        if (!mal && ojo && (p.x - ojo.x) * (p.x - ojo.x) + (p.z - ojo.z) * (p.z - ojo.z) < POP_MIN * POP_MIN * R_VIVO * R_VIVO) mal = true;
+        // Ni dentro de un cruce ni a menos de su distancia de frenado (y 15 m)
+        // antes de uno: un coche que aparece a 24 m/s a veinte metros de un cruce
+        // no ve a tiempo al que ya lo está cruzando.
+        var v0 = R.vmax * 0.8, fr = v0 * v0 / (2 * COCHE_DECEL) + 15;
+        for (j = 0; !mal && j < R.conf.length; j++) { var dd = (R.conf[j].t - t) * dir; if (dd > -R.conf[j].alc - COCHE_HL && dd < R.conf[j].alc + COCHE_HL + fr) mal = true; }
+        var fila = porRuta && porRuta[R.id];
+        if (fila) for (j = 0; !mal && j < fila.length; j++) {
+          var o = fila[j];
+          if (o !== c && !o.fuera && o.vu < 0 && o.dir === dir && o.k === kk && Math.abs(o.t - t) < 2 * COCHE_HL + COCHE_FRENO) mal = true;
+        }
+        if (mal && !ultimo) continue;
+        c.R = R; c.t = t; c.dir = dir;
+        c.k = kk; c.off = R.carriles[c.k];
         c.vmax = R.vmax * (0.85 + 0.15 * rnd()) * (1 - 0.03 * c.k);
-        c.vel = c.vmax * 0.8; c.desvio = 0; c.lado = 0; c.parado = 0; c.espera = 0; c.cede = null; c.conf = null; c.forzado = null; c.anillo = -1;
+        c.vel = c.vmax * 0.8; c.desvio = 0; c.lado = 0; c.parado = 0; c.espera = 0; c.cede = null; c.conf = null; c.forzado = null; c.anillo = -1; c.vu = -1;
         c.desvMin = 1.2 - c.off; c.desvMax = R.semi - 1.2 - c.off;
+        if (porRuta) (porRuta[R.id] || (porRuta[R.id] = [])).push(c);
         poseCoche(c);
         return true;
       }
@@ -3004,10 +3177,11 @@
       var f = focoTrafico(), cand = candidatasCerca(f.x, f.z, R_VIVO);
       // Sin calles cerca del foco (en el mar, en el desierto): en las de toda la ciudad.
       if (!cand.lista.length) cand = candidatasCerca(S.geo.worldW * 0.5, S.geo.worldH * 0.5, S.L);
+      var pr = {};
       for (i = 0; i < count; i++) {
-        var c = { i: i, hue: rnd(), col: new THREE.Color(), fuera: false };
+        var c = { i: i, hue: rnd(), col: new THREE.Color(), fuera: false, vu: -1 };
         c.col.setHSL(c.hue, c.hue < 0.3 ? 0.1 : 0.6, 0.55);
-        if (!colocaCoche(c, cand, rnd)) c.fuera = true;
+        if (!colocaCoche(c, cand, rnd, null, pr)) c.fuera = true;
         cars.push(c);
       }
       var m = new THREE.InstancedMesh(COCHE_GEO, plainMat, cars.length); m.frustumCulled = false; m.receiveShadow = true; m.name = 'traffic';
@@ -3015,7 +3189,7 @@
       m.instanceColor.needsUpdate = true; m.count = 0; m.visible = false;
       scene.add(m);
       S.traffic = { cars: cars, mesh: m, rnd: rnd, vivo: true, turno: 0, cand: cand, candClave: null, porRuta: {}, anillos: {},
-                    valvulas: 0, recolocados: 0, cediendo: 0, anteCebra: 0, dibujados: 0 };
+                    valvulas: 0, recolocados: 0, desatascos: 0, cediendo: 0, anteCebra: 0, dibujados: 0 };
     }
     /** Dónde está el que mira: los pies a pie y en VR, el centro de la órbita si no. */
     function focoTrafico() {
@@ -3101,47 +3275,193 @@
     /**
      * Por ruta, sentido y carril, cuánto hueco lleva cada coche hasta el de
      * delante (metros por la ruta) y quién es. El primero de la fila no tiene
-     * a nadie: la ruta ya no es un anillo, se acaba y el coche da la vuelta.
-     * De paso, qué coches hay en cada ruta y en cada glorieta.
+     * a nadie. De paso, qué coches hay en cada ruta y en cada glorieta.
+     *
+     * Un coche que da la vuelta (ronda 1) va en dos filas de su carril: en la de
+     * su sentido de llegada como el de delante de los que llegan detrás (en
+     * `vtc` + arco − (2·medio largo + 3) + COCHE_FRENO: el de detrás no entra en el
+     * semicírculo hasta que el de delante lleva 7,6 m de arco, y con un radio
+     * menor que 2,4 m, hasta que ha salido), y en la del sentido contrario como
+     * el de detrás de los que ya salieron (en `vtc` + lo que le falta de arco):
+     * de ahí toma él a su líder.
      */
     function ordenaColas(cars) {
-      var tr = S.traffic, grupos = {}, i, k, key, c;
+      var tr = S.traffic, grupos = {}, i, k, key, c, ent;
       tr.porRuta = {}; tr.anillos = {};
       for (i = 0; i < cars.length; i++) {
         c = cars[i]; if (c.fuera) continue;
-        key = c.R.id + ':' + c.dir + ':' + c.k; (grupos[key] || (grupos[key] = [])).push(c);
+        if (c.vu >= 0) {
+          var arco = Math.PI * c.off;
+          key = c.R.id + ':' + (-c.ve) + ':' + c.k; (grupos[key] || (grupos[key] = [])).push({ c: c, t: c.vtc + c.ve * (arco - c.vu), d: -c.ve, suyo: true });
+          key = c.R.id + ':' + c.ve + ':' + c.k; (grupos[key] || (grupos[key] = [])).push({ c: c, t: c.vtc + c.ve * (c.vu - 2 * COCHE_HL - 3 + COCHE_FRENO), d: c.ve, suyo: false });
+        } else {
+          key = c.R.id + ':' + c.dir + ':' + c.k; (grupos[key] || (grupos[key] = [])).push({ c: c, t: c.t, d: c.dir, suyo: true });
+        }
         (tr.porRuta[c.R.id] || (tr.porRuta[c.R.id] = [])).push(c);
         if (c.anillo >= 0) (tr.anillos[c.anillo] || (tr.anillos[c.anillo] = [])).push(c);
       }
       for (key in grupos) {
         if (!Object.prototype.hasOwnProperty.call(grupos, key)) continue;
         var g = grupos[key], n = g.length;
-        g.sort(function (a, b) { return a.t - b.t; });
+        g.sort(function (a, b) { return (a.t - b.t) || (a.c.i - b.c.i); });
         for (k = 0; k < n; k++) {
-          c = g[k];
-          var d = c.dir > 0 ? g[k + 1] : g[k - 1];
-          c.lider = d || null; c.hueco = d ? Math.abs(d.t - c.t) : 1e9;
+          ent = g[k]; if (!ent.suyo) continue;
+          var d = ent.d > 0 ? g[k + 1] : g[k - 1];
+          ent.c.lider = d ? d.c : null; ent.c.hueco = d ? Math.abs(d.t - ent.t) : 1e9;
         }
       }
     }
+    /** La velocidad en el semicírculo de la vuelta: 3 m/s² de aceleración lateral, entre 2 m/s y VUELTA_V. */
+    function vGiro(r) { return clamp(Math.sqrt(3 * r), 2, VUELTA_V); }
+    /** Segundos para recorrer `D` metros saliendo a `v0` y acelerando hasta `vmax`. */
+    function tiempoHasta(D, v0, vmax) {
+      if (D <= 0) return 0;
+      var t1 = Math.max(0, (vmax - v0) / COCHE_ACEL), d1 = v0 * t1 + 0.5 * COCHE_ACEL * t1 * t1;
+      if (D <= d1) return (-v0 + Math.sqrt(v0 * v0 + 2 * COCHE_ACEL * D)) / COCHE_ACEL;
+      return t1 + (D - d1) / Math.max(vmax, 0.5);
+    }
     /**
-     * ¿Tiene que ceder `c` en el cruce `cf`? Sí si hay alguien dentro de la caja de
-     * la preferente o si alguien que viene por ella llega a la caja antes de que
-     * `c` la haya cruzado desde parado (la ventana). Uno PARADO fuera de la caja
-     * no llega: está esperando a algo (gente en su paso, su fila), y si arranca
-     * mientras `c` cruza, no entrará en una caja ocupada (la preferente tampoco
-     * entra en una caja con alguien dentro).
+     * Dónde se cortan de verdad los carriles de dos coches en un cruce (ronda 1).
+     * Con el cruce como recta (las tangentes suavizadas del marco, `sab` y `cos`),
+     * el carril de `c` a u_c del eje y el de `y` a u_y se cortan en
+     * s_c = (u_y − u_c·cos)/sab por la ruta de `c` y en s_y = (u_c − u_y·cos)/(−sab)
+     * por la de `y`. Cada coche pisa el carril del otro mientras está a menos de
+     * `h` de ese punto: su medio largo más (medio ancho propio proyectado + medio
+     * ancho ajeno + holgura)/seno. Todo en metros «de marcha» de cada uno (crecen
+     * en su sentido, cero en el centro del cruce): `xc` y [a0, a1] para `c`, `xy`
+     * y [b0, b1] para `y`. En un cruce recto esto es la caja de siempre; en el
+     * oblicuo de 23° de la revisión, el carril exterior de una troncal de 42 m
+     * corta la calle de trama a 45 m del centro, y la caja por el eje acababa en 20.
+     */
+    var _g = { h: 0, xc: 0, a0: 0, a1: 0, xy: 0, b0: 0, b1: 0 };
+    function geoCruce(c, cf, y) {
+      var sab = cf.sab, co = cf.cos, as = Math.abs(sab);
+      var uc = c.dir * (c.off + c.desvio), uy = y.dir * (y.off + y.desvio);
+      var h = COCHE_HL + (COCHE_HW * Math.abs(co) + COCHE_HW + CRUCE_HOLGURA) / as;
+      var sc = (uy - uc * co) / sab * c.dir, sy = (uc - uy * co) / -sab * y.dir;
+      _g.h = h; _g.xc = (c.t - cf.t) * c.dir; _g.a0 = sc - h; _g.a1 = sc + h;
+      _g.xy = (y.t - cf.tOtra) * y.dir; _g.b0 = sy - h; _g.b1 = sy + h;
+      return _g;
+    }
+    /**
+     * La calzada ajena entera a lo largo del carril de `c`, en metros de marcha:
+     * entre x0 y x1 la carrocería de `c` (con la holgura de geoCruce) pisa esa
+     * calzada. Con ella, la línea de detención de cada carril (nunca más adentro
+     * que x0 − 1), dónde se para la cortesía y cuándo ha dejado atrás el cruce.
+     * Con la holgura, x0 queda antes que el principio del tramo que choca con
+     * cualquier carril ajeno (geoCruce, b0): el carril más exterior está a 1,5 m
+     * o más del borde de la calzada y el coche mide 1 m de medio ancho. Sin ella,
+     * un coche parado en x0 − 1 en un cruce oblicuo quedaba dentro del tramo de
+     * otro y los dos se esperaban un cuadro.
+     */
+    var _b = { x0: 0, x1: 0 }, _b2 = { x0: 0, x1: 0 };
+    function bandaCruce(c, cf, out) {
+      var sab = cf.sab, co = cf.cos, uc = c.dir * (c.off + c.desvio);
+      var W = cf.otra.semi + COCHE_HL * Math.abs(sab) + COCHE_HW * Math.abs(co) + CRUCE_HOLGURA;
+      var p = (-W - uc * co) / sab * c.dir, q = (W - uc * co) / sab * c.dir;
+      out.x0 = Math.min(p, q); out.x1 = Math.max(p, q);
+      return out;
+    }
+    /**
+     * ¿Es `c` el primero de su fila ante el cruce? Su líder (si lo tiene) ya ha
+     * dejado atrás la calzada ajena (`x1`, en metros de marcha de `c`). La válvula
+     * y la cortesía solo valen para él: forzar a uno del medio de la cola haría
+     * que la preferente esperase a alguien que no puede moverse. No hace falta
+     * que esté en la línea: a veces espera unos metros antes (el paso de peatones
+     * de otro cruce cae justo donde se pararía).
+     */
+    function primeroEnFila(c, cf, x1) {
+      var L = c.lider;
+      return !L || L.vu >= 0 || (L.t - cf.t) * c.dir > x1;
+    }
+    /** Dónde se para el centro de `c` ante el cruce que cede, en metros de marcha: la línea pintada o la calzada ajena, lo que llegue antes. */
+    function paradaCede(c, cf, out) {
+      bandaCruce(c, cf, out);
+      return Math.min(-cf.lin - COCHE_HL - 0.5, out.x0 - 1);
+    }
+    /**
+     * ¿Tiene que ceder `c` en el cruce `cf`? Coche a coche, con sus carriles
+     * (geoCruce): sí si `y` pisa ya el carril de `c`, o si llegará a pisarlo antes
+     * de que `c` haya dejado atrás el suyo —lo que tarda `c` desde donde está y a
+     * la velocidad que lleva, acelerando, más el margen—. Uno PARADO fuera no
+     * llega: está esperando a algo (gente en su paso, su fila), y si arranca
+     * mientras `c` cruza, frena por él (la preferente no entra en el carril de
+     * quien ya está cruzando: ver la rama «manda» de updateTraffic).
      */
     function debeCeder(c, cf) {
       var l = S.traffic.porRuta[cf.otra.id], i;
-      if (!l) return false;
+      if (!l) return null;
       for (i = 0; i < l.length; i++) {
-        var y = l[i], rel = cf.tOtra - y.t;
-        if (Math.abs(rel) < cf.cajaOtra + COCHE_HL + 1) return y;               // dentro
-        var d = rel * y.dir - cf.cajaOtra - COCHE_HL;                           // lo que le falta para entrar
-        if (d > 0 && y.vel >= 0.5 && d / Math.max(y.vel, 2) < cf.ventana) return y;
+        var y = l[i]; if (y === c || y.fuera || y.vu >= 0) continue;
+        var g = geoCruce(c, cf, y);
+        if (g.xy > g.b1) continue;                                              // ya pasó
+        if (g.xy >= g.b0) return y;                                             // dentro
+        if (y.vel < 0.5) continue;
+        var ta = (g.b0 - g.xy) / Math.max(y.vel, 2);
+        if (ta < tiempoHasta(g.a1 - g.xc, c.vel, c.vmax) + CEDE_MARGEN) return y;
       }
       return null;
+    }
+    /**
+     * La válvula solo se abre si nadie de la preferente pisa ya el carril y todos
+     * los que vienen pueden pararse antes de él. La revisión contó 39 solapes con
+     * un coche «forzado»: la válvula de antes metía el coche aunque viniera alguien
+     * dentro de su distancia de frenado.
+     */
+    function valvulaSegura(c, cf) {
+      var l = S.traffic.porRuta[cf.otra.id], i;
+      if (!l) return true;
+      for (i = 0; i < l.length; i++) {
+        var y = l[i]; if (y === c || y.fuera || y.vu >= 0) continue;
+        var g = geoCruce(c, cf, y);
+        if (g.xy > g.b1) continue;
+        if (g.xy >= g.b0) return false;
+        if (y.vel < 0.5) continue;
+        if (g.b0 - 1 - g.xy < y.vel * y.vel / (2 * COCHE_DECEL * 1.2) + 1) return false;
+      }
+      return true;
+    }
+    /**
+     * ¿Hay alguien en la otra ruta del cruce que obligue a parar a `c`? Siempre, el
+     * que ya pisa el carril de `c`. Si `c` va por la preferente (`manda`), además
+     * el que va a pisarlo: con el morro pasada su línea, forzado por la válvula,
+     * o que ya no puede pararse antes de su línea; y, por cortesía, el que lleva
+     * más de CEDE_PACIENCIA − CORTESIA_ANTES segundos esperando en su línea sin
+     * nada que le tape la salida, si `c` puede pararse con la deceleración
+     * normal: así, cuando se cumple la paciencia, ya se ha abierto el hueco que la
+     * válvula necesita en una preferente con tráfico continuo.
+     * Devuelve el más cercano y deja en `_ya.arco` los metros de marcha hasta
+     * donde `c` tiene que tener el centro, o null.
+     */
+    var _b3 = { x0: 0, x1: 0 };
+    function ocupaCarril(c, cf, manda) {
+      var l = S.traffic.porRuta[cf.otra.id], i, mejor = null, md = 1e9, xB0 = manda ? bandaCruce(c, cf, _b3).x0 : 0;
+      if (!l) return null;
+      for (i = 0; i < l.length; i++) {
+        var y = l[i]; if (y === c || y.fuera || y.vu >= 0) continue;
+        var g = geoCruce(c, cf, y), xc = g.xc, a0 = g.a0, xy = g.xy, b0 = g.b0, b1 = g.b1, pa = a0 - 1 - xc;
+        if (xc > a0 - 0.5 || xy > b1) continue;                                 // c ya no puede pararse antes; y ya pasó
+        var va = xy >= b0;
+        if (!va && manda) {
+          var cp = cf.par, yStop = paradaCede(y, cp, _b2);
+          va = y.forzado === cp || xy > yStop + 0.8 || (y.vel > 2 && yStop - xy < y.vel * y.vel / (2 * COCHE_DECEL * 1.5));
+          // La cortesía se decide una vez (con la deceleración normal) y se
+          // mantiene mientras el otro siga esperando: al frenar, la distancia
+          // que queda se acerca a v²/2a y la condición dejaría de cumplirse al
+          // cuadro siguiente, y el coche dudaría entre frenar y seguir.
+          // La cortesía para ANTES de la calzada ajena entera (x0 − 1), no solo
+          // del carril de ese coche: parado a medias podría quedar dentro del
+          // carril de otro que espera en el mismo cruce, y los dos se esperarían
+          // (en la prueba, en cuanto la cortesía paraba ante el carril, salieron
+          // ciclos de cuatro coches: dos que ceden y dos preferentes corteses).
+          if (!va && y.conf === cp && !y.tapa && y.vel < 0.5 && primeroEnFila(y, cp, _b2.x1) && y.espera > CEDE_PACIENCIA - CORTESIA_ANTES && xc < xB0 - 0.5 &&
+              (c.cortesia === y || xB0 - 1 - xc >= c.vel * c.vel / (2 * COCHE_DECEL) + 2)) { va = true; c.cortesia = y; pa = xB0 - 1 - xc; }
+        }
+        if (va && pa < md) { md = pa; mejor = y; }
+      }
+      if (!mejor) return null;
+      _ya.y = mejor; _ya.arco = md;
+      return _ya;
     }
     /** ¿Tiene que ceder `c` a la entrada de la glorieta? Al que va por el anillo y pasará por su entrada. */
     function debeCederAnillo(c, cf, wE) {
@@ -3191,16 +3511,25 @@
       }
       return false;
     }
-    /** El de delante está parado justo al otro lado del cruce: entrar sería quedarse dentro. */
-    function cajaTapada(c, cf, cajaSalida) {
+    /**
+     * El de delante está parado justo al otro lado del cruce: entrar sería
+     * quedarse dentro. `salida`: metros de marcha desde el centro hasta el borde
+     * del cruce por el carril de `c`; detrás tiene que caber el coche entero y 3 m.
+     */
+    function cajaTapada(c, tCruce, salida) {
       var L = c.lider;
-      return L && L.vel < 3 && (L.t - cf.t) * c.dir < cajaSalida + 2 * COCHE_HL + 3 ? L : null;
+      return L && L.vu < 0 && L.vel < 3 && (L.t - tCruce) * c.dir < salida + 2 * COCHE_HL + 3 ? L : null;
     }
     function updateTraffic(dt) {
       var tr = S.traffic; if (!tr || !tr.mesh) return;
       var i, j, jug = jugadorEnSuelo(), cars = tr.cars;
+      // La cámara, para no recolocar coches delante de ella ni dibujar los lejanos.
+      // (A pie la cámara cuelga del rig: se refresca la cadena para no leer la
+      // posición del cuadro anterior.)
+      camera.updateWorldMatrix(true, false);
+      _cp.setFromMatrixPosition(camera.matrixWorld);
       // Los coches viven cerca de quien mira: el que queda lejos se vuelve a poner
-      // en una calle cercana. Se miran unos pocos por cuadro, por turnos.
+      // en una calle cercana, lejos de la cámara. Se miran unos pocos por cuadro, por turnos.
       if (tr.vivo) {
         var f = focoTrafico(), clave = Math.floor(f.x / RUTA_CELDA) + ':' + Math.floor(f.z / RUTA_CELDA);
         if (clave !== tr.candClave) { tr.candClave = clave; tr.cand = candidatasCerca(f.x, f.z, R_VIVO); }
@@ -3209,7 +3538,7 @@
           for (j = 0; j < mira; j++) {
             var cc = cars[tr.turno = (tr.turno + 1) % cars.length];
             if (cc.fuera) continue;
-            if ((cc.x - f.x) * (cc.x - f.x) + (cc.z - f.z) * (cc.z - f.z) > lejos && colocaCoche(cc, tr.cand, tr.rnd)) tr.recolocados++;
+            if ((cc.x - f.x) * (cc.x - f.x) + (cc.z - f.z) * (cc.z - f.z) > lejos && colocaCoche(cc, tr.cand, tr.rnd, _cp, tr.porRuta)) tr.recolocados++;
           }
         }
       }
@@ -3226,9 +3555,18 @@
         // `c.causa`: el coche que lo frena, si es un coche (el de delante, el que
         // tiene preferencia, el que ocupa la caja). Con ella las pruebas buscan
         // ciclos de espera: un bloqueo mutuo es un ciclo de coches parados.
-        var causa = c.lider, yc;
+        var causa = c.lider, yc, xc;
         var mira2 = c.vel * c.vel / (2 * COCHE_DECEL) + 45;
-        if (jug && c.fx !== undefined) {
+        var gira = c.vu >= 0;
+        if (gira) {
+          // Dando la vuelta: sin desvío (el semicírculo es su carril) y sin cruces
+          // (la zona de la vuelta no pisa ninguno); solo la fila y el jugador.
+          vlim = Math.min(vlim, vGiro(c.off));
+          if (jug) {
+            var gx = jug.x - c.x, gz = jug.z - c.z, gal = gx * c.fx + gz * c.fz, gla = -gx * c.fz + gz * c.fx;
+            if (gal > 0 && gal < hueco && Math.abs(gla) < COCHE_HW + 0.6) { hueco = gal; motivo = 'jugador'; }
+          }
+        } else if (jug && c.fx !== undefined) {
           var dx = jug.x - c.x, dz = jug.z - c.z, al = dx * c.fx + dz * c.fz, la = -dx * c.fz + dz * c.fx;
           // El jugador por delante, dentro de la distancia de frenado: el coche
           // elige por qué lado pasarle. `lp` es dónde está el jugador respecto al
@@ -3255,16 +3593,21 @@
           }
         }
         if (!enVentana) c.lado = 0;
-        // Los cruces por delante, en orden: ceder, no taparle la caja a nadie, y
-        // la glorieta. Solo el primero en el que haya que pararse importa.
-        var conf = P.conf, cedeAqui = null, k0, k1, kk;
+        // Los cruces por delante: ceder, no taparle la caja a nadie, y la
+        // glorieta. Se miran todos los que caen dentro de lo que ve (en un cruce
+        // oblicuo, el carril de otro cruce más lejano puede llegar antes que el
+        // del primero) y manda la parada más corta; `cedeAqui` es su cruce.
+        var conf = gira ? [] : P.conf, cedeAqui = null, hConf = 1e9, mConf = '', yConf = null, k0, k1, kk, frena = c.vel * c.vel / (2 * COCHE_DECEL * 1.5) - 1, nCajas;
+        c.tapa = false; nCajas = 0;
         if (c.dir > 0) { k0 = 0; k1 = conf.length; kk = 1; } else { k0 = conf.length - 1; k1 = -1; kk = -1; }
         for (j = k0; j !== k1; j += kk) {
           var cf = conf[j], dC = (cf.t - c.t) * c.dir;
+          if (dC - P.alcMax > mira2) break;                            // ordenados por t: los demás, más lejos aún
+          if (dC - cf.alc > mira2) continue;
           if (cf.tipo === 'gl') {
             var dEnt = dC - cf.d;                                      // hasta la entrada del anillo
             if (dEnt < -2 * cf.d) continue;                            // ya la dejó atrás
-            if (dEnt > mira2) break;
+            if (dEnt > mira2) continue;
             if (dEnt <= 0) {                                           // dentro del anillo
               vlim = Math.min(vlim, ANILLO_V);
               // Por el anillo van coches de las dos vías: cada uno guarda la
@@ -3277,45 +3620,74 @@
             if (dEnt - COCHE_HL > 0.3) {
               puntoCarril(P, cf.t - c.dir * cf.d, c.dir * c.off, _pe);
               var gg = S.glorietas[cf.gl];
-              if ((yc = debeCederAnillo(c, cf, Math.atan2(_pe.z - gg.z, _pe.x - gg.x)) || cajaTapada(c, cf, cf.d))) {
+              if ((yc = debeCederAnillo(c, cf, Math.atan2(_pe.z - gg.z, _pe.x - gg.x)) || cajaTapada(c, cf.t, cf.d))) {
                 var hg = dEnt - 1.2 - COCHE_HL + COCHE_FRENO;
-                if (hg < hueco) { hueco = hg; motivo = 'glorieta'; causa = yc; }
-                cedeAqui = cf; break;
+                if (hg < hConf) { hConf = hg; mConf = 'glorieta'; yConf = yc; cedeAqui = cf; }
               }
             }
             continue;
           }
-          if (dC < -cf.caja - COCHE_HL) continue;                      // cruce ya pasado
+          // Cruce de dos calles: la calzada ajena por el carril de este coche
+          // (bandaCruce) y, coche a coche, dónde se cortan los carriles (geoCruce).
+          xc = -dC;
+          bandaCruce(c, cf, _b);
+          var x0 = _b.x0, x1 = _b.x1;
+          if (xc > x1) continue;                                       // cruce ya pasado
+          if (x0 - xc > mira2) continue;
+          if (x0 - xc > 0.5) { _cajas[nCajas++] = x0 - xc; _cajas[nCajas++] = x1 - xc; }
+          var alcSal = Math.max(cf.caja, x1 - COCHE_HL);               // del centro al borde de salida
+          var mm = '', dS = 0, oc;
           if (cf.tipo === 'cede') {
-            var dLin = dC - cf.lin;                                    // del centro del coche a la línea
-            if (dLin > mira2) break;
-            if (dLin < COCHE_HL - 0.3) { if (c.forzado === cf) c.forzado = null; continue; }   // el morro ya pasó la línea: cruza
-            // La válvula: tras CEDE_PACIENCIA segundos parado ante el mismo cruce,
-            // el coche se mete (la preferente no entra en una caja ocupada, así
-            // que frena por él) y ya no vuelve a ceder en ese cruce.
-            if (c.espera > CEDE_PACIENCIA && c.conf === cf && c.forzado !== cf) { c.forzado = cf; tr.valvulas++; }
-            var esperaVale = c.forzado === cf;
-            var mc = (yc = debeCeder(c, cf)) ? 'cede' : ((yc = cajaTapada(c, cf, cf.caja)) ? 'cajaTapada' : (salidaTapada(c, cf.t, cf.caja + 8) ? 'salidaTapada' : ''));
-            if (!esperaVale && mc) {
-              var hl = dLin - COCHE_HL - 0.5 + COCHE_FRENO;
-              if (hl < hueco) { hueco = hl; motivo = mc; causa = yc; }
-              cedeAqui = cf; break;
+            var xStop = Math.min(-cf.lin - COCHE_HL - 0.5, x0 - 1), dStop = xStop - xc;
+            if (xc > xStop + 0.8) {
+              // El morro ya pasó la línea: cruza. Pero no se mete en el carril de
+              // alguien que se ha quedado parado en medio, si le da para pararse.
+              if (c.forzado === cf) c.forzado = null;
+              if ((oc = ocupaCarril(c, cf, false)) && (oc.arco >= frena || c.vel < 4)) { mm = 'cajaOcupada'; dS = oc.arco; yc = oc.y; }
+            } else {
+              var tapa = (yc = cajaTapada(c, cf.t, alcSal)) ? 'cajaTapada' : (salidaTapada(c, cf.t, alcSal + 8) ? 'salidaTapada' : '');
+              c.tapa = c.tapa || !!tapa;
+              // La válvula: tras CEDE_PACIENCIA segundos parado en la línea del
+              // mismo cruce, el coche se mete si puede salir por el otro lado y si
+              // todos los que vienen por la preferente pueden pararse antes de su
+              // carril; ellos frenan por él (ocupaCarril). Solo se salta la cesión,
+              // no la salida tapada: forzado y parado dentro, la preferente
+              // esperaría a alguien que no se mueve.
+              if (tapa) { if (c.forzado === cf) c.forzado = null; }
+              else if (c.espera > CEDE_PACIENCIA && c.conf === cf && c.forzado !== cf && c.vel < 0.5 && primeroEnFila(c, cf, x1) && valvulaSegura(c, cf)) { c.forzado = cf; tr.valvulas++; }
+              mm = tapa; dS = dStop;
+              if (!mm && c.forzado !== cf && (yc = debeCeder(c, cf))) mm = 'cede';
             }
           } else {
-            // La preferente no cede, pero no entra en una caja ocupada por quien
-            // ya está cruzando, ni en una que no podría dejar libre.
-            var dCaja = dC - cf.caja - COCHE_HL - 1;
-            if (dCaja > mira2) break;
-            if (dCaja < 0) continue;                                   // ya dentro
-            var lo = S.traffic.porRuta[cf.otra.id], ocupada = null, q;
-            if (lo) for (q = 0; q < lo.length; q++) if (Math.abs(lo[q].t - cf.tOtra) < cf.cajaOtra + COCHE_HL) { ocupada = lo[q]; break; }
-            yc = ocupada || cajaTapada(c, cf, cf.caja);
-            var mm = ocupada ? 'cajaOcupada' : (yc ? 'cajaTapada' : (salidaTapada(c, cf.t, cf.caja + 8) ? 'salidaTapada' : ''));
-            if (mm) { if (dCaja + COCHE_FRENO < hueco) { hueco = dCaja + COCHE_FRENO; motivo = mm; causa = yc; } cedeAqui = cf; break; }
+            // La preferente no cede, pero no entra en el carril de quien ya está
+            // cruzando (o forzado, o sin sitio ya para pararse ante su línea), ni en
+            // un cruce que no podría dejar libre. Coche a coche: aunque esté ya
+            // sobre la calzada ajena, frena antes del carril del que cruza si le da.
+            if ((oc = ocupaCarril(c, cf, true)) && (oc.arco >= frena || c.vel < 4)) { mm = 'cajaOcupada'; dS = oc.arco; yc = oc.y; }
+            else if (xc < x0 - 0.5) {
+              // No entrar en un cruce que no podría dejar libre se decide antes de
+              // su propio paso de peatones: en los cruces de dos calles de barrio el
+              // paso de la preferente cae justo donde se pararía (x0 − 1), y quien
+              // se paraba encima tapaba a la gente que cruzaba. Si ya no le da
+              // para pararse antes del paso, sigue.
+              var dEntra = x0 - 1 - xc, q;
+              for (q = 0; q < P.cebras.length; q++) {
+                var dq = (P.cebras[q].t - c.t) * c.dir, mq = P.cebras[q].med;
+                if (dq + mq > 0 && dq - mq < x0 - xc + 1) dEntra = Math.min(dEntra, dq - mq - COCHE_HL - 1.5);
+              }
+              if (dEntra < -0.5) dEntra = x0 - 1 - xc;               // ya está sobre el paso: como antes, en el borde del cruce
+              if (dEntra >= frena || c.vel < 4) {
+                yc = cajaTapada(c, cf.t, alcSal);
+                mm = yc ? 'cajaTapada' : (salidaTapada(c, cf.t, alcSal + 8) ? 'salidaTapada' : '');
+                dS = dEntra;
+              }
+            }
           }
+          if (mm && dS + COCHE_FRENO < hConf) { hConf = dS + COCHE_FRENO; mConf = mm; yConf = yc; cedeAqui = cf; }
         }
+        if (cedeAqui && hConf < hueco) { hueco = hConf; motivo = mConf; causa = yConf; }
         // Los pasos de peatones ocupados, si le da para parar antes.
-        var ceb = P.cebras, ocu = S.cebraOcupada;
+        var ceb = gira ? [] : P.cebras, ocu = S.cebraOcupada;
         if (ocu && ceb.length) {
           if (c.dir > 0) { k0 = 0; k1 = ceb.length; kk = 1; } else { k0 = ceb.length - 1; k1 = -1; kk = -1; }
           for (j = k0; j !== k1; j += kk) {
@@ -3330,40 +3702,101 @@
             break;
           }
         }
-        // El final de la ruta: frena hasta la velocidad de dar la vuelta.
-        var dFin = c.dir > 0 ? P.len - c.t : c.t;
-        vlim = Math.min(vlim, Math.sqrt(VUELTA_V * VUELTA_V + 2 * COCHE_DECEL * Math.max(0, dFin - 2)));
+        // El final de la ruta: frena hasta la velocidad del semicírculo de la vuelta.
+        if (!gira) {
+          var dFin = c.dir > 0 ? P.tc1 - c.t : c.t - P.tc0;
+          vlim = Math.min(vlim, Math.sqrt(vGiro(c.off) * vGiro(c.off) + 2 * COCHE_DECEL * Math.max(0, dFin)));
+        }
+        // Ni encima de un paso de peatones: los pasos que tiene por delante entran
+        // en la misma lista (del morro a metro y medio del paso a la cola fuera de
+        // él). Sin esto, el preferente que esperaba ante un cruce de dos calles de
+        // barrio se paraba con el morro sobre su propio paso, y la gente que
+        // empezaba a cruzar después se le metía debajo (8 contactos en diez minutos
+        // junto a la glorieta 0).
+        if (!gira) for (j = 0; j < P.cebras.length; j++) {
+          var dcb = (P.cebras[j].t - c.t) * c.dir, mcb = P.cebras[j].med;
+          if (dcb - mcb - COCHE_HL - 0.5 > 0.5 && dcb - mcb < mira2) { _cajas[nCajas++] = dcb - mcb - COCHE_HL - 0.5; _cajas[nCajas++] = dcb + mcb - 1; }
+        }
+        // No pararse dentro de un cruce (ronda 1). Si lo que lo va a parar —un
+        // cruce más allá, un paso ocupado, el de delante ya lento— lo dejaría con
+        // la carrocería dentro de la calzada de otra calle que aún no ha pisado,
+        // se para antes de ella, si le da. En diez minutos de hora punta con 800
+        // coches salió una vez un bloqueo de verdad: una cola que se paró dentro
+        // de un cruce le tapó el paso a un preferente, que a su vez tapaba el
+        // cruce de al lado al primero de esa misma cola.
+        if (nCajas && (motivo !== 'fila' || (c.lider && c.lider.vel < 3))) {
+          // Se repite con la parada nueva: echarse atrás hasta el borde de un
+          // cruce puede dejar el coche encima del paso que tiene delante.
+          // La parada nueva solo vale si le da para pararse y si no lo deja
+          // encima de ningún paso, tampoco del que ya está pisando (ese no está
+          // en la lista): si no, se queda la de antes.
+          var dPara = hueco - COCHE_FRENO, dIni = dPara, antes, vuelta2, valida = true;
+          for (vuelta2 = 0; vuelta2 < 4; vuelta2++) {
+            antes = Infinity;
+            for (j = 0; j < nCajas; j += 2) if (dPara > _cajas[j] - 1 + 1e-6 && dPara < _cajas[j + 1] + COCHE_HL + 1 && _cajas[j] - 1 < antes) antes = _cajas[j] - 1;
+            if (antes === Infinity) break;
+            if (!(antes >= frena || c.vel < 4)) { valida = false; break; }
+            dPara = antes;
+          }
+          if (valida && dPara !== dIni) {
+            for (j = 0; j < P.cebras.length; j++) { var dq2 = (P.cebras[j].t - c.t) * c.dir; if (Math.abs(dPara - dq2) < P.cebras[j].med + COCHE_HL + 0.3) { valida = false; break; } }
+            if (valida) hueco = dPara + COCHE_FRENO;
+          }
+        }
         if (hueco >= c.hueco && motivo === 'fila' && c.hueco > D + COCHE_FRENO) { motivo = ''; causa = null; }
         if (motivo === 'jugador' || motivo === 'salidaTapada' || motivo === '') causa = null;
         c.motivo = motivo; c.causa = causa || null;
-        if (cedeAqui) { tr.cediendo++; if (c.conf !== cedeAqui) { c.conf = cedeAqui; c.espera = 0; } c.cede = cedeAqui; }
+        // La espera cuenta mientras está parado cediendo y solo vuelve a cero al
+        // moverse: con todos los cruces a la vista, el que más frena puede
+        // alternar entre dos cercanos, y poner la espera a cero en cada cambio
+        // dejaba la válvula sin abrirse nunca.
+        if (cedeAqui) { tr.cediendo++; c.conf = cedeAqui; c.cede = cedeAqui; }
         else { c.cede = null; if (c.vel > 1) c.conf = null; }
+        if (c.vel > 1) c.espera = 0;
         var meta = Math.min(vlim, c.vmax * Math.sqrt(clamp((hueco - COCHE_FRENO) / D, 0, 1)));
         c.vel = meta < c.vel ? Math.max(meta, c.vel - COCHE_DECEL * 1.5 * dt) : Math.min(meta, c.vel + COCHE_ACEL * dt);
         if (c.vel < 0.5) { c.parado += dt; if (c.cede) c.espera += dt; } else c.parado = 0;
         var desvioAntes = c.desvio;
-        // Tras dar la vuelta el coche cruza al carril de vuelta más deprisa.
-        var vLado = Math.abs(c.desvio) > 2.5 * c.off ? 6 : DESVIO_V;
-        c.desvio += clamp(quiere - c.desvio, -vLado * dt, vLado * dt);
-        c.t += c.vel * dt * c.dir * (c.anillo >= 0 ? c.kAnillo : 1);
-        if (c.t > P.len || c.t < 0) {
-          // Al final de la ruta, la vuelta: el carril de vuelta es el simétrico,
-          // así que el desvío arranca donde estaba el coche y se va a cero.
-          c.t = c.t > P.len ? 2 * P.len - c.t : -c.t;
-          c.dir = -c.dir; c.desvio = -2 * c.off - c.desvio; c.vel = Math.min(c.vel, VUELTA_V); c.lado = 0; c.forzado = null;
+        c.desvio += clamp(quiere - c.desvio, -DESVIO_V * dt, DESVIO_V * dt);
+        if (gira) {
+          c.vu += c.vel * dt;
+          if (c.vu >= Math.PI * c.off) {
+            // Vuelta hecha: carril k del otro sentido, desde el centro de la vuelta.
+            c.dir = -c.ve; c.t = clamp(c.vtc + c.dir * (c.vu - Math.PI * c.off), 0, P.len); c.vu = -1; c.forzado = null; c.conf = null;
+          }
+        } else {
+          c.t += c.vel * dt * c.dir * (c.anillo >= 0 ? c.kAnillo : 1);
+          if ((c.dir > 0 && c.t >= P.tc1) || (c.dir < 0 && c.t <= P.tc0)) {
+            // Empieza la vuelta: el arco que ya ha recorrido pasado el centro.
+            c.ve = c.dir; c.vtc = c.dir > 0 ? P.tc1 : P.tc0; c.vu = Math.abs(c.t - c.vtc); c.t = c.vtc; c.lado = 0; c.forzado = null;
+          }
         }
         poseCoche(c);
         // Al desviarse gira el morro lo que dicta su velocidad de lado: girar a
         // la derecha es girar en sentido horario visto desde arriba, o sea, yaw
         // negativo.
         c.yaw = Math.atan2(-c.fz, c.fx);
-        if (dt > 0 && c.anillo < 0) c.yaw -= Math.atan2((c.desvio - desvioAntes) / dt, Math.max(c.vel, 1));
+        if (dt > 0 && c.anillo < 0 && c.vu < 0) c.yaw -= Math.atan2((c.desvio - desvioAntes) / dt, Math.max(c.vel, 1));
       }
-      // Se dibujan los que quedan a menos de COCHES_DIBUJO de la cámara; los
-      // demás siguen vivos pero no se envían. (A pie la cámara cuelga del rig:
-      // se refresca la cadena para no leer la posición del cuadro anterior.)
-      camera.updateWorldMatrix(true, false);
-      _cp.setFromMatrixPosition(camera.matrixWorld);
+      // El desatasco (ronda 1): un coche parado más de ATASCO_S segundos que está
+      // en un ciclo de esperas (siguiendo `causa` se vuelve a él) no va a salir
+      // nunca. De los del ciclo, el más lejano a la cámara se recoloca lejos de
+      // ella, como los que se alejan. La regla de arriba (no pararse dentro de un
+      // cruce) los evita casi siempre: esto es la red de seguridad.
+      for (i = 0; i < cars.length; i++) {
+        var ca = cars[i]; if (ca.fuera || ca.parado < ATASCO_S) continue;
+        var cx = ca.causa, nq = 0, ciclo = false, peor = ca, dmax = (ca.x - _cp.x) * (ca.x - _cp.x) + (ca.z - _cp.z) * (ca.z - _cp.z);
+        while (cx && nq < 16) {
+          if (cx === ca) { ciclo = true; break; }
+          if (cx.vel >= 0.5 || cx.fuera) break;
+          var dq = (cx.x - _cp.x) * (cx.x - _cp.x) + (cx.z - _cp.z) * (cx.z - _cp.z);
+          if (dq > dmax) { dmax = dq; peor = cx; }
+          cx = cx.causa; nq++;
+        }
+        if (ciclo && tr.cand && tr.cand.lista.length && colocaCoche(peor, tr.cand, tr.rnd, _cp, tr.porRuta)) { tr.desatascos++; peor.causa = null; }
+      }
+      // Se dibujan los que quedan a menos de COCHES_DIBUJO de la cámara (`_cp`,
+      // leída al principio); los demás siguen vivos pero no se envían.
       var m = tr.mesh, n = 0, lim = COCHES_DIBUJO * COCHES_DIBUJO;
       for (i = 0; i < cars.length; i++) {
         var cd = cars[i]; if (cd.fuera) continue;
@@ -5327,7 +5760,8 @@
         var o = { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame, landmarks: S.landmarks.length, skyline: S.clusterTotal, solidos: S.catastro ? S.catastro.items.length : 0, trozosBarrio: S.trozosBarrio, trozosParcela: S.trozosParcela, ocultos: S.ocultos, trozosFantasma: S.trozosFantasma, avatars: S.avatarOrder.length, quality: qualityName, mode: S.xr ? 'vr' : S.mode, env: env, ext: {} };
         var trf = S.traffic;
         if (trf && trf.cars) o.trafico = { coches: trf.cars.length, dibujados: trf.dibujados || 0, cediendo: trf.cediendo || 0, anteCebra: trf.anteCebra || 0,
-          valvulas: trf.valvulas || 0, recolocados: trf.recolocados || 0, rutas: (S.trafficPaths || []).length, cebras: (S.cebras || []).length };
+          valvulas: trf.valvulas || 0, recolocados: trf.recolocados || 0, desatascos: trf.desatascos || 0,
+          girando: trf.cars.filter(function (c) { return !c.fuera && c.vu >= 0; }).length, rutas: (S.trafficPaths || []).length, cebras: (S.cebras || []).length };
         emitir('estadisticas', o.ext);
         return o;
       },
@@ -5404,18 +5838,21 @@
               if (!e) { c.fuera = true; continue; }
               var R = S.trafficPaths[e.ruta];
               c.fuera = false; c.R = R; c.t = e.t; c.dir = e.dir; c.k = Math.min(R.carriles.length - 1, e.carril || 0); c.off = R.carriles[c.k];
-              c.vmax = e.vmax || R.vmax; c.vel = e.vel === undefined ? c.vmax : e.vel; c.desvio = 0; c.lado = 0; c.parado = 0; c.espera = 0; c.cede = null; c.conf = null; c.forzado = null;
+              c.vmax = e.vmax || R.vmax; c.vel = e.vel === undefined ? c.vmax : e.vel; c.desvio = 0; c.lado = 0; c.parado = 0; c.espera = 0; c.cede = null; c.conf = null; c.forzado = null; c.vu = -1;
               c.desvMin = 1.2 - c.off; c.desvMax = R.semi - 1.2 - c.off; poseCoche(c);
             }
             tr.vivo = false; return Math.min(lista.length, tr.cars.length);
           },
           normal: function () {
             var tr = S.traffic, i; if (!tr || !tr.cars) return;
-            var f = focoTrafico(), cand = candidatasCerca(f.x, f.z, R_VIVO);
-            for (i = 0; i < tr.cars.length; i++) { tr.cars[i].fuera = false; if (!colocaCoche(tr.cars[i], cand, tr.rnd)) tr.cars[i].fuera = true; }
+            var f = focoTrafico(), cand = candidatasCerca(f.x, f.z, R_VIVO), pr = {};
+            for (i = 0; i < tr.cars.length; i++) { tr.cars[i].fuera = false; if (!colocaCoche(tr.cars[i], cand, tr.rnd, null, pr)) tr.cars[i].fuera = true; }
             tr.vivo = true;
           },
-          pose: function (c) { return poseCoche(c); }, puntoCarril: function (R, t, lat) { return puntoCarril(R, t, lat, {}); }
+          pose: function (c) { return poseCoche(c); }, puntoCarril: function (R, t, lat) { return puntoCarril(R, t, lat, {}); },
+          /** La geometría de un cruce entre dos coches (geoCruce) y la calzada ajena por el carril de uno (bandaCruce), copiadas. */
+          geo: function (c, cf, y) { var g = geoCruce(c, cf, y); return { h: g.h, xc: g.xc, a0: g.a0, a1: g.a1, xy: g.xy, b0: g.b0, b1: g.b1 }; },
+          banda: function (c, cf) { var o = {}; bandaCruce(c, cf, o); o.parada = cf.tipo === 'cede' ? paradaCede(c, cf, {}) : null; return o; }
         },
         ctx: ctx, extFallos: function () { return extFallos; } }
     };
