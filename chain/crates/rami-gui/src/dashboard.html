@@ -2097,7 +2097,9 @@
       var partes = r.vistas.map(function(v){
         return (nombres[v.vista] || v.vista) + ": " + v.fps + " fps (" + t("mín") + " " + v.fpsMin + ") · " + fmtNum(v.triangulos) + " " + t("triángulos") + " · " + v.llamadas + " " + t("llamadas");
       });
-      out.textContent = "🖥 " + r.gpu + " · " + t("calidad") + " " + r.calidad + " · " + r.ancho + "×" + r.alto + " · " + partes.join(" · ");
+      // Qué efectos de imagen se dibujaban (v0.11.0): sin eso la cifra no compara con nada.
+      var ef = (r.efectos && r.efectos.length) ? r.efectos.map(function(e){ return t(e); }).join(", ") : t("ninguno");
+      out.textContent = "🖥 " + r.gpu + " · " + t("calidad") + " " + r.calidad + " · " + r.ancho + "×" + r.alto + " · " + t("efectos") + ": " + ef + " · " + partes.join(" · ");
     }).catch(function(e){
       out.textContent = t("No se pudo medir") + ": " + ((e && e.message) || e);
     }).then(function(){ btn.disabled = false; });
