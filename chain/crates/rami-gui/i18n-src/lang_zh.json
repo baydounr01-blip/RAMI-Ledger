@@ -758,7 +758,6 @@
  "Aviso completo (NOTICE.md)": "完整声明（NOTICE.md）",
  "📋 Encargos: lo que la ciudad importa, por distrito": "📋 订单：城市按区进口的物资",
  "Cada bloque, el consenso calcula qué insumos necesita cada empresa y quema como importación lo que nadie ofrece en la ciudad. Esta lista lo reparte por el distrito de las empresas que lo necesitan. Es información de la economía de la simulación, en RAMI de prueba: no es una promesa de ingresos.": "每个区块，共识都会计算每家企业需要哪些投入品，并把城市里没有人提供的部分作为进口销毁。此列表按需要它的企业所在的区进行划分。这是模拟经济的信息，以测试用 RAMI 计：不是收入承诺。",
- "Los encargos salen de la economía de Dubái, que aún no rige en esta cadena: todavía no hay parcelas ni empresas.": "订单来自迪拜经济，而迪拜规则在这条链上尚未生效：目前还没有地块和企业。",
  "Falta": "缺少",
  "Distrito": "区",
  "Empresas que lo necesitan": "需要它的企业",

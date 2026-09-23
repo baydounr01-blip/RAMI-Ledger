@@ -1,3 +1,351 @@
+## Novedades de v0.11.0 — tu piso en el libro mayor, el portal que se abre y la calle con gente
+
+**Actualiza antes del 1 de marzo de 2027 (00:00 UTC).** Es la versión grande
+del plan del metaverso (`docs/METAVERSO.md`): cierra las entregas 5, 6, 7 y 8
+y lo que el plan dejaba en sus secciones 6 a 8 (el sonido, el día uno, las
+ideas que merecían entrar y el aviso siempre a la vista).
+
+- **Un cambio de consenso con fecha propia**, el tercero de RAMI-Chain: la
+  escritura de vivienda (`docs/VIVIENDA.md`), que rige desde el 1 de marzo de
+  2027 y solo donde rige Dubái. Hasta esa fecha la v0.11.0 valida los bloques
+  igual que la v0.10.16 y se habla con ella; desde ella, un binario v0.10.x se
+  queda, sin romperse, en el primer bloque con una transacción de vivienda.
+- **Todo lo demás es cliente 3D**: cinco módulos del visor en
+  `chain/crates/rami-gui/src/city/` (`umbral`, `vida`, `espejismo`, `extras` y
+  `memoria`) que se registran con `RamiCity3D.extend` y oyen sus ganchos —el
+  contrato está en `docs/EXTENSIONES-3D.md`—, más lo que tenía que ir en
+  `city3d.js`: carriles y cesión de paso, el catastro corregido, interiores
+  por paralaje y cascadas de sombra. Un módulo que falla no tumba el visor.
+- **Lo que no cambia**: el formato de ningún fichero, el protocolo de red, ni
+  la codificación y el txid de las 17 transacciones anteriores (fijados en un
+  test). Antes de la activación los edificios se entran igual: dentro se
+  enseña el piso de muestra o, al dueño de la parcela, su ático.
+
+Cada frente pasó por tres rondas de revisión adversarial con el código
+delante; lo que encontraron va al final.
+
+### La escritura de vivienda (entrega 8) — consenso, rige el 1 de marzo de 2027
+
+Hasta hoy, para acuñar algo en un edificio había que ser dueño de la parcela
+entera, de 650 metros de lado: para «tener tu piso» había que comprar la
+manzana. Era un defecto del consenso, no del cliente.
+
+- **Cuatro transacciones nuevas**, con etiquetas nuevas al final. `DivideParcel`
+  divide una parcela en 1 a 64 viviendas, una sola vez y solo por la comisión;
+  todas nacen del dueño. `TransferUnit` las regala, `SellUnit` las pone en
+  venta (precio 0 retira) y `BuyUnit` las compra: el precio entero al
+  vendedor, la comisión al minero, nada quemado y la operación en el mercado.
+  **Quien tiene una vivienda acuña activos en su parcela** (`MintAsset`).
+- **Dos topes**: 64 viviendas por parcela (262.144 como mucho en la ciudad) y
+  16 por cuenta en parcelas de otros; las de la propia no cuentan. Las
+  viviendas del dueño de una parcela en venta van con ella. Las cuatro
+  comprueban todo antes de tocar el estado: un rechazo no gasta el nonce ni
+  cobra la comisión.
+- **Activación**: 1 de marzo de 2027, 00:00 UTC (Unix 1 803 859 200), un bit
+  por bloque que no retrocede dentro de una rama, sin periodo mixto.
+  `Status.rule` anuncia 5, y en Red cada par que anuncie menos lleva el
+  motivo. En regtest, `--vivienda-desde <unix>` (con `--dubai-desde`) en
+  `rami-node`, `rami-wallet` y `rami-gui`.
+- **Nodo, monedero y panel.** La ficha de la parcela gana «Viviendas»
+  (dividir, transferir, vender y comprar, con el dueño por su nombre único) y
+  el formulario de acuñar sale también a quien tiene una vivienda. El mercado
+  gana el par `VIVIENDA_RAMI`; la terminal, `rami-wallet claim`, `divide`,
+  `unit-transfer`, `unit-sell` y `unit-buy`, que dicen el motivo si la
+  transacción no aplica. El visor ya lee `unidades` y `units` de `/api/city`.
+- **Ficheros.** Un binario v0.7.0–v0.10.16 no abre un directorio que ya tenga
+  bloques de vivienda (falla limpio en la línea, sin tocar el fichero), y eso
+  no se puede arreglar hacia atrás; **desde esta versión ya no pasa hacia
+  delante**: un bloque de una versión posterior se salta con un aviso que
+  nombra sus tipos, como por red. Un campo estropeado de un tipo conocido
+  sigue abortando con la línea.
+
+### El umbral y el apartamento (entrega 5)
+
+Cruzar el portal sin pantalla de carga y sin salir del mismo Dubái: el
+edificio en el que entras es el único hueco de la ciudad. Todo en
+`city/umbral.js`; del núcleo, una línea.
+
+- **Cada edificio tiene un portal que se abre.** A pie, a menos de 3 m de la
+  puerta y mirándola, sale «F · Entrar» con el nombre del edificio; F o un clic
+  en la puerta entra. La puerta se busca por su tono entre las piezas que
+  devuelve el propio catálogo, así que cada variante pone el portal donde lo
+  dibuja: de los 3.048 edificios de barrio medidos (antes de quitar los que
+  pisaban una vía), ninguno sin puerta. En los 416 en L o en U la puerta está
+  al fondo del patio, y el patio se anda.
+- **Se entra andando**: el zaguán aparece iluminado detrás de la puerta, las
+  hojas de vidrio se abren y un recorrido de un segundo lleva dentro. El
+  interior se construye en ese mismo cuadro (1,5–10,8 ms).
+- **Dentro**: zaguán con buzones numerados (uno por vivienda, hasta 64),
+  escalera y ascensor; recepción en los hoteles; en los concesionarios, un
+  coche sobre peana por cada activo coche de la parcela; la casa en planta
+  baja en las villas; estanterías y palés en las naves. El ascensor sube en
+  2,5–6 s, y el apartamento tiene salón, cocina, dormitorio y baño, con
+  **ventanas que son huecos de verdad**: por ellas se ve la ciudad que el
+  visor ya estaba dibujando, a la altura real del piso.
+- **Luces y muebles**: cada lámpara alumbra solo su habitación; un mueble se
+  mueve con las flechas en una rejilla de 0,25 m y se gira con R, y queda
+  guardado en el navegador. Lo que tiene una pared delante no se alcanza.
+- **De quién es cada piso** sale de la escritura: las viviendas ocupan las
+  plantas libres de abajo arriba, el ático es del dueño de la parcela mientras
+  no lleguen a él, y quien no tiene nada ve el piso de muestra. El aviso dice
+  la planta, el dueño y, si está en venta, el precio en RAMI.
+- **Cómo se dibuja**: primero la envolvente del interior solo en profundidad,
+  después el color; donde tiene hueco queda la ciudad real. Solo se dibuja el
+  espacio donde está la cámara; dentro, el plano cercano baja a 5 cm y, sin un
+  hueco a la vista, el lejano a 90 m. Distribución y muebles salen del
+  genotipo del edificio: dos máquinas amueblan igual el mismo piso.
+
+### La vida de la calle (entrega 6)
+
+- **Carriles reales**: seis por sentido en la troncal de 42 m, tres en la
+  arteria, dos en las calles de 13 a 18 m, uno en las de 10, a entre 11 y
+  30 m/s. Hay coches en todas las calles, las del mapa y las de la trama (895
+  rutas; eran 21 vías), y al final de la suya dan la vuelta por un semicírculo
+  de su carril, nunca sobre el agua.
+- **Cesión de paso** en los 3.905 cruces con ruta a los dos lados, mirando
+  dónde se cortan de verdad los dos carriles (en un cruce oblicuo, lejos del
+  centro); las glorietas, por el anillo. Nadie entra en un cruce que no puede
+  dejar libre ni se para encima de un paso; tras 30 s parado en su línea, un
+  coche se mete si todos los de la preferente pueden pararse antes.
+- **Pasos de peatones**: 15.296 (7.908 en la v0.10.16). Los coches se paran
+  ante uno ocupado, y los turnos de los pasos de un cruce van coordinados como
+  un semáforo de peatones.
+- **Peatones con destino** (`city/vida.js`): 29.527 personas con casa en villas
+  y bloques y 135.820 viajes al día, cada una una función pura del tiempo de
+  Dubái: dos navegadores ven al mismo peatón en el mismo sitio (1.200
+  posiciones comparadas, iguales al bit). Cada empresa de las parcelas
+  contrata su plantilla entre quienes viven más cerca; el resto trabaja en las
+  torres y naves de un barrio de oficinas sorteado por gravedad. Van por las
+  aceras, cruzan solo por los pasos, esperan turno en el bordillo, y quien
+  trabaja lejos aparece y desaparece en el bordillo de una parada o de delante
+  de su portal. Ninguno en «baja»; hasta 300, 800 y 1.500 en «media», «alta» y
+  «ultra»; unos 250 triángulos cada uno. El avatar ajeno que se solapa con el
+  jugador se aparta hasta 0,9 m.
+- **Arreglos del núcleo por el camino.** El catastro giraba las cajas de
+  choque al revés que las mallas desde la v0.10.3: en 200 edificios alargados
+  y girados, las esquinas dibujadas caían dentro de su propia caja en 40 antes
+  y en 200 ahora. En ladera el jugador andaba bajo la acera; ahora pisa la
+  cinta. Y el coche solo esquiva a quien está en su trayectoria.
+
+### El acabado de imagen (entrega 7)
+
+- **Interiores por paralaje**, desde la calidad media: detrás de cada hueco de
+  vidrio, una habitación de 4,5 × 3,6 × 5,6 m pintada en el sombreador —techo,
+  paredes, fondo, un mueble y, en una de cada tres, una persiana—, con la
+  paleta de oficina o de vivienda de cada edificio. De noche las salas
+  encendidas enseñan su color; de día la sala se intuye. Ningún triángulo más.
+- **Posproceso** (`city/espejismo.js`): oclusión ambiental de pantalla en
+  alta y ultra, resplandor corto con un umbral de día y otro de noche, y curva
+  de color de cine. Con los tres efectos a cero la imagen es **idéntica byte a
+  byte** a la del dibujo directo, medido en 12 encuadres.
+- **Cascadas de sombra** en alta y ultra: el sol y dos luces que solo
+  proyectan sombra, con cajas de 150 m, 800 m y 3,5 km.
+- **El botón de fluidez** escribe los efectos activos junto a la medida, para
+  que dos cifras de dos máquinas se puedan comparar.
+- **El experimento de la profundidad**, montado y apagado:
+  `localStorage['rami.profundidad'] = 'lineal'` abre el visor sin el búfer
+  logarítmico. El de por defecto sigue siendo el logarítmico hasta que alguien
+  mida los dos en una tarjeta gráfica real.
+
+### Sonido, modo foto, tormenta de arena, metro y barcos
+
+Todo en `city/extras.js`, con una barra propia en el visor (🔇/🔊, 📷, 🌪).
+
+- **Sonido sintetizado**, sin un fichero de audio y apagado por defecto:
+  viento, tráfico cercano con el tono de su velocidad, el metro, los pasos y,
+  de noche, grillos. Los demás módulos lo usan: el ascensor suena con su
+  puerta y su timbre.
+- **Modo foto**: pantalla completa sin interfaz, focal de 14 a 200 mm,
+  horizonte nivelado (se desplaza la ventana de proyección y los rascacielos
+  quedan verticales), travelling lento y cámara libre. «Guardar» descarga un
+  PNG con el pie «Dubái RAMI · red de pruebas, sin valor monetario».
+- **Tormenta de arena** con un calendario igual para todos: el día de Dubái
+  decide si la hay (1 de cada 17,1 días), cuándo empieza (14, 15 o 16 h) y
+  cuánto dura (2 a 4 h); 🌪 la pone o la quita en este equipo. La visibilidad
+  baja a 380 m a pie, sol y mar bajan a un 20 %, la arena se mueve en el
+  sombreador y el terreno se recorta a lo que se ve.
+- **Metro elevado** por la mediana de la E11 (Sheikh Zayed Road, 50,6 km):
+  1.619 pilares, 35 estaciones con andén y torre de acceso, y 23 trenes de
+  cinco coches que son una función del reloj (80 km/h, uno cada 365 s).
+  Pilares y torres están en el catastro: a pie se choca con ellos.
+- **Barcos**: 22 en 7 rutas fijas (la Marina, el Creek, la costa de
+  Jumeirah), trazadas sobre el agua visible y comprobadas al cargar; ningún
+  par de rutas distintas pasa a menos de 34,5 m.
+- **El plano de los barrios ya no pisa las vías del mapa**: faltan los 100
+  edificios que caían en una calzada (3.052 → 2.952), y los demás conservan
+  sitio, altura, identificador y matiz.
+
+### La ciudad que recuerda, los encargos y el día uno
+
+Todo en `city/memoria.js` y en el panel; del núcleo, la línea del color del
+edificio de parcela.
+
+- **La placa**: junto al portal de cada edificio de parcela, «Bloque #» con la
+  altura en que se fundó, el nombre de la empresa y el `@nombre` del dueño. A
+  pie se lee a tres metros.
+- **La pátina**: el color se templa con los días de cadena desde la fundación
+  (1.440 bloques por día), un nivel el día 1, 4, 9… hasta el 12 el día 144.
+  Aritmética entera: dos máquinas en la misma cabeza ven el mismo tono.
+- **Los encargos**: lo que la ciudad importa porque nadie lo ofrece (los
+  `huecos` que el consenso ya calcula), por distrito. En el visor, una lista y
+  etiquetas sobre los distritos, y un clic vuela al distrito; en el panel, la
+  tarjeta «📋 Encargos» con el precio de una parcela libre, en RAMI.
+- **El día uno**: la guía «📖 Primeros pasos», seis pasos que se marcan solos,
+  hasta la fecha y la cuenta atrás de Dubái y de la escritura de vivienda, y
+  «Por qué vuelves mañana»: los encargos de hoy, la hora de Dubái y la pátina
+  de tu edificio.
+- **El aviso**, fijo encima del mapa en 2D y en 3D: «⚠️ Simulación en una red
+  de pruebas: RAMI no tiene valor monetario, no se vende y no es una
+  inversión», con el enlace a `NOTICE.md`. Junto a los precios de venta de la
+  ciudad va 🏷️ y no 💰.
+- **El léxico**: `tools/panel/lexico.py` rechaza además, en los cinco idiomas,
+  el vocabulario que presenta una parcela como un negocio para quien la
+  compra y un precio con moneda, y mira todas las cadenas del visor (1.943,
+  ninguna rechazada por error). El mentor de la ciudad habla ya de lo que
+  cuesta la parcela y de lo que reparte el fondo por bloque.
+
+### Arreglos que salieron de las revisiones
+
+De la red entera, anteriores a esta versión y sin cambio de consenso:
+
+- **El candidato respeta las cotas del bloque.** El minero no miraba el tope
+  de 4.096 transacciones ni el de 2 MiB, y una sola transacción enorme en el
+  mempool dejaba a todos los mineros fabricando bloques que nadie admite.
+  Ahora el candidato salta lo que no cabe y el mempool no admite
+  transacciones de más de 64 KiB.
+- **Una transacción que deja de valer ya no arrastra su nonce**: la siguiente
+  del mismo firmante entraba en un candidato inválido una y otra vez.
+- **Importes con coma decimal** en todos los campos de la ciudad: los botones
+  de compra mandaban el precio formateado en es-ES y el nodo lo leía como
+  inválido o, con miles, como 1 RAMI. Y `tools/compat/roundtrip.sh` fallaba
+  23 de cada 30 veces por un `grep -q` con `pipefail`.
+
+Del cliente 3D:
+
+- **Umbral**: pegado a una pared y mirando en diagonal se veía la ciudad
+  (plano cercano de 0,3 m); con mayúsculas se atravesaban los muros del
+  rellano (ahora subpasos de 0,1 m: 256 recorridos sin salir del piso); las
+  lámparas alumbraban y se encendían a través de los tabiques; una vivienda de
+  más se aplastaba en el hueco de otra.
+- **Vida**: solapes en los cruces oblicuos (295 muestras) y en la vuelta final
+  (62), hoy 0; cambiar una parcela congelaba el visor 1,4–2,3 s (hoy por
+  trozos, 77 ms); con parcelas, la caché de caminos se vaciaba en hora punta y
+  la gente parpadeaba; tres barrios de oficinas no recibían a nadie.
+- **Espejismo**: con la profundidad lineal, volando junto a una torre, el plano
+  cercano (36,5 m) la borraba (hoy 4 m); el resplandor velaba la arena al sol;
+  la paleta de las salas cambiaba a media fachada.
+- **Extras**: la regla nueva del plano movía 384 edificios (hoy 0); los
+  pilares caían en el primer carril (0 solapes coche-pilar en 400 s); el tren
+  saltaba 4,4 m de vía en la terminal (hoy cambia por una bretelle); un abra
+  pasaba a 4,2 m de un dhow.
+- **Memoria**: una expresión prohibida pasaba el léxico por una clase de letra
+  mal escrita, y del visor solo se revisaban los textos de `t('…')`; ningún
+  encargo se veía en la vista general; la guía leía un campo que el nodo no
+  publica.
+- **De la última ronda, en la integración**: el camino de un viaje acabado se
+  suelta de la caché también cuando su duración ya se sabía (crecía de 300 a
+  1.176 caminos en 20 minutos; ahora sigue a los que están en la calle); el
+  coche que esquiva al jugador no sale de su carril si al lado hay otro de su
+  sentido (dos carriles vecinos se apartaban hacia el mismo hueco: 67 muestras
+  de solape en la troncal, ahora 0), y su morro gira 0,35 rad como mucho
+  (salían coches girados hasta 51°); las etiquetas de encargos no pasan de 1,2
+  celdas de altura y el vuelo se rehace con la altura final (a 1.500 m
+  parecían marcar otro barrio), a pie se apagan y el cambio de idioma
+  conserva el foco.
+
+### Lo que cuesta
+
+Los ocho encuadres fijos de siempre, calidad media (triángulos · llamadas de
+dibujo), v0.10.16 frente al binario final de la v0.11.0, compilado desde este
+código y con los recursos embebidos (0 errores de consola):
+
+| Encuadre | v0.10.16 | v0.11.0 | Diferencia |
+|---|---|---|---|
+| Torres de cerca | 920.678 · 21 | 945.460 · 30 | +2,7 % · +9 |
+| Manzana de bloques | 790.042 · 17 | 797.650 · 27 | +1,0 % · +10 |
+| Villas | 959.508 · 15 | 965.982 · 24 | +0,7 % · +9 |
+| Naves | 1.014.414 · 21 | 1.054.528 · 30 | +4,0 % · +9 |
+| A pie en la manzana | 952.544 · 28 | 979.856 · 43 | +2,9 % · +15 |
+| A pie ante una torre | 802.440 · 17 | 825.378 · 24 | +2,9 % · +7 |
+| La ciudad entera | 1.748.908 · 86 | 1.795.544 · 102 | +2,7 % · +16 |
+| El centro | 1.532.854 · 42 | 1.536.006 · 52 | +0,2 % · +10 |
+
+Seis de las llamadas de más son las pasadas del posproceso, un triángulo cada
+una; las demás, mallas de los módulos (viaducto, trenes, barcos, peatones).
+Las cifras cambian entre dos cargas porque lo que se mueve va con el reloj
+real (la misma integración, medida dos veces: hasta 7.540 triángulos y una
+llamada). La última ronda, medida frente por frente: el plano sin los
+edificios sobre una vía y 67 pilares menos restan de 832 a 12.080 triángulos;
+los coches, dibujados mientras ocupen 1,5 píxeles, suman hasta 37.960.
+
+- **La pasada de sombra**, que no sale en esas cifras, es el coste grande: en
+  alta y ultra las cascadas la multiplican por 3,4–3,8 en triángulos. En el
+  dibujo por software suben el tiempo de cuadro un 60–75 %; en «media», sin
+  cascadas, interiores y posproceso quedan entre −9 y +20 %, con un ruido de
+  medida de ±10 %.
+- **Dentro de un edificio**, mirando a una pared se envían 263.752–827.302
+  triángulos; por la ventana va la ciudad entera (hasta 992.124).
+- **Tráfico y peatones**: en ultra, 4,62 ms de CPU por paso de 1/60 s; a pie
+  en media, 1,99 ms. La población se construye al cargar en 1,4–2,5 s.
+- **La tormenta ahorra** de un 48 a un 69 % de triángulos en los encuadres
+  cercanos. La placa son 192 triángulos; la pátina y los interiores, ninguno.
+- **Memoria de vídeo**: con posproceso se mantiene el multimuestreo del lienzo,
+  que heredan las gafas VR: 66 MB sin uso a 1.920 × 1.080 (calculado).
+- **La escritura**: `/api/city` con la ciudad entera dividida en 64, unos
+  29 MB en el peor caso.
+- **Descarga**: el JavaScript del visor pasa de 287.559 a 805.849 bytes. El
+  binario final de `rami-gui` para Linux, 9.104.056 bytes frente a 8.297.880
+  en el punto de partida (+9,7 %).
+
+### Cómo se ha comprobado
+
+- `cargo test --workspace --release --locked`: 155 en verde (137 en la
+  v0.10.16). `tools/compat/roundtrip.sh` en verde con la v0.7.0 y la v0.7.3
+  (`3c2c4bf`); su paso 5 pone bloques de vivienda delante de la v0.7.0, por
+  red y por fichero.
+- Extremo a extremo en regtest, con dos carteras conectadas por el Túnel RAMI:
+  una parcela dividida en 6, tres viviendas compradas (por 3, 2,5 y 1,5 RAMI,
+  la última con el botón del panel), una transferida y un objeto acuñado por
+  la compradora en la parcela ajena; las dos con la misma altura y el mismo
+  registro.
+- Panel real en Chromium sin pantalla con los seis frentes juntos, servido por
+  el binario final (sus recursos embebidos son byte a byte los del árbol): 0
+  errores de consola. Pruebas deterministas con el paso del visor: 10
+  simulaciones de 10 minutos de tráfico, y otra en ultra tras la última
+  ronda, sin un solape, sin un contacto con un peatón y sin un coche más de un
+  minuto parado; con el jugador de pie en la troncal, 0 solapes al esquivar;
+  40 patios de 40 con entrada y salida a la calle; el pase neutro del
+  posproceso idéntico en 12 encuadres; 400 s de coches de la E11 sin tocar un
+  pilar; las 7 filas de la lista de encargos dejan su etiqueta a la vista.
+  Capturas de cada frente, miradas una a una. `check.py`, `lexico.py`,
+  `inventory.sh --check` y `node --check` de los seis ficheros del visor, en
+  verde.
+
+### Lo que queda
+
+- **Ninguna cifra de fluidez está medida en una tarjeta gráfica real.** Hay que
+  medir, con el botón de fluidez, alta con y sin cascadas y los dos modos de
+  profundidad; el lineal no pasa a ser el de por defecto hasta entonces.
+- **El sonido no lo ha oído nadie** (donde se construye no hay salida de
+  audio) y **la VR no se ha probado con gafas**: en ellas no se entra en los
+  edificios y no hay posproceso.
+- **Las viviendas del nodo no se han visto llegar al visor**: la cadena de las
+  pruebas no tiene parcelas; el reparto de pisos se ha probado con ciudades
+  sintéticas.
+- **Una transacción que deja de valer sin gastar su nonce no caduca** y ocupa
+  sitio en el mempool. El tope de viviendas es por cuenta, no por persona.
+- **Las rutas de los coches no se enlazan**: al final de cada una el coche da la
+  vuelta, y en 5 de las 7 glorietas la da antes de la entrada. No hay
+  semáforos, y el tráfico no es el mismo en dos máquinas (los peatones sí).
+  En hora punta hay unas 1.100–1.400 personas en la calle en toda la ciudad.
+- **Desde dentro, la puerta de la calle no deja ver la calle** (hace falta un
+  cambio en el material de los edificios del núcleo).
+- **The Gate está sobre la E11**: la huella del hito entra en la calzada y el
+  viaducto pasa por ella; hay que mover el hito o el trazado en el dataset.
+
+**Con esto el plan del metaverso llega al final de su ruta**, entregas 0 a 8.
+Lo que no arregla sigue en su sección 6: la fluidez en una tarjeta de verdad.
+
 ## Novedades de v0.10.16 — el catálogo de fachadas, y la entrega 4 cerrada
 
 Termina la entrega 4 del plan del metaverso (`docs/METAVERSO.md`, «TRAMA: la

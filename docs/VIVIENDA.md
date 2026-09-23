@@ -321,8 +321,10 @@ moneda. `--vivienda-desde <unix>` en `rami-gui`, `rami-node` y `rami-wallet`
   cuentas (§3).
 - El comprador de una parcela dividida está protegido en el precio, no en el
   número de viviendas que recibe (§4).
-- El cliente 3D todavía no dibuja a quién pertenece cada vivienda: el
-  contrato (`units`) está publicado para la Entrega 5.
+- El cliente 3D ya lee `unidades` y `units` (entrega 5, `city/umbral.js`):
+  las viviendas de una parcela dividida ocupan sus plantas, el ascensor lleva
+  a la tuya y el aviso de la puerta dice de quién es. Lo que no hay es un
+  rótulo por vivienda en la fachada.
 
 ## 11. Lista para operadores
 

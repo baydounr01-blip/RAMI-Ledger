@@ -758,7 +758,6 @@
  "Aviso completo (NOTICE.md)": "Full notice (NOTICE.md)",
  "📋 Encargos: lo que la ciudad importa, por distrito": "📋 Orders: what the city imports, by district",
  "Cada bloque, el consenso calcula qué insumos necesita cada empresa y quema como importación lo que nadie ofrece en la ciudad. Esta lista lo reparte por el distrito de las empresas que lo necesitan. Es información de la economía de la simulación, en RAMI de prueba: no es una promesa de ingresos.": "Every block, consensus works out which inputs each business needs and burns as an import whatever nobody in the city offers. This list splits it by the district of the businesses that need it. It is information about the simulation's economy, in test RAMI: it is not a promise of income.",
- "Los encargos salen de la economía de Dubái, que aún no rige en esta cadena: todavía no hay parcelas ni empresas.": "Orders come from Dubai's economy, which is not yet in force on this chain: there are no parcels or businesses yet.",
  "Falta": "Missing",
  "Distrito": "District",
  "Empresas que lo necesitan": "Businesses that need it",
