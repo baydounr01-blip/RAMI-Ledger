@@ -42,18 +42,28 @@
     // La costa de Jumeirah, entre la orilla y The World, a más de 250 m de
     // cualquier tierra: un dhow de carga a vela.
     { id: 'costa', tipo: 'dhow', o: 40, c: 200, v: 3.8, n: 3, pts: [[25.2641, 55.25334], [25.25163, 55.23955], [25.24742, 55.23538], [25.244, 55.23256], [25.24137, 55.23108], [25.23695, 55.2306], [25.22497, 55.22814], [25.22027, 55.22651], [25.21559, 55.22431], [25.21092, 55.22154], [25.20626, 55.21819], [25.20204, 55.21487], [25.19826, 55.21159], [25.1949, 55.20833], [25.19199, 55.20511], [25.18938, 55.20269], [25.18708, 55.20108], [25.18508, 55.20027], [25.18087, 55.20027]] },
-    // Las abras cruzan el Creek de orilla a orilla, a 45 m de cada muelle.
-    { id: 'abra1', tipo: 'abra', o: 8, c: 10, v: 2.8, n: 2, pts: [[25.26569, 55.29973], [25.26753, 55.30106]] },
-    { id: 'abra2', tipo: 'abra', o: 8, c: 10, v: 2.8, n: 2, pts: [[25.25487, 55.31296], [25.25621, 55.31554]] },
-    { id: 'abra3', tipo: 'abra', o: 8, c: 10, v: 2.8, n: 2, pts: [[25.2497, 55.31808], [25.25144, 55.32072]] },
-    { id: 'abra4', tipo: 'abra', o: 8, c: 10, v: 2.8, n: 2, pts: [[25.2413, 55.32546], [25.2424, 55.32817]] }
+    // Las abras cruzan el Creek de orilla a orilla, a 45 m de cada muelle. Su
+    // velocidad se ajusta a la de los dhows y `fase` las pone en los huecos
+    // entre ellos (ver `sincronizaAbras`).
+    { id: 'abra1', tipo: 'abra', o: 8, c: 10, v: 2.8, n: 2, fase: 18, pts: [[25.26569, 55.29973], [25.26753, 55.30106]] },
+    { id: 'abra2', tipo: 'abra', o: 8, c: 10, v: 2.8, n: 2, fase: 12, pts: [[25.25487, 55.31296], [25.25621, 55.31554]] },
+    { id: 'abra3', tipo: 'abra', o: 8, c: 10, v: 2.8, n: 2, fase: 10, pts: [[25.2497, 55.31808], [25.25144, 55.32072]] },
+    { id: 'abra4', tipo: 'abra', o: 8, c: 10, v: 2.8, n: 2, fase: 12, pts: [[25.2413, 55.32546], [25.2424, 55.32817]] }
   ];
 
   // Metro. Medidas del de Dubái: pilares cada 30 m, estaciones cada 1,5 km, tren
   // de cinco coches de 17 m, 80 km/h de crucero, aceleración de 1 m/s².
+  // DESV es lo más que el eje del viaducto se aparta de la polilínea de la vía
+  // al redondear una esquina: los pilares van en la mediana y los coches del
+  // primer carril pasan a 1,96 m del eje. PILAR_L y PILAR_A son el largo (a lo
+  // largo del eje) y el ancho del pilar; MEDIANA, lo más cerca del eje que el
+  // centro de un coche de esa vía puede ponerse (medio pilar, DESV, medio coche
+  // de 1 m y 0,15 de aire). CRUCE es el largo de la bretelle por la que un tren
+  // pasa de una vía a la otra en una terminal (m).
   var METRO = {
     PASO: 30, ESTACION: 1500, CLARO: 10.5, VMAX: 22.2, ACEL: 1.0, PARADA: 30, TERMINAL: 180,
-    INTERVALO: 360, COCHES: 5, COCHE: 17, PASO_COCHE: 17.6, VIA: 2.2, ANDEN: 110, RADIO: 600
+    INTERVALO: 360, COCHES: 5, COCHE: 17, PASO_COCHE: 17.6, VIA: 2.2, ANDEN: 110, RADIO: 600,
+    DESV: 0.25, PILAR_L: 2.4, PILAR_A: 1.0, MEDIANA: 1.9, CRUCE: 150
   };
   // Perfil barrido del viaducto: artesa de hormigón con dos petos, en (u, v)
   // respecto al eje y a la cota del piso de vía. Cerrado: el último lado es la
@@ -354,7 +364,7 @@
     // 2. Modo foto
     // =========================================================================
     // Una película es encuadre, distancia focal, un travelling lento y la hora
-    // correcta. La focal va en milímetros de formato 35 mm (fov vertical =
+    // correcta. El visor pasa a pantalla completa y sin interfaz. La focal va en milímetros de formato 35 mm (fov vertical =
     // 2·atan(12/f)); el horizonte nivelado quita la inclinación de la cámara y
     // conserva el encuadre desplazando la ventana de proyección (lo que hace un
     // objetivo descentrable: las verticales de los rascacielos quedan
@@ -396,6 +406,18 @@
         foto.guardado.pantalla.push({ el: h, display: h.style.display }); h.style.display = 'none';
       }
       if (ui.foto) ui.foto.classList.remove('rx-oculto');
+      // Y a pantalla completa: el visor tapa la página entera, también la barra
+      // del panel (Centro, Dubái, Parcelas, 2D, A pie, calidad, hora), que está
+      // fuera del contenedor y el módulo no toca. Solo cambia el estilo del
+      // propio contenedor; el núcleo redimensiona el lienzo con su
+      // ResizeObserver, y al salir se devuelve el estilo tal cual estaba.
+      foto.guardado.estilo = container.getAttribute('style');
+      // El contenedor fijo deja la página 560 px más corta y el navegador
+      // recorta el desplazamiento: se guarda para devolverlo al salir.
+      foto.guardado.scroll = [global.pageXOffset || 0, global.pageYOffset || 0];
+      var cs = container.style;
+      cs.position = 'fixed'; cs.left = '0'; cs.top = '0'; cs.width = '100vw'; cs.height = '100vh'; cs.maxWidth = 'none';
+      cs.margin = '0'; cs.border = '0'; cs.borderRadius = '0'; cs.zIndex = '2147483000';
       // Escape también desde el documento: al pulsar 📷 el botón desaparece, el
       // foco pasa al body y el gancho `tecla` (que escucha en el lienzo) no se
       // entera.
@@ -422,6 +444,8 @@
         }
       }
       for (i = 0; i < g.pantalla.length; i++) g.pantalla[i].el.style.display = g.pantalla[i].display;
+      if (g.estilo === null || g.estilo === undefined) container.removeAttribute('style'); else container.setAttribute('style', g.estilo);
+      if (g.scroll && global.scrollTo) { try { global.scrollTo(g.scroll[0], g.scroll[1]); } catch (e) { /* nada */ } }
       for (i = 0; i < foto.ocultas.length; i++) foto.ocultas[i].visible = true;
       for (i = 0; i < foto.objetos.length; i++) foto.objetos[i].visible = true;
       foto.ocultas = []; foto.objetos = [];
@@ -609,6 +633,9 @@
       var sh = ctx.shared;
       sh.uSunColor.value.copy(b.sol).multiplyScalar(1 - 0.8 * k);
       ctx.sun.color.copy(b.luz).multiplyScalar(1 - 0.8 * k);
+      // El mar lleva su propia copia del color del sol (updateSun la copia):
+      // sin esto, el brillo especular seguía a plena potencia en la arena.
+      if (S.sea) S.sea.material.uniforms.uSunColor.value.copy(b.sol).multiplyScalar(1 - 0.8 * k);
       var al = U.lin3(ARENA_SRGB);
       _col.setRGB(al[0], al[1], al[2]).multiplyScalar(0.34 * luz);
       sh.uSkyColor.value.copy(b.cielo).lerp(_col, 0.65 * k); ctx.hemi.color.copy(sh.uSkyColor.value);
@@ -627,6 +654,11 @@
       tormenta.visibilidad = fog.far;
       if (S.sky) S.sky.visible = k < 0.5;
       if (S.stars) S.stars.visible = k < 0.3;
+      // Los reflejos: el mapa cúbico del cielo (edificios y mar) pasa a ser del
+      // color de la arena. El núcleo lo rehace con el cielo cada ~2 s (antes del
+      // gancho «sol», que lo vuelve a teñir); al pasar de 0,35 se tiñe ya.
+      if (k >= 0.35 && !tormenta.envTenido) envTormenta(luz);
+      else if (k < 0.35) tormenta.envTenido = false;
       // Lo que queda detrás de la niebla no se dibuja. En VR no: las gafas
       // llevan su propia proyección, y la franja del terreno del último cuadro
       // fuera de las gafas no seguiría al jugador, así que se deshace.
@@ -650,6 +682,14 @@
     }
     var _col = new THREE.Color();
     function renderer() { return ctx.renderer; }
+    /** Seis caras de 128 px del color de la arena en el mapa cúbico de reflejos (seis borrados). */
+    function envTormenta(luz) {
+      if (S.xr || !ctx.envRT) return;
+      if (!tormenta.envCam) { tormenta.envEscena = new THREE.Scene(); tormenta.envEscena.background = new THREE.Color(); tormenta.envCam = new THREE.CubeCamera(1, 10, ctx.envRT); }
+      var al = U.lin3(ARENA_SRGB), l = 0.9 * (luz === undefined ? 1 : luz);
+      tormenta.envEscena.background.setRGB(al[0] * l, al[1] * l, al[2] * l);
+      try { tormenta.envCam.update(renderer(), tormenta.envEscena); tormenta.envTenido = true; } catch (e) { tormenta.envTenido = true; }
+    }
     // El terreno es UNA malla de toda la ciudad (la fina: 512 × 501 casillas,
     // 513.024 triángulos) sin descarte posible, y es la mitad de lo que se envía
     // en cualquier encuadre. Su índice va por filas de norte a sur, así que en la
@@ -672,6 +712,7 @@
       var b = tormenta.base;
       if (b) {
         ctx.shared.uSunColor.value.copy(b.sol); ctx.shared.uSkyColor.value.copy(b.cielo); ctx.shared.uGroundColor.value.copy(b.suelo);
+        if (S.sea) S.sea.material.uniforms.uSunColor.value.copy(b.sol);
         ctx.sun.color.copy(b.luz); ctx.hemi.color.copy(b.hemiC); ctx.hemi.groundColor.copy(b.hemiS);
         if (b.niebla) { scene.fog.color.copy(b.niebla); scene.background = b.niebla; }
       }
@@ -691,9 +732,11 @@
     // OpenStreetMap, cuando alguien la aporte), manda esa.
     //
     // Es el perfil de PERFIL barrido cada 30 m por el eje (con las esquinas del
-    // trazado redondeadas por curvas de 600 m), un pilar con cabezal en cada
-    // muestra y una estación con bóveda dorada cada ~1,5 km. Todo por teselas de
-    // TESELA_VIA con su esfera envolvente.
+    // trazado redondeadas por curvas de hasta 600 m que no se apartan más de
+    // METRO.DESV de la vía: el eje va por la mediana), un pilar con cabezal en
+    // cada muestra salvo en los cruces y las vueltas de los coches, y una
+    // estación con bóveda dorada cada ~1,5 km. Todo por teselas de TESELA_VIA
+    // con su esfera envolvente.
     //
     // Los trenes son función del reloj: el horario sale del propio trazado
     // (tramo a tramo, trapecio de velocidad de 80 km/h y 1 m/s², 30 s de parada y
@@ -714,7 +757,7 @@
       function largo(p) { var L = 0; for (var k = 0; k + 1 < p.length; k++) L += Math.sqrt(Math.pow(p[k + 1].x - p[k].x, 2) + Math.pow(p[k + 1].z - p[k].z, 2)); return L; }
       for (i = 0; i < vias.length; i++) {
         if (vias[i] && vias[i].clase === 'troncal' && /zayed/i.test(vias[i].nombre || '') && vias[i].pts && vias[i].pts.length > 1) {
-          var pv = mundo(vias[i].pts); if (pv.length > 1) return { pts: pv, indice: -1, largo: largo(pv), regla: 'via' };
+          var pv = mundo(vias[i].pts); if (pv.length > 1) return { pts: pv, indice: -1, largo: largo(pv), regla: 'via', cruda: vias[i].pts };
         }
       }
       var roads = meta.roads || [], cand = [], burj = (S.lmIndex && S.lmIndex.burj_khalifa) || null;
@@ -724,7 +767,7 @@
         var p = mundo(roads[i]); if (p.length < 2) continue;
         var L = largo(p), dmin = 1e18;
         if (burj) for (j = 0; j + 1 < p.length; j++) dmin = Math.min(dmin, distSeg(burj.x, burj.z, p[j], p[j + 1]));
-        cand.push({ pts: p, indice: i, largo: L, dist: dmin });
+        cand.push({ pts: p, indice: i, largo: L, dist: dmin, cruda: roads[i] });
       }
       var troncales = cand.filter(function (c) { return c.largo >= 40000; });
       if (troncales.length) {
@@ -747,32 +790,125 @@
     /** ¿Tierra firme? El campo de alturas y la malla que se dibuja, los dos por encima del agua. */
     function enTierra(x, z) { return (S.field ? S.field.atWorld(x, z) : 1) >= 0.5 && M.surfaceH(x, z) > 0.3; }
     /**
+     * La vía del núcleo (S.vias) que es la troncal: la de las vías del mapa cuya
+     * primera muestra es el primer punto de su línea (remuestrea empieza ahí).
+     */
+    function indiceViaNucleo(tr) {
+      var V = S.vias || [], v, c = tr && tr.cruda;
+      if (!c || !c.length) return -1;
+      var w = S.geo.toWorld(c[0][1], c[0][0]);
+      for (v = 0; v < V.length; v++) {
+        if (V[v].barrio >= 0 || !V[v].muestras || !V[v].muestras.length) continue;
+        var m = V[v].muestras[0];
+        if (Math.abs(m.x - w.x) < 0.01 && Math.abs(m.z - w.z) < 0.01) return v;
+      }
+      return -1;
+    }
+    /** Punto de la vía V del núcleo a la distancia s de su arranque. */
+    function puntoVia(V, s) {
+      var A = V.arco, M = V.muestras, lo = 0, hi = A.length - 1;
+      s = clamp(s, 0, A[hi]);
+      while (lo + 1 < hi) { var mid = (lo + hi) >> 1; if (A[mid] <= s) lo = mid; else hi = mid; }
+      var u = (s - A[lo]) / ((A[lo + 1] - A[lo]) || 1);
+      return { x: M[lo].x + (M[lo + 1].x - M[lo].x) * u, z: M[lo].z + (M[lo + 1].z - M[lo].z) * u };
+    }
+    /**
+     * Las demás calles tal como las levantó el núcleo (las 20 vías del mapa y la
+     * trama de los barrios), troceadas por sus muestras en una rejilla de 256 m:
+     * cada trozo con su media calzada, su medio ancho total (bordillo y acera) y
+     * si pasan coches (`vivo`: el trozo cae en una ruta de S.trafficPaths; los
+     * tramos «tapados» por otra vía casi paralela no tienen tráfico).
+     */
+    function indiceVias(vi) {
+      var F = { celdas: {}, R: 256 }, V = S.vias || [], P = S.trafficPaths || [], porVia = {}, v, k, j;
+      for (k = 0; k < P.length; k++) (porVia[P[k].via] || (porVia[P[k].via] = [])).push(P[k]);
+      for (v = 0; v < V.length; v++) {
+        if (v === vi) continue;
+        var m = V[v].muestras, a = V[v].arco; if (!m || !a || m.length < 2) continue;
+        var semi = V[v].calzada * 0.5, medio = semi + 0.45 + (V[v].acera || 0), rs = porVia[v] || [];
+        for (k = 0; k + 1 < m.length; k++) {
+          var vivo = false;
+          for (j = 0; j < rs.length; j++) if (a[k + 1] >= rs[j].s0 && a[k] <= rs[j].s1) { vivo = true; break; }
+          var clave = Math.floor((m[k].x + m[k + 1].x) * 0.5 / F.R) + ':' + Math.floor((m[k].z + m[k + 1].z) * 0.5 / F.R);
+          (F.celdas[clave] || (F.celdas[clave] = [])).push({ a: m[k], b: m[k + 1], semi: semi, medio: medio, vivo: vivo, via: v });
+        }
+      }
+      return F;
+    }
+    /**
+     * ¿Toca un círculo de radio r en (x, z) otra calle? Con `soloCalzada`, la
+     * calzada de un trozo con coches (donde no puede ir un pilar); sin él, la
+     * calle entera con sus aceras (donde no puede ir una torre). Devuelve la
+     * vía que toca, o −1.
+     */
+    function otraVia(F, x, z, r, soloCalzada) {
+      if (!F) return -1;
+      var ci = Math.floor(x / F.R), cj = Math.floor(z / F.R), i, j, n;
+      for (j = cj - 1; j <= cj + 1; j++) for (i = ci - 1; i <= ci + 1; i++) {
+        var l = F.celdas[i + ':' + j]; if (!l) continue;
+        for (n = 0; n < l.length; n++) {
+          var sg = l[n]; if (soloCalzada && !sg.vivo) continue;
+          if (distSeg(x, z, sg.a, sg.b) < (soloCalzada ? sg.semi : sg.medio) + r) return sg.via;
+        }
+      }
+      return -1;
+    }
+    /**
      * ¿Hay sitio para una huella de radio r? Se mira el plano de los barrios
-     * (todos los planificados, no los que dibuja la calidad) y los hitos: los
-     * dos son iguales en todas las máquinas. Las parcelas no cuentan: cambian
-     * con la cadena, y la estación decide el horario de los trenes.
+     * (todos los planificados, no los que dibuja la calidad), los hitos y las
+     * demás calles con sus aceras: todo es igual en todas las máquinas. Las
+     * parcelas no cuentan: cambian con la cadena, y la estación decide el
+     * horario de los trenes. La torre de la estación 10 caía a 3,6 m del eje de
+     * la vía 8, que se separa de la E11 en el nudo de Ibn Battuta: los coches
+     * la atravesaban.
      */
     function sitioLibre(x, z, r) {
       var i, j, E = S.edificios || [], it = (S.catastro && S.catastro.items) || [];
+      if (otraVia(metro.otras, x, z, r, false) >= 0) return false;
       for (i = 0; i < E.length; i++) for (j = 0; j < E[i].length; j++) {
         var e = E[i][j], dx = e.x - x, dz = e.z - z, re = Math.sqrt(e.w * e.w + e.d * e.d) * 0.5 + r;
         if (dx * dx + dz * dz < re * re) return false;
       }
       for (i = 0; i < it.length; i++) {
-        var so = it[i]; if (so.tipo !== 'hito') continue;
+        var so = it[i]; if (so.tipo !== 'hito' || /^metro:/.test(so.id)) continue;
         var hx = so.x - x, hz = so.z - z, rh = Math.sqrt(so.hw * so.hw + so.hd * so.hd) + r;
         if (hx * hx + hz * hz < rh * rh) return false;
       }
       return true;
     }
     /**
+     * Los sólidos fijos (el plano de los barrios y los hitos, no las parcelas)
+     * en una rejilla de 256 m, para saber si el andén de una estación se mete
+     * en uno: la estación de DIFC caía dentro de The Gate, que se monta sobre
+     * la E11 desde que el catastro gira las huellas como se dibujan.
+     */
+    function indiceFijos() {
+      var F = { celdas: {}, R: 256 }, E = S.edificios || [], it = (S.catastro && S.catastro.items) || [], i, j;
+      function mete(so) {
+        var r = Math.sqrt(so.hw * so.hw + so.hd * so.hd), i0 = Math.floor((so.x - r) / F.R), i1 = Math.floor((so.x + r) / F.R), j0 = Math.floor((so.z - r) / F.R), j1 = Math.floor((so.z + r) / F.R), a, b;
+        for (b = j0; b <= j1; b++) for (a = i0; a <= i1; a++) (F.celdas[a + ':' + b] || (F.celdas[a + ':' + b] = [])).push(so);
+      }
+      for (i = 0; i < E.length; i++) for (j = 0; j < E[i].length; j++) if (E[i][j].solido) mete(E[i][j].solido);
+      for (i = 0; i < it.length; i++) if (it[i].tipo === 'hito' && !/^metro:/.test(it[i].id)) mete(it[i]);
+      return F;
+    }
+    var _lf = { x: 0, z: 0 };
+    function enSolidoFijo(x, z, margen) {
+      var F = metro.fijos, l = F && F.celdas[Math.floor(x / F.R) + ':' + Math.floor(z / F.R)], n;
+      if (!l) return false;
+      for (n = 0; n < l.length; n++) { ctx.catastro.aLocal(l[n], x, z, _lf); if (Math.abs(_lf.x) <= l[n].hw + margen && Math.abs(_lf.z) <= l[n].hd + margen) return true; }
+      return false;
+    }
+    /**
      * Sitio de una estación en la distancia s del eje: el andén sobre tierra y
-     * la torre de acceso fuera de la calzada (a medioVia + 4,5 m del eje), en
-     * tierra y sin edificio, a un lado o al otro. null si no cabe.
+     * fuera de cualquier sólido fijo, y la torre de acceso fuera de la calzada
+     * (a medioVia + 4,5 m del eje), en tierra y sin edificio, a un lado o al
+     * otro. null si no cabe.
      */
     function sitioEstacion(s) {
-      var P = ejePunto(s, {}), rx = -P.tz, rz = P.tx, lat = metro.medioVia + 4.5, dx = METRO.ANDEN * 0.3, k, lado;
+      var P = ejePunto(s, {}), rx = -P.tz, rz = P.tx, lat = metro.medioVia + 4.5, dx = METRO.ANDEN * 0.3, k, lado, u;
       for (k = -2; k <= 2; k++) if (!enTierra(P.x + P.tx * k * 30, P.z + P.tz * k * 30)) return null;
+      for (k = -4; k <= 4; k++) for (u = -9.5; u <= 9.5; u += 9.5) if (enSolidoFijo(P.x + P.tx * k * 15 + rx * u, P.z + P.tz * k * 15 + rz * u, 1)) return null;
       for (lado = 1; lado >= -1; lado -= 2) {
         var x = P.x + P.tx * dx + rx * lat * lado, z = P.z + P.tz * dx + rz * lat * lado;
         if (!M.insideMap(x, z) || !enTierra(x, z) || !enTierra(x + rx * 4 * lado, z + rz * 4 * lado)) continue;
@@ -791,7 +927,11 @@
         d1x /= l1; d1z /= l1; d2x /= l2; d2z /= l2;
         var th = Math.acos(clamp(d1x * d2x + d1z * d2z, -1, 1));
         if (th < 1e-3) { out.push(b); continue; }
-        var Lt = Math.min(R * Math.tan(th / 2), 0.45 * l1, 0.45 * l2);
+        // La curva se aparta del vértice Lt·sen(θ/2)/2: con Lt ≤ 2·DESV/sen(θ/2)
+        // el eje no sale de la mediana. En la E11 (siete vértices dentro del
+        // mapa, el más cerrado de 13,7°) el radio de 600 m la apartaba 4,3 m y
+        // los pilares caían en el primer carril.
+        var Lt = Math.min(R * Math.tan(th / 2), 0.45 * l1, 0.45 * l2, 2 * METRO.DESV / Math.sin(th / 2));
         var p1 = { x: b.x - d1x * Lt, z: b.z - d1z * Lt }, p2 = { x: b.x + d2x * Lt, z: b.z + d2z * Lt };
         for (k = 0; k <= 12; k++) {
           var u = k / 12, a1 = (1 - u) * (1 - u), a2 = 2 * u * (1 - u), a3 = u * u;
@@ -823,6 +963,15 @@
     }
     function construyeMetro() {
       var tr = troncal(); if (!tr) return;
+      // La vía del núcleo que es la troncal, las demás calles, los centros de
+      // las vueltas de sus coches y sus pasos de peatones: donde no va un pilar.
+      var vi = indiceViaNucleo(tr), Vt = vi >= 0 ? S.vias[vi] : null, vueltas = [], cebras = [], q0;
+      metro.vi = vi; metro.otras = indiceVias(vi); metro.fijos = indiceFijos();
+      if (Vt) {
+        var TP = S.trafficPaths || [], CB = S.cebras || [];
+        for (q0 = 0; q0 < TP.length; q0++) if (TP[q0].via === vi) { vueltas.push(puntoVia(Vt, TP[q0].s0 + TP[q0].tc0), puntoVia(Vt, TP[q0].s0 + TP[q0].tc1)); }
+        for (q0 = 0; q0 < CB.length; q0++) if (CB[q0].via === vi) cebras.push(CB[q0]);
+      }
       var p = redondea(tr.pts, METRO.RADIO), e = uniforme(p, METRO.PASO), n = e.n, i, j;
       e.TX = new Float64Array(n + 1); e.TZ = new Float64Array(n + 1);
       for (i = 0; i <= n; i++) {
@@ -894,19 +1043,35 @@
           quad(acc, sec(i, uc - 0.06, 0.18), sec(i, uc + 0.06, 0.18), sec(i + 1, uc + 0.06, 0.18), sec(i + 1, uc - 0.06, 0.18), 0, 1, 0, lc);
         }
       }
-      // Pilares con cabezal, uno por muestra, salvo donde hay un sólido debajo.
+      // Pilares con cabezal, uno por muestra, en la mediana: 2,4 m a lo largo del
+      // eje y 1 m de ancho (el primer carril pasa a 1,96 m). Ninguno donde hay un
+      // sólido debajo, en la calzada de otra calle con coches (los cruces al
+      // mismo nivel: el vano pasa a 60 o 90 m), a menos de 24 m del centro de
+      // una vuelta de los coches de la troncal (los semicírculos de los seis
+      // carriles cruzan el eje hasta 19,25 m más allá) ni sobre un paso de
+      // peatones.
       var par = new THREE.Matrix4(), q = new THREE.Quaternion(), yv = new THREE.Vector3(0, 1, 0), pv = new THREE.Vector3(), sv = new THREE.Vector3(1, 1, 1);
+      var solidos = [], enCruce = 0, enVuelta = 0, enCebra = 0, nombreMetro = t('Metro de Dubái'), q1;
       for (i = 0; i <= n; i++) {
         var so = ctx.catastro.bajo(e.X[i], e.Z[i]);
         if (so) { if (so.y0 + so.h > e.H[i] - 2) { choques++; if (choqueIds.indexOf(so.id) < 0) choqueIds.push(so.id); } continue; }
+        if (otraVia(metro.otras, e.X[i], e.Z[i], METRO.PILAR_L * 0.5 + 0.3, true) >= 0) { enCruce++; continue; }
+        var fuera = false;
+        for (q1 = 0; q1 < vueltas.length && !fuera; q1++) if (Math.abs(vueltas[q1].x - e.X[i]) < 24 && Math.abs(vueltas[q1].z - e.Z[i]) < 24 && Math.sqrt(Math.pow(vueltas[q1].x - e.X[i], 2) + Math.pow(vueltas[q1].z - e.Z[i], 2)) < 24) fuera = true;
+        if (fuera) { enVuelta++; continue; }
+        for (q1 = 0; q1 < cebras.length && !fuera; q1++) if (Math.sqrt(Math.pow(cebras[q1].x - e.X[i], 2) + Math.pow(cebras[q1].z - e.Z[i], 2)) < 5) fuera = true;
+        if (fuera) { enCebra++; continue; }
         var base = Math.min(M.groundH(e.X[i], e.Z[i]), S.field ? S.field.atWorld(e.X[i], e.Z[i]) : 0) - 1.5, alto = e.H[i] - 1.9 - base;
         if (alto < 1) continue;
-        q.setFromAxisAngle(yv, Math.atan2(-e.TZ[i], e.TX[i])); pv.set(e.X[i], base, e.Z[i]); par.compose(pv, q, sv);
+        var yawP = Math.atan2(-e.TZ[i], e.TX[i]);
+        q.setFromAxisAngle(yv, yawP); pv.set(e.X[i], base, e.Z[i]); par.compose(pv, q, sv);
         var acP = tes(e.X[i], e.Z[i]);
         G.pushParts(acP, [
-          { sx: 1.8, sy: alto - 1.2, sz: 1.8, c: HORMIGON },
-          { sx: 2.2, sy: 1.2, sz: 7.4, y: alto - 1.2, c: HORMIGON }
+          { sx: METRO.PILAR_L, sy: alto - 1.2, sz: METRO.PILAR_A, c: HORMIGON },
+          { sx: 2.8, sy: 1.2, sz: 7.4, y: alto - 1.2, c: HORMIGON }
         ], par);
+        // Al catastro (se da de alta al final): a pie se choca con él.
+        solidos.push({ x: e.X[i], z: e.Z[i], hw: METRO.PILAR_L * 0.5, hd: METRO.PILAR_A * 0.5, yaw: yawP, y0: base, h: alto, tipo: 'hito', id: 'metro:pilar:' + i, nombre: nombreMetro });
         pilares++;
       }
       // Estaciones: andenes, bóveda dorada, mamparas de vidrio y, fuera de la
@@ -924,6 +1089,7 @@
         ];
         if (st) {
           var lado = st.lado, zt = st.lat * lado, dh = P.y - st.suelo, pz0 = 8.35, pz1 = st.lat - 3.5;
+          solidos.push({ x: P.x + P.tx * st.dx - P.tz * zt, z: P.z + P.tz * st.dx + P.tx * zt, hw: 4.5, hd: 3.5, yaw: yaw, y0: st.suelo - 1, h: dh + 8, tipo: 'hito', id: 'metro:estacion:' + i, nombre: nombreMetro });
           piezasE.push(
             { sx: 9, sy: dh + 5.5, sz: 7, x: st.dx, y: -dh, z: zt, c: CLARO_T },
             { sx: 9, sy: 1.4, sz: 7, x: st.dx, y: 5.5, z: zt, c: ORO },
@@ -943,6 +1109,12 @@
         grupo.add(mesh); metro.teselas.push(mesh); tri0 += geo.attributes.position.count / 3;
       }
       scene.add(grupo); metro.grupo = grupo;
+      // Pilares y torres al catastro, con tipo «hito» (el panel lo nombra al
+      // señalarlo): a pie se choca con ellos y el plano cercano de la
+      // profundidad lineal los ve. Ninguno pisa la acera de una calle ni un
+      // paso de peatones, así que el grafo de los peatones no cambia.
+      for (i = 0; i < solidos.length; i++) ctx.catastro.alta(solidos[i]);
+      metro.solidos = solidos.length;
       // --- Horario ----------------------------------------------------------
       var tramos = [], tt = 0, dir;
       function dwell(s, d) { tramos.push({ t0: tt, dur: d, s0: s, s1: s, mueve: false }); tt += d; }
@@ -977,7 +1149,8 @@
       var colT = new THREE.Color(1, 1, 1); for (i = 0; i < nC; i++) im.setColorAt(i, colT);
       im.instanceColor.needsUpdate = true;
       scene.add(im); metro.trenes = im;
-      metro.info = { km: Math.round(e.L / 100) / 10, indiceVia: tr.indice, regla: tr.regla, muestras: n + 1, pilares: pilares, choques: choques, choqueIds: choqueIds.slice(0, 12), estaciones: paradas.length, estacionesMovidas: movidas, estacionesSinAcceso: sinAcceso,
+      metro.info = { km: Math.round(e.L / 100) / 10, indiceVia: tr.indice, viaNucleo: vi, regla: tr.regla, muestras: n + 1, pilares: pilares, choques: choques, choqueIds: choqueIds.slice(0, 12),
+        pilaresSinPoner: { cruce: enCruce, vuelta: enVuelta, cebra: enCebra }, solidosEnCatastro: solidos.length, estaciones: paradas.length, estacionesMovidas: movidas, estacionesSinAcceso: sinAcceso,
         triangulosViaducto: tri0, teselas: metro.teselas.length, trenes: metro.nTrenes, intervalo: Math.round(metro.intervalo), ciclo: Math.round(metro.ciclo) };
       metro.listo = true;
     }
@@ -992,7 +1165,7 @@
       var n = 0, ids = [], i;
       for (i = 0; i <= e.n; i++) {
         var so = ctx.catastro.bajo(e.X[i], e.Z[i]);
-        if (so && so.y0 + so.h > e.H[i] - 2) { n++; if (ids.indexOf(so.id) < 0) ids.push(so.id); }
+        if (so && !/^metro:/.test(so.id) && so.y0 + so.h > e.H[i] - 2) { n++; if (ids.indexOf(so.id) < 0) ids.push(so.id); }
       }
       metro.info.choques = n; metro.info.choqueIds = ids.slice(0, 12);
     }
@@ -1021,6 +1194,34 @@
       var d = avanceTramo(x.D, x.dur, tau - x.t0);
       return { s: x.s0 + (x.s1 > x.s0 ? d : -d), dir: dir, parado: false };
     }
+    /**
+     * Desplazamiento lateral de un coche del tren en la distancia s del eje: el
+     * de ida va por la vía +VIA y el de vuelta por la −VIA, salvo junto a las
+     * terminales. El tren llega a la terminal por su vía, espera ahí los tres
+     * minutos y sale por la otra cruzando por una bretelle de METRO.CRUCE metros
+     * más allá del andén: cada coche sigue la curva en S por su cuenta. Antes
+     * el tren saltaba 4,4 m de vía en el instante en que empezaba la espera.
+     */
+    function carrilTren(s, dir) {
+      var mt = METRO.COCHES * METRO.PASO_COCHE * 0.5, f;
+      if (dir > 0) { f = (s - (metro.paradas[0] + mt)) / METRO.CRUCE; return METRO.VIA * (2 * U.smoothstep(f) - 1); }
+      f = (metro.paradas[metro.paradas.length - 1] - mt - s) / METRO.CRUCE;
+      return METRO.VIA * (1 - 2 * U.smoothstep(f));
+    }
+    /**
+     * Los coches de la troncal no se acercan al eje más de METRO.MEDIANA: el
+     * núcleo les deja desviarse hasta 1,2 m del eje para adelantar (desvMin),
+     * y ahí el coche, de 1 m de medio ancho, atravesaba el pilar (la revisión
+     * contó 40 muestras en 400 s). Se hace aquí, cada cuadro y sin tocar el
+     * núcleo: un coche recolocado recibe su desvMin por defecto y aquí se sube.
+     */
+    function medianaCoches() {
+      var tr = S.traffic, i; if (!tr || !tr.cars || !(metro.vi >= 0) || !metro.listo) return;
+      for (i = 0; i < tr.cars.length; i++) {
+        var c = tr.cars[i]; if (!c.R || c.R.via !== metro.vi) continue;
+        var m = METRO.MEDIANA - c.off; if (c.desvMin < m) c.desvMin = m;
+      }
+    }
     var _pe = {};
     function cuadroMetro(tsec) {
       var im = metro.trenes; metro.cercano = 1e9; metro.dibujados = 0;
@@ -1036,9 +1237,9 @@
         for (j = 0; j < METRO.COCHES; j++) {
           var s = p.s + (j - (METRO.COCHES - 1) / 2) * METRO.PASO_COCHE;
           ejePunto(s, _pe);
-          var u = METRO.VIA * p.dir, rx = -_pe.tz, rz = _pe.tx;
+          var u = carrilTren(s, p.dir), du = carrilTren(s + 0.5, p.dir) - carrilTren(s - 0.5, p.dir), rx = -_pe.tz, rz = _pe.tx;
           dummy.position.set(_pe.x + rx * u, _pe.y + 0.25, _pe.z + rz * u);
-          dummy.rotation.set(0, Math.atan2(-_pe.tz, _pe.tx) + (p.dir < 0 ? Math.PI : 0), 0);
+          dummy.rotation.set(0, Math.atan2(-(_pe.tz + rz * du), _pe.tx + rx * du) + (p.dir < 0 ? Math.PI : 0), 0);
           dummy.scale.set(1, 1, 1); dummy.updateMatrix();
           im.setMatrixAt(n++, dummy.matrix);
         }
@@ -1129,7 +1330,7 @@
         var lz = lazo(pts, r.o), v = validaRuta(lz, r.c);
         muestras += v.total; malas += v.malas;
         if (v.malas > 0) { descartadas++; continue; }
-        var ruta = { id: r.id, tipo: r.tipo, v: r.v, n: r.n, lz: lz, desfase: U.real01(U.semillaMorfologia(i, 97, 44)) };
+        var ruta = { id: r.id, tipo: r.tipo, v: r.v, n: r.n, lz: lz, desfase: U.real01(U.semillaMorfologia(i, 97, 44)), fase: r.fase || 0 };
         barcos.rutas.push(ruta); tot += r.n; porTipo[r.tipo] = (porTipo[r.tipo] || 0) + r.n;
       }
       var tipo;
@@ -1143,7 +1344,48 @@
         barcos.tipos[tipo] = { mesh: im, tri: g.attributes.position.count / 3, n: 0 };
       }
       barcos.total = tot;
-      barcos.info = { rutas: barcos.rutas.length, descartadas: descartadas, barcos: tot, muestras: muestras, muestrasEnTierra: malas };
+      sincronizaAbras();
+      var cr = crucesBarcos();
+      barcos.info = { rutas: barcos.rutas.length, descartadas: descartadas, barcos: tot, muestras: muestras, muestrasEnTierra: malas,
+        periodo: Math.round(barcos.periodo || 0), distanciaMinima: Math.round(cr.min * 10) / 10, cruces: cr.cruces };
+    }
+    // Las abras cruzan el Creek por donde navegan los dhows, y validaRuta solo
+    // mira la tierra: la revisión vio 4 cruces en una hora a menos de 10 m
+    // entre centros (uno a 4,2 m). Se arregla con el reloj, sin estado: los
+    // dhows del Creek, iguales y equiespaciados, repiten su configuración cada
+    // P = L/(n·v) segundos (834 s); la velocidad de cada abra se ajusta a un
+    // número entero k de sus propios periodos dentro de P (de 2,8 m/s a la más
+    // cercana), así que todo el Creek se repite cada P, y el desfase de cada
+    // abra (`fase`, en 64avos de su lazo, en RUTAS) se eligió entre todos los
+    // posibles con `publico.fasesAbras()` para que ningún casco se acerque a
+    // otro de otra ruta a menos de 20 m (la suma de las medias esloras de un
+    // dhow y un abra es 17,5 m). `crucesBarcos` lo vuelve a comprobar al cargar.
+    function sincronizaAbras() {
+      var i, creek = null;
+      for (i = 0; i < barcos.rutas.length; i++) if (barcos.rutas[i].id === 'creek') creek = barcos.rutas[i];
+      if (!creek) return;
+      var P = creek.lz.L / (creek.n * creek.v);
+      barcos.periodo = P;
+      for (i = 0; i < barcos.rutas.length; i++) {
+        var r = barcos.rutas[i]; if (r.tipo !== 'abra') continue;
+        var k = Math.max(1, Math.round(r.n * P * r.v / r.lz.L));
+        r.v = k * r.lz.L / (r.n * P); r.k = k; r.desfase = r.fase / 64;
+      }
+    }
+    /** Distancia mínima entre barcos de rutas distintas en un periodo (cada segundo) y muestras a menos de 20 m. */
+    function crucesBarcos(soloRuta) {
+      var P = barcos.periodo || 600, t, i, j, a, b2, L = [], min = 1e9, cruces = 0;
+      for (i = 0; i < barcos.rutas.length; i++) for (j = 0; j < barcos.rutas[i].n; j++) L.push({ r: i, j: j, p: {} });
+      for (t = 0; t < P; t += 1) {
+        for (i = 0; i < L.length; i++) posBarco(barcos.rutas[L[i].r], L[i].j, t, L[i].p);
+        for (a = 0; a < L.length; a++) for (b2 = a + 1; b2 < L.length; b2++) {
+          if (L[a].r === L[b2].r) continue;
+          if (soloRuta !== undefined && L[a].r !== soloRuta && L[b2].r !== soloRuta) continue;
+          var dx = L[a].p.x - L[b2].p.x, dz = L[a].p.z - L[b2].p.z; if (Math.abs(dx) > 60 || Math.abs(dz) > 60) continue;
+          var d = Math.sqrt(dx * dx + dz * dz); if (d < min) min = d; if (d < 20) cruces++;
+        }
+      }
+      return { min: min, cruces: cruces };
     }
     /** Posición del barco i de una ruta en el instante tsec. */
     function posBarco(ruta, i, tsec, out) {
@@ -1219,6 +1461,7 @@
         cuadroFoto(dt);
         actualizaFrustum();
         cuadroMetro(tsec);
+        medianaCoches();
         cuadroBarcos(tsec);
         actualizaSonido(dt);
         if ((S.frame & 31) === 0) pintaBotones();
@@ -1231,7 +1474,13 @@
         if (abajo && foto.activo && k === 'escape') { saleFoto(); return true; }
         return false;
       },
-      sol: function (info) { guardaBaseSol(info); },
+      sol: function (info) {
+        guardaBaseSol(info);
+        // El núcleo acaba de rehacer el mapa cúbico con el cielo: en plena
+        // tormenta se vuelve a teñir (y al acabar se queda el del cielo).
+        if (tormenta.aplicada && tormenta.k >= 0.35) envTormenta(0.22 + 0.78 * (1 - (S.night || 0)));
+        else tormenta.envTenido = false;
+      },
       calidad: function () { creaArena(Q().arena); },
       modo: function () { pintaBotones(); },
       vr: function (activo) { if (activo && foto.activo) saleFoto(); },
@@ -1270,11 +1519,21 @@
         calendario: function (n, desdeSeg) { return proximasTormentas(n || 5, desdeSeg).map(function (x) { return { dia: x.dia, inicio: fechaDubai(x.ini), fin: horaDubai(x.fin), rumbo: x.rumbo }; }); },
         tormentaDelDia: tormentaDelDia,
         metro: function () { return metro.info; },
-        tren: function (k, tsec) { if (!metro.listo) return null; var p = posTren(k, tsec === undefined ? ahora() : tsec), e = ejePunto(p.s, {}); return { s: p.s, dir: p.dir, parado: p.parado, x: e.x, y: e.y, z: e.z, tx: e.tx, tz: e.tz }; },
+        tren: function (k, tsec) {
+          if (!metro.listo) return null;
+          var p = posTren(k, tsec === undefined ? ahora() : tsec), e = ejePunto(p.s, {}), coches = [], j;
+          for (j = 0; j < METRO.COCHES; j++) { var sj = p.s + (j - (METRO.COCHES - 1) / 2) * METRO.PASO_COCHE, ej = ejePunto(sj, {}), uj = carrilTren(sj, p.dir); coches.push({ s: sj, u: uj, x: ej.x - ej.tz * uj, z: ej.z + ej.tx * uj }); }
+          return { s: p.s, dir: p.dir, parado: p.parado, x: e.x, y: e.y, z: e.z, tx: e.tx, tz: e.tz, u: carrilTren(p.s, p.dir), coches: coches };
+        },
         estacion: function (i) {
           if (!metro.listo) return null;
           var e = ejePunto(metro.paradas[i], {}), st = metro.sitios[i], o = { s: metro.paradas[i], x: e.x, y: e.y, z: e.z, tx: e.tx, tz: e.tz, suelo: M.groundH(e.x, e.z), campo: S.field ? S.field.atWorld(e.x, e.z) : null, torre: null };
-          if (st) { var tx = e.x + e.tx * st.dx - e.tz * st.lat * st.lado, tz = e.z + e.tz * st.dx + e.tx * st.lat * st.lado; o.torre = { x: tx, z: tz, lado: st.lado, lat: st.lat, suelo: M.groundH(tx, tz), campo: S.field ? S.field.atWorld(tx, tz) : null, bajo: (ctx.catastro.bajo(tx, tz) || {}).id || null }; }
+          if (st) {
+            var tx = e.x + e.tx * st.dx - e.tz * st.lat * st.lado, tz = e.z + e.tz * st.dx + e.tx * st.lat * st.lado, it = (S.catastro && S.catastro.items) || [], ajeno = null, k2, lc = {};
+            // Un sólido del catastro que no sea del metro y contenga la torre.
+            for (k2 = 0; k2 < it.length && !ajeno; k2++) { var so = it[k2]; if (/^metro:/.test(so.id) || Math.abs(so.x - tx) > 300 || Math.abs(so.z - tz) > 300) continue; ctx.catastro.aLocal(so, tx, tz, lc); if (Math.abs(lc.x) <= so.hw + 4.5 && Math.abs(lc.z) <= so.hd + 4.5) ajeno = so.id; }
+            o.torre = { x: tx, z: tz, lado: st.lado, lat: st.lat, suelo: M.groundH(tx, tz), campo: S.field ? S.field.atWorld(tx, tz) : null, bajo: ajeno, propio: (ctx.catastro.bajo(tx, tz) || {}).id || null, otraVia: otraVia(metro.otras, tx, tz, 5.7, false) };
+          }
           return o;
         },
         barcos: function (tsec) {
@@ -1286,6 +1545,17 @@
           return out;
         },
         rutas: function () { return barcos.info; },
+        /** Para quien toque RUTAS: la distancia mínima de cada abra a los demás barcos con cada `fase` posible (0–63). */
+        fasesAbras: function () {
+          var out = {}, i, f;
+          for (i = 0; i < barcos.rutas.length; i++) {
+            var r = barcos.rutas[i]; if (r.tipo !== 'abra') continue;
+            var d0 = r.desfase, l = [];
+            for (f = 0; f < 64 / r.n; f++) { r.desfase = f / 64; l.push(Math.round(crucesBarcos(i).min * 10) / 10); }
+            r.desfase = d0; out[r.id] = { k: r.k, v: Math.round(r.v * 1000) / 1000, distanciaPorFase: l };
+          }
+          return out;
+        },
         foto: { entra: function () { entraFoto(); return foto.activo; }, sale: function () { saleFoto(); return !foto.activo; }, focal: function (mm) { if (mm) { foto.focal = clamp(mm, 14, 200); if (ui.focR) { ui.focR.value = String(rangoDeFocal(foto.focal)); ui.focT.textContent = Math.round(foto.focal) + ' mm'; } } return foto.focal; }, nivel: function (v) { foto.nivel = !!v; if (!v) camera.clearViewOffset(); return foto.nivel; }, travelling: function (v) { foto.travelling = !!v; return v; }, guardar: function () { foto.pendiente = true; return true; }, estado: function () { return { activo: foto.activo, capturas: foto.capturas, ultima: foto.ultima }; } },
         sonido: function () { return { activo: !!snd.activo, estado: snd.ac ? snd.ac.state : null, nodos: snd.nodos, volumen: snd.volumen, pasos: snd.pasoN }; },
         gasto: function () { return { triangulos: gasto.triangulos, llamadas: gasto.llamadas }; }

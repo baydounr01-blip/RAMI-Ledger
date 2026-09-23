@@ -2855,12 +2855,12 @@
      * se plante encima de él ni de un hito.
      */
     function planificarBarrios(meta) {
-      var cl = meta.clusters || [], i, j, franjas = franjasDelMapa(meta);
+      var cl = meta.clusters || [], i, j, franjas = franjasDelMapa(meta), fantasmas = catastroNuevo();
       S.edificios = []; S.rechazadosPorHuella = 0; S.rechazadosPorVia = 0;
       for (i = 0; i < cl.length; i++) {
         var c = cl[i], rnd = lcg(c.seed || (i + 1) * 7919), cw = S.geo.toWorld(c.lat, c.lon);
-        var kind = TIPOS_BARRIO.indexOf(c.kind) >= 0 ? c.kind : 'blocks', lista = [], tries = 0;
-        for (j = 0; j < c.count && tries < c.count * 4; tries++) {
+        var kind = TIPOS_BARRIO.indexOf(c.kind) >= 0 ? c.kind : 'blocks', lista = [], tries = 0, sv = 0;
+        for (j = 0; j + sv < c.count && tries < c.count * 4; tries++) {
           var ang = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * c.radius_m;
           var x = cw.x + Math.cos(ang) * rr, z = cw.z + Math.sin(ang) * rr;
           if (!insideMap(x, z)) continue;
@@ -2873,22 +2873,36 @@
           // posiciones que pisan la trama, las MANZANAS salen solas: el edificio
           // se queda donde queda sitio, que es exactamente como crece una ciudad.
           if (enCalle(x, z, Math.max(fw, fd) * 0.5)) continue;
-          if (enViaDelMapa(franjas, x, z, Math.max(fw, fd) * 0.5)) { S.rechazadosPorVia++; continue; }
           var yawLibre = rnd() * Math.PI, tono = rnd();
+          // Ni sobre una vía del mapa (v0.11.0). Va DESPUÉS de sacar yawLibre y
+          // tono, igual que huellaLibre: el intento rechazado consume de la serie
+          // del barrio lo mismo que antes, y los demás edificios no se mueven.
+          // El que pisa la vía y sin esta regla habría entrado (huella libre) se
+          // queda como FANTASMA: no se dibuja ni choca, pero ocupa su sitio para
+          // los intentos siguientes, cuenta para el total del barrio y conserva
+          // su número (`sv`; el edificio es el j + sv). Así el plano es el de
+          // antes de la regla menos los que pisaban una vía, y los demás
+          // conservan sitio, id y matiz.
+          var rh = Math.sqrt(fw * fw + fd * fd) * 0.5, libre = huellaLibre(S.catastro, x, z, rh) && huellaLibre(fantasmas, x, z, rh);
+          if (enViaDelMapa(franjas, x, z, Math.max(fw, fd) * 0.5)) {
+            S.rechazadosPorVia++;
+            if (libre) { sv++; catastroAlta(fantasmas, { x: x, z: z, hw: fw * 0.5, hd: fd * 0.5, yaw: 0 }); }
+            continue;
+          }
           // Ni sobre otro edificio ni sobre un hito (v0.10.15).
-          if (!huellaLibre(S.catastro, x, z, Math.sqrt(fw * fw + fd * fd) * 0.5)) { S.rechazadosPorHuella++; continue; }
+          if (!libre) { S.rechazadosPorHuella++; continue; }
           var ori = orientaEnTrama(x, z, yawLibre);
           // La planta y sus detalles salen de la POSICIÓN, no de la serie del
           // barrio: canal 11 de la morfología, el mismo número en toda máquina.
           var r2 = lcg(semillaMorfologia(Math.round(x), Math.round(z), 11)), v1 = r2(), v2 = r2(), v3 = r2();
-          var tl = TONOS_BARRIO[kind][Math.floor(tono * TONOS_BARRIO[kind].length)], m = 0.9 + 0.2 * hash2(j, i);
+          var tl = TONOS_BARRIO[kind][Math.floor(tono * TONOS_BARRIO[kind].length)], m = 0.9 + 0.2 * hash2(j + sv, i);
           // La celda de la cuadrícula en la que cae (o −1): si una parcela comprada
           // le pone su edificio encima, este se oculta (v0.10.16, applyCity).
           var cel = worldToCell(x, z);
           var it = { x: x, y: hg - 1, z: z, h: h + 1, w: fw, d: fd, yaw: ori.yaw, alineado: ori.alineado, kind: kind,
                      tono: [tl[0] * m, tl[1] * m, tl[2] * m], barrio: c.name || '', v: v1, v2: v2, fachada: fachadaBarrio(kind, v3),
                      celda: cel ? cel.y * N + cel.x : -1, oculto: false };
-          it.solido = { x: x, z: z, hw: fw * 0.5, hd: fd * 0.5, yaw: ori.yaw, y0: it.y, h: it.h, tipo: kind, id: kind + ':' + i + ':' + j, nombre: it.barrio };
+          it.solido = { x: x, z: z, hw: fw * 0.5, hd: fd * 0.5, yaw: ori.yaw, y0: it.y, h: it.h, tipo: kind, id: kind + ':' + i + ':' + (j + sv), nombre: it.barrio };
           catastroAlta(S.catastro, it.solido);
           lista.push(it);
           j++;

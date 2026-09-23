@@ -89,9 +89,21 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
   Desde la v0.11.0 el plano de los barrios (`S.edificios`) no pisa las vías
   del mapa: `planificarBarrios` rechaza, además de las calles de la trama, las
   posiciones cuya huella entra en la calzada o la acera de `ejesDelMapa`
-  (`enViaDelMapa`); `S.rechazadosPorVia` cuenta los rechazos. Lo que un módulo
+  (`enViaDelMapa`); `S.rechazadosPorVia` cuenta los rechazos. El rechazo va
+  después de sacar `yawLibre` y `tono`, y el rechazado que habría entrado queda
+  como fantasma (ocupa su sitio para los intentos siguientes y conserva su
+  número): el plano es el de antes menos los edificios que pisaban una vía,
+  y los demás conservan sitio, `id` (`kind:i:j`) y matiz. Lo que un módulo
   levante sobre una vía del mapa (el viaducto de `extras`) no se encuentra un
   edificio de barrio dentro.
+  El módulo `extras` escribe en dos sitios del estado del núcleo: da de alta en
+  el catastro los pilares del viaducto y las torres de las estaciones (tipo
+  `'hito'`, `id` `metro:pilar:<i>` y `metro:estacion:<i>`, `nombre` «Metro de
+  Dubái»: a pie se choca con ellos y el panel los nombra al señalarlos), y cada
+  cuadro sube `desvMin` de los coches de la troncal del metro para que su
+  centro no pase a menos de 1,9 m del eje (el núcleo deja 1,2 m al adelantar
+  y ahí el coche atravesaba el pilar). Quien recorra el catastro buscando
+  hitos del catálogo, que salte los `metro:`.
 - **Materiales y luz**: `shared` (uniformes compartidos: `uSun`, `uSunColor`,
   `uSkyColor`, `uGroundColor`, `uNight`, `uDusk`, `uEnv`, `uInterior`), `buildMat`,
   `plainMat`, `terrainMat`, `makeBuildingMaterial(shared, ventanas)`, `mats`
