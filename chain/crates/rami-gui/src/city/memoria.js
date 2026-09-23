@@ -361,14 +361,17 @@
     }
     // Alturas de la etiqueta del distrito enfocado desde la lista, en celdas: la
     // primera es la de todas; si con ella no pasa el recorte, se prueban las
-    // demás (más arriba, más abajo) hasta dar con un hueco libre en pantalla.
-    var ALTURAS = [0.9, 1.35, 0.55, 1.8, 0.3, 2.3];
+    // demás (algo más arriba, más abajo) hasta dar con un hueco libre en
+    // pantalla. Tope 1,2 celdas (780 m): en la vista oblicua una etiqueta más
+    // alta se proyecta a más de un kilómetro detrás de su distrito y parecía
+    // marcar otro barrio (revisión 3; antes llegaba a 2,3 celdas, 1.500 m).
+    var ALTURAS = [0.9, 1.2, 0.55, 0.3];
     var foco = null;                     // { distrito, k, cuadros, visto } tras un clic en la lista
     /** Dónde va la etiqueta de un distrito: 0,9 celdas (60–700 m) sobre su empresa ancla; la enfocada, a su altura de prueba. */
     function puntoEtiqueta(e) {
       var w = M.cellWorld(U.clamp(e.cx, 0, ctx.N() - 1), U.clamp(e.cy, 0, ctx.N() - 1));
       var k = foco && foco.distrito === e.distrito ? foco.k : 0;
-      return new THREE.Vector3(w.x, w.y + U.clamp(ctx.CELL() * ALTURAS[k], 60, k ? 1500 : 700), w.z);
+      return new THREE.Vector3(w.x, w.y + U.clamp(ctx.CELL() * ALTURAS[k], 60, k ? 800 : 700), w.z);
     }
     /**
      * El vuelo de la lista: como handle.flyTo (1,2 s, phi 0,95, 5,5 celdas) pero
@@ -393,7 +396,7 @@
         from: { theta: c.cur.theta, phi: c.cur.phi, radius: c.cur.radius, target: c.cur.target.clone() },
         to: { theta: th, phi: PHI, radius: r, target: objetivo } };
     }
-    function ponEncargos(d) {
+    function ponEncargos(d, mantenFoco) {
       lista = encargos(d && d.datos ? d.datos : d); listaSel = -1;
       // Con `ctx.etiquetas`, como manda el contrato: el núcleo las recorta con sus
       // rótulos (barrios, hitos, ventas) y la que chocaría con uno no se dibuja.
@@ -405,9 +408,13 @@
       // la de Downtown sin tocar ningún rótulo. La lista entera está en la
       // tarjeta del panel.
       if (!encLabels) { encLabels = new ctx.LabelSet(ctx.uniformes.viewport, false); encLabels.mesh.name = 'memoria_encargos'; ctx.scene.add(encLabels.mesh); ctx.etiquetas(encLabels); }
-      foco = null;
+      if (!mantenFoco) foco = null;
       ponEtiquetas();
       pintaBarra(); pintaLista();
+    }
+    /** Encendidas si el jugador las quiere y no va a pie: sin prueba de profundidad, a pie cruzarían las paredes. */
+    function muestraEtiquetas() {
+      if (encLabels) encLabels.mesh.visible = verEncargos && encLabels.items.length > 0 && S.mode !== 'walk';
     }
     function ponEtiquetas() {
       var items = [], i;
@@ -416,7 +423,7 @@
         items.push({ x: w.x, y: w.y, z: w.z, text: textoEncargo(e), color: '#ffb35c', size: 12, bold: true, pin: true, maxDist: S.L * 0.9, priority: 3, distrito: e.distrito });
       }
       encLabels.set(items);
-      encLabels.mesh.visible = verEncargos && items.length > 0;
+      muestraEtiquetas();
     }
     /**
      * Cada cuadro, tras un clic en la lista: cuando el vuelo acaba y el núcleo ya
@@ -436,6 +443,9 @@
       if (foco.k + 1 >= ALTURAS.length) { foco.visto = true; foco.sinHueco = true; return; }
       foco.k++; foco.cuadros = 0;
       ponEtiquetas();
+      // El vuelo apuntó con la altura anterior: con la nueva, la etiqueta
+      // quedaba en el borde de arriba y no sobre su distrito. Se rehace.
+      for (i = 0; i < lista.length; i++) if (lista[i].distrito === foco.distrito) { vuela(lista[i]); break; }
     }
     /**
      * La lista de la vista 3D: un distrito por fila con sus tres primeros
@@ -590,7 +600,7 @@
       idiomaVisto = idioma();
       oye(btnEnc, 'click', function () {
         verEncargos = !verEncargos; guardaLocal(ENC_CLAVE, verEncargos ? '1' : '0');
-        if (encLabels) encLabels.mesh.visible = verEncargos && encLabels.items.length > 0;
+        muestraEtiquetas();
         pintaBarra(); pintaLista();
       });
       oye(listaEl, 'click', function (ev) {
@@ -661,7 +671,7 @@
       for (var i = 0; i < huecos.length; i++) huecos[i].clave = '';
       placaT = 1e9;
       if (btnEnc) btnEnc.title = t('Lo que la ciudad importa, por distrito');
-      if (S.city) ponEncargos(S.city); else { pintaBarra(); pintaLista(); }
+      if (S.city) ponEncargos(S.city, true); else { pintaBarra(); pintaLista(); }
       if (guia && guia.className.indexOf(' on') >= 0) pintaGuia();
     }
     /** Cada segundo: el idioma, la cuenta atrás de la guía abierta y si el módulo «umbral» dice que estás dentro. */
@@ -698,7 +708,7 @@
         var ya = Date.now();
         if (ya - reloj >= 1000) { reloj = ya; cadaSegundo(); }
       },
-      modo: function (m) { if (m === 'walk') marca('a_pie', true); pintaLista(); },
+      modo: function (m) { if (m === 'walk') marca('a_pie', true); muestraEtiquetas(); pintaLista(); },
       estadisticas: function (o) {
         var activas = 0; for (var i = 0; i < huecos.length; i++) if (huecos[i].clave) activas++;
         // etiquetasEncargos: las encendidas; …Visibles: las que pasan el recorte con los rótulos del núcleo.
@@ -725,7 +735,7 @@
         encargos: function () { return lista; },
         /** Placas calculadas y las que tienen hueco ahora (pruebas). */
         placas: function () { return { total: placas.length, todas: placas.map(function (p) { return { x: p.x, y: p.y, since: p.since, centro: p.centro.toArray(), normal: p.nor.toArray() }; }), visibles: huecos.filter(function (h) { return !!h.clave; }).map(function (h) { return { x: h.placa.x, y: h.placa.y, since: h.placa.since, nombre: h.placa.nombre, centro: h.placa.centro.toArray(), normal: h.placa.nor.toArray() }; }) }; },
-        mostrarEncargos: function (v) { verEncargos = !!v; if (encLabels) encLabels.mesh.visible = verEncargos && encLabels.items.length > 0; pintaBarra(); pintaLista(); },
+        mostrarEncargos: function (v) { verEncargos = !!v; muestraEtiquetas(); pintaBarra(); pintaLista(); },
         /** Las etiquetas de encargos y si pasan el recorte ahora (pruebas). */
         etiquetas: function () {
           if (!encLabels) return [];

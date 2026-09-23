@@ -3439,7 +3439,7 @@
         c.k = kk; c.off = R.carriles[c.k];
         c.vmax = R.vmax * (0.85 + 0.15 * rnd()) * (1 - 0.03 * c.k);
         c.vel = c.vmax * 0.8; c.desvio = 0; c.lado = 0; c.parado = 0; c.espera = 0; c.cede = null; c.conf = null; c.forzado = null; c.anillo = -1; c.vu = -1; c.dtLod = 0;
-        c.desvMin = 1.2 - c.off; c.desvMax = R.semi - 1.2 - c.off;
+        limitesDesvio(c, R);
         if (porRuta) (porRuta[R.id] || (porRuta[R.id] = [])).push(c);
         poseCoche(c);
         return true;
@@ -3606,6 +3606,21 @@
           ent.c.lider = d ? d.c : null; ent.c.hueco = d ? Math.abs(d.t - ent.t) : 1e9;
         }
       }
+    }
+    /**
+     * Hasta dónde se aparta un coche para esquivar al jugador (`desvMin` hacia
+     * la mediana, `desvMax` hacia el bordillo, relativos al centro de su
+     * carril): hasta el borde de la calzada si por ese lado no hay otro carril
+     * de su sentido, y sin salir del suyo si lo hay. Hasta la revisión 3 de la
+     * v0.11.0 el límite era siempre el borde de la calzada: en la troncal, los
+     * coches de dos carriles vecinos se apartaban hacia el mismo hueco y se
+     * solapaban a 25 m del jugador (la fila solo mira el carril propio). Sin
+     * sitio para pasar, el coche frena ante el jugador, como ya hacía.
+     */
+    function limitesDesvio(c, R) {
+      var L = R.carriles, k = c.k;
+      c.desvMin = k > 0 ? (L[k - 1] + L[k]) * 0.5 - c.off + COCHE_HW + 0.2 : 1.2 - c.off;
+      c.desvMax = k < L.length - 1 ? (L[k] + L[k + 1]) * 0.5 - c.off - COCHE_HW - 0.2 : R.semi - 1.2 - c.off;
     }
     /** La velocidad en el semicírculo de la vuelta: 3 m/s² de aceleración lateral, entre 2 m/s y VUELTA_V. */
     function vGiro(r) { return clamp(Math.sqrt(3 * r), 2, VUELTA_V); }
@@ -4106,7 +4121,10 @@
         // la derecha es girar en sentido horario visto desde arriba, o sea, yaw
         // negativo.
         c.yaw = Math.atan2(-c.fz, c.fx);
-        if (dtc > 0 && c.anillo < 0 && c.vu < 0) c.yaw -= Math.atan2((c.desvio - desvioAntes) / dtc, Math.max(c.vel, 1));
+        // El morro sigue al desvío, con tope de 0,35 rad: un coche recolocado
+        // (desvío a 0 de golpe) o casi parado salía girado hasta 51° respecto
+        // a su carril (revisión 3 de la v0.11.0).
+        if (dtc > 0 && c.anillo < 0 && c.vu < 0) c.yaw -= clamp(Math.atan2((c.desvio - desvioAntes) / dtc, Math.max(c.vel, 1)), -0.35, 0.35);
       }
       // El desatasco (ronda 1): un coche parado más de ATASCO_S segundos que está
       // en un ciclo de esperas (siguiendo `causa` se vuelve a él) no va a salir
@@ -6317,7 +6335,7 @@
               var R = S.trafficPaths[e.ruta];
               c.fuera = false; c.R = R; c.t = e.t; c.dir = e.dir; c.k = Math.min(R.carriles.length - 1, e.carril || 0); c.off = R.carriles[c.k];
               c.vmax = e.vmax || R.vmax; c.vel = e.vel === undefined ? c.vmax : e.vel; c.desvio = 0; c.lado = 0; c.parado = 0; c.espera = 0; c.cede = null; c.conf = null; c.forzado = null; c.vu = -1;
-              c.desvMin = 1.2 - c.off; c.desvMax = R.semi - 1.2 - c.off; poseCoche(c);
+              limitesDesvio(c, R); poseCoche(c);
             }
             tr.vivo = false; return Math.min(lista.length, tr.cars.length);
           },

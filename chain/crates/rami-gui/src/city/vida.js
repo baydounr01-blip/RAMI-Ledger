@@ -1074,7 +1074,13 @@
      */
     function transcurrido(v, T, pres) {
       var el = ((T - v.t0) % DIA + DIA) % DIA, du = V.dur ? V.dur[v.id] : NaN;
-      if (du === du && (du < 0 || el >= du)) return -1;
+      if (du === du && (du < 0 || el >= du)) {
+        // Con la duración sabida, el camino se guardó a la vez que ella: si
+        // no se suelta aquí, el de un viaje acabado se queda en la caché
+        // hasta que la poda lo echa (la caché crecía hasta CACHE_MAX).
+        if (du >= 0) suelta(v.id);
+        return -1;
+      }
       var R = rutaDe(v, pres); if (!R) return -1;
       if (el >= R.dur) { suelta(v.id); return -1; }
       return el;

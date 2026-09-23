@@ -129,8 +129,12 @@ el formato de los ficheros.**
   `fly()` (como la restauración de `extras.js`); a pie se queda en
   `handle.flyTo`. Después, **`buscaHueco()`** (en `cuadro`): cuando el vuelo
   acaba y el núcleo ha recortado dos cuadros, si la etiqueta del distrito no
-  pasa, prueba la siguiente altura de `ALTURAS` (0,9; 1,35; 0,55; 1,8; 0,3 y
-  2,3 celdas) hasta que pasa. No se sale del contrato de `ctx.etiquetas`: la
+  pasa, prueba la siguiente altura de `ALTURAS` (0,9; 1,2; 0,55 y 0,3 celdas,
+  tope 800 m) y vuelve a volar con la altura nueva, para que la etiqueta quede
+  en el centro y sobre su distrito. Con alturas de hasta 2,3 celdas (1.500 m),
+  en la vista oblicua la etiqueta se proyectaba a más de un kilómetro detrás de
+  su distrito y parecía marcar otro barrio (revisión 3). A pie las etiquetas
+  se apagan (`muestraEtiquetas`), y el cambio de idioma conserva el foco. No se sale del contrato de `ctx.etiquetas`: la
   etiqueta sigue recortándose la última y busca sitio, no pisa a nadie. El
   vuelo no selecciona la empresa: el rótulo de la selección caería en el mismo
   punto.

@@ -336,6 +336,34 @@ peatones). Ningún texto visible nuevo: los peatones no llevan rótulo y no hay
   partes (grafo, pesos en cm, accesos, sitio del acceso en cm, trabajos, viajes).
   Resultados en «Ronda de corrección 2».
 
+## Revisión 3 (arreglado en la integración)
+
+La tercera revisión encontró dos fallos importantes y un detalle; se
+arreglaron directamente sobre la integración.
+
+- **La caché soltaba mal los caminos.** `rutaDe` guarda la duración
+  (`V.dur`) a la vez que el camino, así que `transcurrido` salía por la
+  duración sabida antes de llegar a `suelta()`: el camino de un viaje acabado
+  se quedaba hasta que la poda lo echaba y la caché crecía hasta `CACHE_MAX`
+  (de 300 a 1.176 caminos en 20 min simulados). Ahora la salida temprana
+  también lo suelta. Con la prueba del revisor (`rev3_cache.mjs`, calidad
+  media, zona 11 desde las 7:30): los caminos siguen a los que están en la
+  calle, de 244 a 197 con entre 137 y 188 en la calle, y 0 podas.
+- **El desvío por el jugador empotraba coches en el carril de al lado.** El
+  lado se limitaba solo por el borde de la calzada, y la fila solo mira el
+  carril propio: en la troncal, los carriles 3 y 4 se apartaban hacia el
+  mismo hueco y se solapaban a 25 m del jugador (67 muestras). Ahora
+  `limitesDesvio` acota el desvío al propio carril si al lado hay otro de su
+  sentido, y al borde de la calzada si no; sin sitio para pasar, el coche
+  frena ante el jugador, como ya hacía. Con `rev3_desvio.mjs` (ultra, 17:54,
+  zona 6, jugador a pie sobre la ruta 21, 1.800 pasos de 1/30 s): 0 solapes.
+- **El morro girado hasta 51°** en coches recolocados o casi parados: el
+  giro que sigue al desvío tiene un tope de 0,35 rad. En la misma prueba, 0
+  coches girados más de eso (antes 153).
+- Batería de choques tras los tres arreglos (`r2_solapes.mjs ultra 6 17.9`,
+  paso 0,1, 10 min): 0 solapes, 0 contactos con peatones, 0 parados más de
+  60 s (el que más, 46,5 s), 0 apariciones a la vista, 0 errores.
+
 ## Ronda de corrección 2
 
 La revisión adversarial encontró tres fallos importantes y cinco menores. Todos
