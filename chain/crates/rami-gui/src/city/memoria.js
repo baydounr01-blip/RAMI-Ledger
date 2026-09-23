@@ -21,8 +21,9 @@
  *            `applyCity` a través de `servicios.patina`.
  *   encargos lo que la ciudad importa (`huecos`: nadie lo ofrece) repartido por
  *            el distrito de las empresas que lo necesitan; etiquetas sobre los
- *            distritos y una barrita con 📋. La tarjeta del panel hace la misma
- *            cuenta (`encargosDe` en dashboard.html).
+ *            distritos, una lista en la vista 3D (un clic vuela al distrito) y
+ *            el botón 📋 que enciende las dos. La tarjeta del panel hace la
+ *            misma cuenta (`encargosDe` en dashboard.html).
  *
  * Y la guía del día uno (📖): seis pasos marcables, con el progreso en
  * localStorage, la cuenta atrás a Dubái y a la escritura de vivienda, y lo que
@@ -126,12 +127,22 @@
 
   function leeLocal(k) { try { return global.localStorage ? global.localStorage.getItem(k) : null; } catch (e) { return null; } }
   function guardaLocal(k, v) { try { if (global.localStorage) global.localStorage.setItem(k, v); } catch (e) { /* ventana privada: el progreso dura la sesión */ } }
-  function miles(n) { return String(Math.max(0, Math.floor(n))).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+  /** El idioma del panel (applyLang lo pone en <html lang>): fechas y cifras en su formato. */
+  function idioma() { try { return global.document.documentElement.lang || 'es'; } catch (e) { return 'es'; } }
+  /** Separador de miles del idioma: «112.000» en español, «112,000» en inglés, «112 000» en ruso. */
+  function miles(n) {
+    n = Math.max(0, Math.floor(n));
+    try { return n.toLocaleString(idioma()); } catch (e) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+  }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   /** «… {n} …» → el valor: la frase entera pasa por t() y cada idioma pone el número donde le toca. */
   function fmt(s, v) { return String(s).replace(/\{(\w+)\}/g, function (m, k) { return v[k] !== undefined ? String(v[k]) : m; }); }
   function hhmm(h) { var m = Math.floor(h * 60 + 1e-6) % 1440; return Math.floor(m / 60) + ':' + ('0' + m % 60).slice(-2); }
-  function dhm(seg) { seg = Math.max(0, seg | 0); var d = Math.floor(seg / 86400), h = Math.floor(seg % 86400 / 3600), m = Math.floor(seg % 3600 / 60); return (d ? d + ' d ' : '') + h + ' h ' + m + ' min'; }
+  /** Una fecha de activación (medianoche UTC) como fecha larga en el idioma del panel, igual que la tarjeta «Encargos». */
+  function fechaUTC(s) {
+    try { return new Date(s * 1000).toLocaleDateString(idioma(), { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }); }
+    catch (e) { return new Date(s * 1000).toISOString().slice(0, 10); }
+  }
 
   var CSS = [
     '.mem-barra{position:absolute;left:10px;bottom:10px;z-index:3;display:flex;gap:6px;flex-wrap:wrap}',
@@ -155,12 +166,29 @@
     '.mem-guia .mem-cerrar{position:absolute;right:8px;top:6px;background:transparent;color:#e9eff7;font-size:16px}',
     '.mem-guia .mem-manana{border-top:1px solid rgba(255,255,255,.18);margin-top:6px;padding-top:8px}',
     '.mem-guia .mem-manana ul{margin:4px 0 0 18px;padding:0;color:#b9c3d6;font-size:12.5px}',
-    '.mem-guia .mem-aviso{margin-top:10px;font-size:11.5px;color:#ffd166}'
+    '.mem-guia .mem-aviso{margin-top:10px;font-size:11.5px;color:#ffd166}',
+    // La lista de encargos, encima de la barrita: la parte de los encargos que se
+    // ve siempre (las etiquetas ceden ante los rótulos del núcleo). A la
+    // izquierda, para no pisar la guía, que va a la derecha.
+    '.mem-enc{position:absolute;left:10px;bottom:46px;z-index:3;display:none;width:62%;max-width:270px;max-height:38%;overflow:auto;',
+    'background:rgba(8,13,20,.86);border:1px solid rgba(255,179,92,.35);border-radius:10px;padding:6px 8px;font:12px/1.35 system-ui,sans-serif;color:#e9eff7}',
+    '.mem-enc.on{display:block}',
+    '.mem-enc .mem-enc-t{font-weight:600;color:#ffd7a8;margin:0 0 3px}',
+    '.mem-enc button{display:block;width:100%;text-align:left;background:transparent;border:0;border-top:1px solid rgba(255,255,255,.08);color:#e9eff7;',
+    'font:12px/1.35 system-ui,sans-serif;padding:4px 0;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.mem-enc button:hover,.mem-enc button.on{color:#ffd7a8}',
+    '.mem-enc b{color:#ffb35c}'
   ].join('\n');
 
   global.RamiCity3D.extend('memoria', function (ctx) {
     var THREE = ctx.THREE, S = ctx.S, t = ctx.t, U = ctx.util, M = ctx.mundo;
     ctx.servicios.patina = patina;
+    /** Una cuenta atrás con las unidades en el idioma del panel (la misma frase que dhms() de dashboard.html). */
+    function dhm(seg) {
+      seg = Math.max(0, seg | 0);
+      var v = { d: Math.floor(seg / 86400), h: Math.floor(seg % 86400 / 3600), m: Math.floor(seg % 3600 / 60) };
+      return v.d ? fmt(t('{d} d {h} h {m} min'), v) : fmt(t('{h} h {m} min'), v);
+    }
 
     // =============================================================================
     // 1. La placa
@@ -331,8 +359,42 @@
       if (e.faltan.length > 1) partes.push('+' + (e.faltan.length - 1));
       return '📋 ' + fmt(t('{distrito}: falta {lista}'), { distrito: e.nombre, lista: partes.join(', ') });
     }
+    // Alturas de la etiqueta del distrito enfocado desde la lista, en celdas: la
+    // primera es la de todas; si con ella no pasa el recorte, se prueban las
+    // demás (más arriba, más abajo) hasta dar con un hueco libre en pantalla.
+    var ALTURAS = [0.9, 1.35, 0.55, 1.8, 0.3, 2.3];
+    var foco = null;                     // { distrito, k, cuadros, visto } tras un clic en la lista
+    /** Dónde va la etiqueta de un distrito: 0,9 celdas (60–700 m) sobre su empresa ancla; la enfocada, a su altura de prueba. */
+    function puntoEtiqueta(e) {
+      var w = M.cellWorld(U.clamp(e.cx, 0, ctx.N() - 1), U.clamp(e.cy, 0, ctx.N() - 1));
+      var k = foco && foco.distrito === e.distrito ? foco.k : 0;
+      return new THREE.Vector3(w.x, w.y + U.clamp(ctx.CELL() * ALTURAS[k], 60, k ? 1500 : 700), w.z);
+    }
+    /**
+     * El vuelo de la lista: como handle.flyTo (1,2 s, phi 0,95, 5,5 celdas) pero
+     * con la etiqueta en el centro de la pantalla. Con flyTo la etiqueta quedaba
+     * encima del centro, justo donde cae el rótulo del barrio, y en la prueba
+     * pasaban el recorte 3 de 6 distritos. El núcleo pega el objetivo de la
+     * órbita al suelo (updateCamera), así que no se puede mirar a la etiqueta:
+     * se mira al punto del suelo que queda detrás de ella en la línea de visión,
+     * a h·tan(phi) de la empresa ancla en la dirección contraria a la cámara (h,
+     * la altura de la etiqueta). Usa `ctx.cam.flight` con la forma de fly() del
+     * núcleo, como la restauración de extras.js. A pie (o sin cámara de órbita)
+     * se queda en handle.flyTo, que lleva al jugador a la celda.
+     */
+    function vuela(e) {
+      var c = ctx.cam;
+      if (S.mode !== 'orbit' || !c || !c.cur || !c.cur.target) { ctx.handle.flyTo(e.cx, e.cy); return; }
+      var PHI = 0.95, r = ctx.CELL() * 5.5, p = puntoEtiqueta(e), w = M.cellWorld(U.clamp(e.cx, 0, ctx.N() - 1), U.clamp(e.cy, 0, ctx.N() - 1));
+      if (c.minR !== undefined) r = U.clamp(r, c.minR, c.maxR);
+      var th = c.cur.theta, lejos = (p.y - w.y) * Math.tan(PHI);
+      var objetivo = new THREE.Vector3(w.x - lejos * Math.sin(th), w.y, w.z - lejos * Math.cos(th));
+      c.flight = { t0: global.performance.now(), dur: 1200,
+        from: { theta: c.cur.theta, phi: c.cur.phi, radius: c.cur.radius, target: c.cur.target.clone() },
+        to: { theta: th, phi: PHI, radius: r, target: objetivo } };
+    }
     function ponEncargos(d) {
-      lista = encargos(d && d.datos ? d.datos : d);
+      lista = encargos(d && d.datos ? d.datos : d); listaSel = -1;
       // Con `ctx.etiquetas`, como manda el contrato: el núcleo las recorta con sus
       // rótulos (barrios, hitos, ventas) y la que chocaría con uno no se dibuja.
       // Ancladas en una empresa del distrito (no en su centro, donde cae el
@@ -343,20 +405,66 @@
       // la de Downtown sin tocar ningún rótulo. La lista entera está en la
       // tarjeta del panel.
       if (!encLabels) { encLabels = new ctx.LabelSet(ctx.uniformes.viewport, false); encLabels.mesh.name = 'memoria_encargos'; ctx.scene.add(encLabels.mesh); ctx.etiquetas(encLabels); }
+      foco = null;
+      ponEtiquetas();
+      pintaBarra(); pintaLista();
+    }
+    function ponEtiquetas() {
       var items = [], i;
       for (i = 0; i < lista.length && i < 40; i++) {
-        var e = lista[i], w = M.cellWorld(U.clamp(e.cx, 0, ctx.N() - 1), U.clamp(e.cy, 0, ctx.N() - 1));
-        items.push({ x: w.x, y: w.y + U.clamp(ctx.CELL() * 0.9, 60, 700), z: w.z, text: textoEncargo(e), color: '#ffb35c', size: 12, bold: true, pin: true, maxDist: S.L * 0.9, priority: 3 });
+        var e = lista[i], w = puntoEtiqueta(e);
+        items.push({ x: w.x, y: w.y, z: w.z, text: textoEncargo(e), color: '#ffb35c', size: 12, bold: true, pin: true, maxDist: S.L * 0.9, priority: 3, distrito: e.distrito });
       }
       encLabels.set(items);
       encLabels.mesh.visible = verEncargos && items.length > 0;
-      pintaBarra();
+    }
+    /**
+     * Cada cuadro, tras un clic en la lista: cuando el vuelo acaba y el núcleo ya
+     * ha recortado dos cuadros, si la etiqueta del distrito no pasa, se sube o se
+     * baja a la siguiente altura de ALTURAS. El recorte de `ctx.etiquetas` va
+     * detrás de los rótulos del núcleo y así se respeta: la etiqueta busca un
+     * hueco libre, no pisa a nadie. Sin hueco en ninguna altura, se rinde (la
+     * lista y la tarjeta siguen ahí).
+     */
+    function buscaHueco() {
+      if (!foco || foco.visto || !encLabels || !encLabels.mesh.visible || (ctx.cam && ctx.cam.flight)) return;
+      if (++foco.cuadros < 2) return;
+      var i, it = encLabels.items;
+      for (i = 0; i < it.length; i++) if (it[i].distrito === foco.distrito) break;
+      if (i >= it.length) { foco = null; return; }
+      if (encLabels.lvis && encLabels.lvis[i * 4]) { foco.visto = true; return; }
+      if (foco.k + 1 >= ALTURAS.length) { foco.visto = true; foco.sinHueco = true; return; }
+      foco.k++; foco.cuadros = 0;
+      ponEtiquetas();
+    }
+    /**
+     * La lista de la vista 3D: un distrito por fila con sus tres primeros
+     * insumos. Un clic vuela a la etiqueta del distrito (vuela(), sin
+     * seleccionar la empresa: el rótulo de la selección caería en el mismo punto
+     * que la etiqueta), y desde ahí la etiqueta pasa el recorte.
+     */
+    function pintaLista() {
+      if (!listaEl) return;
+      // A pie no: tapa la calle y la placa (en la prueba, a 3,2 m, el borde de la
+      // lista pisaba el «@nombre»); vuelve al salir a la órbita.
+      var ver = verEncargos && lista.length > 0 && S.mode !== 'walk', i, j;
+      listaEl.className = 'mem-enc' + (ver ? ' on' : '');
+      if (!ver) { listaEl.innerHTML = ''; return; }
+      var h = '<div class="mem-enc-t">📋 ' + esc(t('Lo que la ciudad importa, por distrito')) + '</div>';
+      for (i = 0; i < lista.length; i++) {
+        var e = lista[i], partes = [];
+        for (j = 0; j < e.faltan.length && j < 3; j++) partes.push(t(nombreSector(e.faltan[j].sector)) + ' ×' + e.faltan[j].empresas);
+        if (e.faltan.length > 3) partes.push('+' + (e.faltan.length - 3));
+        h += '<button type="button" data-mem-enc="' + i + '"' + (i === listaSel ? ' class="on"' : '') + ' title="' + esc(t('Volar al distrito')) + '"><b>' + esc(e.nombre) + '</b> · ' + esc(partes.join(', ')) + '</button>';
+      }
+      listaEl.innerHTML = h;
     }
 
     // =============================================================================
     // 3. La barrita y la guía del día uno
     // =============================================================================
     var raiz = ctx.container, barra = null, btnEnc = null, btnGuia = null, guia = null, estilo = null, reloj = 0;
+    var listaEl = null, listaSel = -1, idiomaVisto = null;
     var jugador = { perfil: false, saldo: 0 }, oyentes = [], resaltar = false;
     var progreso = { h: {}, c: 0 };
     try { var pg0 = JSON.parse(leeLocal(GUIA_CLAVE) || 'null'); if (pg0 && typeof pg0 === 'object') progreso = { h: pg0.h || {}, c: pg0.c ? 1 : 0, visto: pg0.v || pg0.c ? 1 : 0 }; } catch (e0) { /* progreso nuevo */ }
@@ -392,19 +500,31 @@
       pintaBarra();
     }
 
+    /**
+     * La fecha de activación de `campo` («dubai_desde», «vivienda_desde») según
+     * /api/city: sin datos todavía, o con un nodo que no publica el campo, la del
+     * plan; con el campo, la de la cadena, y `null` (regtest sin --dubai-desde o
+     * sin --vivienda-desde) es «esta red no tiene fecha». El 0 es una fecha: rige
+     * desde el génesis.
+     */
+    function fechaDe(campo, plan) {
+      var dd = S.city && S.city.datos;
+      if (!dd || !Object.prototype.hasOwnProperty.call(dd, campo)) return plan;
+      var v = dd[campo];
+      return v === null || v === undefined ? null : Number(v);
+    }
     function fechas() {
-      var cargada = !!(S.city && S.city.datos), dd = cargada ? S.city.datos : {}, ahora = Date.now() / 1000;
-      // La fecha de Dubái es la de la cadena. Solo sin datos todavía se enseña la
-      // del plan; con datos y sin `dubai_desde` (regtest sin --dubai-desde), lo
-      // mismo que la tarjeta del panel: esta red no tiene fecha.
-      var dub = cargada ? dd.dubai_desde : PLAN_DUBAI, viv = dd.vivienda_desde || PLAN_VIVIENDA;
-      function fecha(s) { try { return new Date(s * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }); } catch (e) { return new Date(s * 1000).toISOString().slice(0, 10); } }
-      var h = dd.dubai ? '<p>🏙️ ' + esc(t('Dubái ya rige en esta cadena: parcelas, empresas, mercado y encargos.')) + '</p>'
-        : !dub ? '<p>🏙️ ' + esc(t('Esta red no tiene fecha de activación de Dubái (regtest sin --dubai-desde).')) + '</p>'
-        : '<p>🏙️ <b>' + esc(fecha(dub)) + '</b> — ' + (ahora >= dub ? esc(t('Dubái ya rige en esta cadena: parcelas, empresas, mercado y encargos.'))
-        : esc(fmt(t('se activa Dubái: parcelas, empresas, mercado y encargos. Faltan {t}.'), { t: dhm(dub - ahora) }))) + '</p>';
-      h += '<p>🏠 <b>' + esc(fecha(viv)) + '</b> — ' + (dd.vivienda_rige || ahora >= viv ? esc(t('rige la escritura de vivienda: tu piso, en el libro mayor.'))
-        : esc(fmt(t('se activa la escritura de vivienda: tu piso, en el libro mayor. Faltan {t}.'), { t: dhm(viv - ahora) }))) + '</p>';
+      var dd = (S.city && S.city.datos) || {}, ahora = Date.now() / 1000;
+      var dub = fechaDe('dubai_desde', PLAN_DUBAI), viv = fechaDe('vivienda_desde', PLAN_VIVIENDA);
+      var yaDub = t('Dubái ya rige en esta cadena: parcelas, empresas, mercado y encargos.'), yaViv = t('rige la escritura de vivienda: tu piso, en el libro mayor.');
+      // Lo que dice el nodo manda (`dubai`, `vivienda`: si rigen sobre la
+      // cabeza); la fecha y el reloj, para la cuenta atrás.
+      var h = dd.dubai ? '<p>🏙️ ' + esc(yaDub) + '</p>'
+        : dub === null ? '<p>🏙️ ' + esc(t('Esta red no tiene fecha de activación de Dubái (regtest sin --dubai-desde).')) + '</p>'
+        : '<p>🏙️ <b>' + esc(fechaUTC(dub)) + '</b> — ' + esc(ahora >= dub ? yaDub : fmt(t('se activa Dubái: parcelas, empresas, mercado y encargos. Faltan {t}.'), { t: dhm(dub - ahora) })) + '</p>';
+      h += dd.vivienda ? '<p>🏠 ' + esc(t('La escritura de vivienda ya rige en esta cadena: tu piso, en el libro mayor.')) + '</p>'
+        : viv === null ? '<p>🏠 ' + esc(t('Esta red no tiene fecha de activación de la escritura de vivienda (regtest sin --vivienda-desde).')) + '</p>'
+        : '<p>🏠 <b>' + esc(fechaUTC(viv)) + '</b> — ' + esc(ahora >= viv ? yaViv : fmt(t('se activa la escritura de vivienda: tu piso, en el libro mayor. Faltan {t}.'), { t: dhm(viv - ahora) })) + '</p>';
       return h;
     }
     function manana() {
@@ -466,10 +586,22 @@
       btnGuia = document.createElement('button'); btnGuia.type = 'button';
       barra.appendChild(btnEnc); barra.appendChild(btnGuia); raiz.appendChild(barra);
       guia = document.createElement('div'); guia.className = 'mem-guia'; raiz.appendChild(guia);
+      listaEl = document.createElement('div'); listaEl.className = 'mem-enc'; raiz.appendChild(listaEl);
+      idiomaVisto = idioma();
       oye(btnEnc, 'click', function () {
         verEncargos = !verEncargos; guardaLocal(ENC_CLAVE, verEncargos ? '1' : '0');
         if (encLabels) encLabels.mesh.visible = verEncargos && encLabels.items.length > 0;
-        pintaBarra();
+        pintaBarra(); pintaLista();
+      });
+      oye(listaEl, 'click', function (ev) {
+        var el = ev.target && ev.target.closest ? ev.target.closest('[data-mem-enc]') : null;
+        var e = el ? lista[el.getAttribute('data-mem-enc') | 0] : null;
+        if (!e || !ctx.handle) return;
+        listaSel = el.getAttribute('data-mem-enc') | 0;
+        if (foco && foco.k) { foco = null; ponEtiquetas(); }
+        vuela(e);
+        foco = { distrito: e.distrito, k: 0, cuadros: 0, visto: false };
+        pintaLista();
       });
       oye(btnGuia, 'click', function () { abreGuia(guia.className.indexOf(' on') < 0); });
       oye(guia, 'click', function (ev) {
@@ -519,8 +651,23 @@
       for (i = 0; i < ps.length; i++) { p = ps[i]; out.push(p.x + ',' + p.y + ',' + p.kind + ',' + p.since + ',' + (p.pending ? 1 : 0) + ',' + p.distrito + ',' + (p.owner || '') + ',' + (p.name || '') + ',' + (p.handle || '')); }
       return out.join('|');
     }
-    /** Cada segundo: la cuenta atrás de la guía abierta y si el módulo «umbral» dice que estás dentro. */
+    /**
+     * El panel cambió de idioma (applyLang pone <html lang>): se repinta lo que
+     * lleva texto del módulo. ctx.t lee el idioma en cada llamada, así que basta
+     * con volver a pintar: placas (sus huecos se reasignan), etiquetas, lista,
+     * barrita y guía.
+     */
+    function repintaIdioma() {
+      for (var i = 0; i < huecos.length; i++) huecos[i].clave = '';
+      placaT = 1e9;
+      if (btnEnc) btnEnc.title = t('Lo que la ciudad importa, por distrito');
+      if (S.city) ponEncargos(S.city); else { pintaBarra(); pintaLista(); }
+      if (guia && guia.className.indexOf(' on') >= 0) pintaGuia();
+    }
+    /** Cada segundo: el idioma, la cuenta atrás de la guía abierta y si el módulo «umbral» dice que estás dentro. */
     function cadaSegundo() {
+      var l = idioma();
+      if (idiomaVisto !== null && l !== idiomaVisto) { idiomaVisto = l; repintaIdioma(); }
       try {
         var u = ctx.handle && ctx.handle.ext && ctx.handle.ext.umbral;
         if (u && typeof u.estado === 'function') { var st = u.estado(); if (st && st.dentro) marca('entrar', true); }
@@ -544,26 +691,29 @@
       },
       cuadro: function (dt) {
         actualizaPlacas(dt || 0);
+        buscaHueco();
         // Con el reloj de pared y no con dt: el núcleo recorta dt y, con un
         // dibujo lento (0,2–2 cuadros por segundo por software), «cada segundo»
         // en tiempo simulado tardaría medio minuto de verdad.
         var ya = Date.now();
         if (ya - reloj >= 1000) { reloj = ya; cadaSegundo(); }
       },
-      modo: function (m) { if (m === 'walk') marca('a_pie', true); },
+      modo: function (m) { if (m === 'walk') marca('a_pie', true); pintaLista(); },
       estadisticas: function (o) {
         var activas = 0; for (var i = 0; i < huecos.length; i++) if (huecos[i].clave) activas++;
         // etiquetasEncargos: las encendidas; …Visibles: las que pasan el recorte con los rótulos del núcleo.
         var pasan = 0;
         if (encLabels && encLabels.mesh.visible && encLabels.lvis) for (i = 0; i < encLabels.items.length; i++) if (encLabels.lvis[i * 4]) pasan++;
         o.memoria = { placas: placas.length, placasVisibles: activas, triangulosPlacas: activas ? HUECOS_PLACA * IPP / 3 : 0, encargos: lista.length,
-          etiquetasEncargos: encLabels && encLabels.mesh.visible ? encLabels.items.length : 0, etiquetasEncargosVisibles: pasan };
+          etiquetasEncargos: encLabels && encLabels.mesh.visible ? encLabels.items.length : 0, etiquetasEncargosVisibles: pasan,
+          foco: foco ? { distrito: foco.distrito, altura: ALTURAS[foco.k], visto: foco.visto, sinHueco: !!foco.sinHueco } : null };
       },
       soltar: function () {
         for (var i = 0; i < oyentes.length; i++) oyentes[i][0].removeEventListener(oyentes[i][1], oyentes[i][2], oyentes[i][3]);
         oyentes = [];
         if (barra && barra.parentNode) barra.parentNode.removeChild(barra);
         if (guia && guia.parentNode) guia.parentNode.removeChild(guia);
+        if (listaEl && listaEl.parentNode) listaEl.parentNode.removeChild(listaEl);
         if (encLabels) encLabels.dispose();
         if (placaTex) placaTex.dispose();
         if (ctx.servicios.patina === patina) delete ctx.servicios.patina;
@@ -575,7 +725,14 @@
         encargos: function () { return lista; },
         /** Placas calculadas y las que tienen hueco ahora (pruebas). */
         placas: function () { return { total: placas.length, todas: placas.map(function (p) { return { x: p.x, y: p.y, since: p.since, centro: p.centro.toArray(), normal: p.nor.toArray() }; }), visibles: huecos.filter(function (h) { return !!h.clave; }).map(function (h) { return { x: h.placa.x, y: h.placa.y, since: h.placa.since, nombre: h.placa.nombre, centro: h.placa.centro.toArray(), normal: h.placa.nor.toArray() }; }) }; },
-        mostrarEncargos: function (v) { verEncargos = !!v; if (encLabels) encLabels.mesh.visible = verEncargos && encLabels.items.length > 0; pintaBarra(); },
+        mostrarEncargos: function (v) { verEncargos = !!v; if (encLabels) encLabels.mesh.visible = verEncargos && encLabels.items.length > 0; pintaBarra(); pintaLista(); },
+        /** Las etiquetas de encargos y si pasan el recorte ahora (pruebas). */
+        etiquetas: function () {
+          if (!encLabels) return [];
+          return encLabels.items.map(function (it, i) { return { texto: it.text, visible: !!(encLabels.mesh.visible && encLabels.lvis && encLabels.lvis[i * 4]) }; });
+        },
+        /** La lista de encargos de la vista 3D: filas pintadas y si se ve (pruebas). */
+        listaEncargos: function () { return { visible: !!(listaEl && listaEl.className.indexOf(' on') >= 0), filas: listaEl ? listaEl.querySelectorAll('[data-mem-enc]').length : 0 }; },
         /** El panel cuenta lo que el visor no sabe: si hay perfil y cuánto saldo. */
         jugador: function (info) {
           info = info || {};

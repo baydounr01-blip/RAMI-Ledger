@@ -18,13 +18,17 @@ el formato de los ficheros.**
   ensucia nunca.
 - **Los encargos.** Los `huecos` de `/api/city` (lo que nadie ofrece y cuántas
   empresas lo importan) repartidos por el distrito de las empresas que lo
-  necesitan: etiquetas naranjas sobre los distritos en 3D, con un botón
-  «📋 Encargos (n)» en la barrita del módulo, y una tarjeta «📋 Encargos» en la
-  pestaña de la ciudad (sector que falta, distrito, empresas que lo necesitan,
-  precio de una parcela libre del distrito en RAMI; un clic abre la ficha de una
-  empresa del distrito que lo necesita).
-  Antes de la activación de Dubái la tarjeta lo explica y da la cuenta atrás
-  (`dubai_faltan_segundos`).
+  necesitan. En 3D: una **lista** en la esquina inferior izquierda del visor
+  («📋 Lo que la ciudad importa, por distrito», un distrito por fila con sus
+  tres primeros insumos) y **etiquetas naranjas** sobre los distritos; un clic
+  en una fila vuela a ese distrito y su etiqueta busca un hueco libre en
+  pantalla. El botón «📋 Encargos (n)» de la barrita enciende y apaga las dos.
+  En el panel, una tarjeta «📋 Encargos» en la pestaña de la ciudad (sector que
+  falta, distrito, empresas que lo necesitan, precio de una parcela libre del
+  distrito en RAMI; un clic abre la ficha de una empresa del distrito que lo
+  necesita). Antes de la activación de Dubái la tarjeta lo explica (la fase 0
+  tiene parcelas, pero no compran insumos ni importan nada) y da la fecha y la
+  cuenta atrás (`dubai_faltan_segundos`).
 - **El día uno.** Guía «📖 Primeros pasos» en el visor, seis pasos con casilla y
   barra de progreso. La primera vez se abre sola si el visor mide 760 px o más;
   en uno más estrecho (el del panel a 1280 × 800 mide 644 px) el botón 📖 se
@@ -32,7 +36,8 @@ el formato de los ficheros.**
   de la barrita: mirar la ciudad, bajar a pie, entrar en un edificio,
   crear el nombre único, conseguir RAMI de prueba (botones a «Minar» y
   «Recibir»), y lo que llega (Dubái el 1 de diciembre de 2026 y la escritura de
-  vivienda el 1 de marzo de 2027, con cuenta atrás al minuto). Debajo, «Por qué
+  vivienda el 1 de marzo de 2027, con cuenta atrás al minuto; las fechas son
+  las de `/api/city` si el nodo las publica). Debajo, «Por qué
   vuelves mañana»: cuántos encargos hay hoy, la hora real de Dubái (y a qué hora
   está fijada la luz si se eligió otra en el selector) y el nivel de pátina de
   tu edificio con los días de cadena que faltan para el siguiente.
@@ -43,9 +48,9 @@ el formato de los ficheros.**
 - **El léxico.** `lexico.py` rechaza además la zona de inversión en los cinco
   idiomas (también el vocabulario del retorno del capital: flujo de caja,
   capital de entrada, recuperación del capital, payback, 回本, окупаемость,
-  urejeshaji…) y los símbolos de moneda junto a un precio, y mira también los
-  textos del visor 3D (`t('…')` de `city3d.js` y `city/*.js`) y los fragmentos
-  `i18n-src/frag_*.json`.
+  urejeshaji…) y la moneda junto a un precio (símbolo o palabra: «12 €»,
+  «12 euros»), y mira también todas las cadenas del visor 3D (`city3d.js` y
+  `city/*.js`, sin comentarios) y los fragmentos `i18n-src/frag_*.json`.
 - **El mentor de la ciudad** (`LESSONS`, `evalLine`, `mentorAnswer`,
   `renderMentor` en `dashboard.html`, fuera de `renderCityPanel`) deja de hablar
   de capital y de recuperación: «1 · Lo que cuesta la parcela», «5 · El reparto
@@ -111,6 +116,24 @@ el formato de los ficheros.**
   y «+n»); medido en la vista de la ciudad: a 0,3 celdas no pasaba ninguna, a
   0,9 pasa la de Downtown sin tocar ningún rótulo. La lista entera está en la
   tarjeta. El botón 📋 las quita y lo recuerda en `localStorage`.
+  **Ronda 2.** En la vista general casi todas ceden (0 de 6 en la vista de
+  portada de la prueba), así que la parte de los encargos que se ve siempre es
+  la **lista** (`pintaLista`, `.mem-enc`, a la izquierda para no pisar la guía,
+  62 % con tope de 270 px y 38 % de alto; a pie se oculta, porque tapa la calle
+  y la placa, y vuelve en la órbita). Un clic en una fila llama a
+  **`vuela(e)`**: el vuelo de `handle.flyTo` (1,2 s, phi 0,95, 5,5 celdas), pero
+  con la etiqueta en el centro de la pantalla. Como `updateCamera` pega el
+  objetivo de la órbita al suelo, se mira al punto del suelo que queda detrás
+  de la etiqueta en la línea de visión: a `h·tan(phi)` de la empresa ancla, en
+  la dirección contraria a la cámara. Usa `ctx.cam.flight` con la forma de
+  `fly()` (como la restauración de `extras.js`); a pie se queda en
+  `handle.flyTo`. Después, **`buscaHueco()`** (en `cuadro`): cuando el vuelo
+  acaba y el núcleo ha recortado dos cuadros, si la etiqueta del distrito no
+  pasa, prueba la siguiente altura de `ALTURAS` (0,9; 1,35; 0,55; 1,8; 0,3 y
+  2,3 celdas) hasta que pasa. No se sale del contrato de `ctx.etiquetas`: la
+  etiqueta sigue recortándose la última y busca sitio, no pisa a nadie. El
+  vuelo no selecciona la empresa: el rótulo de la selección caería en el mismo
+  punto.
 - **La guía** (`PASOS`, `pintaGuia`, `refrescaGuia`, `marca`, `cadaSegundo`).
   Progreso en `localStorage['rami.memoria.guia'] = { h: { paso: 1 }, c: cerrada,
   v: vista }`, con
@@ -128,25 +151,45 @@ el formato de los ficheros.**
   etiquetas solo si cambia su firma (`firmaCiudad`: parcelas con sitio, sector,
   fundación, nombres y dueño; huecos; distritos; `me`): antes de Dubái
   `/api/city` cambia en cada sondeo por la cuenta atrás y todo se rehacía cada
-  ~5 s. La fecha de Dubái es `dubai_desde` de `/api/city`; con datos y sin
-  `dubai_desde` (regtest sin `--dubai-desde`) la guía dice lo mismo que la
-  tarjeta, «Esta red no tiene fecha de activación de Dubái»; solo sin datos
-  todavía usa la del plan (1796083200). La de vivienda, `vivienda_desde` si
-  viene y si no la del plan (1803859200). La hora real de Dubái sale del reloj
+  ~5 s. **Las fechas** (`fechaDe(campo, plan)`, ronda 2): sin datos todavía, o
+  con un nodo que no publica el campo, la del plan (1796083200 y 1803859200);
+  con el campo, la de la cadena; `null` (regtest sin `--dubai-desde` o sin
+  `--vivienda-desde`) es «Esta red no tiene fecha de activación…», la misma
+  frase que la tarjeta y que la ficha de la parcela; el 0 es una fecha (rige
+  desde el génesis). Si rige ya lo dicen los booleanos del nodo, `dubai` y
+  `vivienda` (los campos de la escritura en `/api/city` son `vivienda`,
+  `vivienda_desde` y `vivienda_faltan_segundos`). Las fechas van como fecha
+  larga en UTC y en el idioma del panel (`fechaUTC`, igual en la tarjeta), y la
+  cuenta atrás con sus unidades traducidas (`dhm` en el módulo y `dhms` en el
+  panel, con las frases `{d} d {h} h {m} min` y `{h} h {m} min`). La hora real de Dubái sale del reloj
   (UTC+4), no de `M.dubaiHour()`, que devuelve la hora fijada con el selector.
   El ancho es `62 %` con `max-width: 300px` (sin `min()`, que los webviews
   viejos no entienden).
+- **El idioma** (ronda 2). `ctx.t` lee el idioma del panel en cada llamada,
+  pero lo ya pintado no cambia solo: `cadaSegundo` compara
+  `document.documentElement.lang` (lo pone `applyLang`) con el último visto y,
+  si cambió, `repintaIdioma()` repinta placas (sus huecos se reasignan),
+  etiquetas, lista, barrita y guía. La placa separa los miles con el formato
+  del idioma (`miles` con `toLocaleString(idioma)`: «112.000», «112,000»,
+  «112 000»). `applyLang` llama ahora también a `renderEncargos`.
 - **El panel** (`dashboard.html`): la línea `#cyAviso` encima de `#city3d`, la
-  tarjeta `#cityEncargos` antes de la Plaza, `renderEncargos()` en `loadCity`,
+  tarjeta `#cityEncargos` antes de la Plaza, `renderEncargos()` en `loadCity` y
+  en `applyLang`, `fechaUTC()` y `dhms()` con unidades traducidas (la usan
+  también la cuenta atrás de la ciudad y la ficha de vivienda),
   la opción `irA(destino)` de `mount` (`'minar'`, `'recibir'`, `'perfil'`) y
   `avisaMemoria()` en el sondeo de la ciudad. `renderCityPanel` no se toca.
-- **Traducciones**: `chain/crates/rami-gui/i18n-src/frag_memoria.json`, 58
-  cadenas nuevas en inglés, chino, ruso y suajili (las 44 de la primera entrega
-  menos una reescrita, y 15 de esta ronda: el mentor, las fechas, la hora fijada,
-  «🏷️ En venta» de la leyenda). Las frases con cifras llevan
-  marcadores (`{n}`, `{d}`, `{t}`, `{h}`) y se traducen enteras.
+- **Traducciones**: las 58 cadenas de las rondas 0 y 1 ya están fundidas en
+  `allkeys.json` y `lang_*.json` (integración 80067fa). La ronda 2 trae un
+  `chain/crates/rami-gui/i18n-src/frag_memoria.json` nuevo con 6 cadenas en
+  inglés, chino, ruso y suajili: las dos frases de la cuenta atrás, «La escritura
+  de vivienda ya rige en esta cadena…», «Volar al distrito», la frase nueva de
+  la tarjeta antes de Dubái y la de «Esta red no tiene fecha de activación de la
+  escritura de vivienda…» sin el espacio final que lleva la clave del panel.
+  Las frases con cifras llevan marcadores (`{n}`, `{d}`, `{t}`, `{h}`, `{m}`) y
+  se traducen enteras.
 - **El léxico** (`INVERSION`, `NIEGA`, `NEGADO`, `negado`, `buscar_inversion`,
-  `MONEDA`, `buscar_moneda`, `literales_t`, `fuentes_cliente`, `viva`). La
+  `MONEDA`, `MONEDA_PALABRA`, `buscar_moneda`, `literales_codigo`,
+  `fuentes_cliente`, `viva`). La
   excepción de la negación es explícita y estrecha: el término vale solo si lo
   niega una construcción de `NIEGA` **pegada a él** («no es (una)», «ni
   promete», «sin», «is not (an)», «nor does it promise», «не является», «не»,
@@ -164,16 +207,31 @@ el formato de los ficheros.**
   `chain/crates/**/*.{rs,js,html}` salvo `i18n.js`) se avisa y no se rechaza:
   así un frente reescribe un texto sin tocar los diccionarios compartidos; el
   integrador poda la clave. Un `frag_*.json` con otra forma da un diagnóstico y
-  salida 1, no una traza. «returns» solo cuenta en sentido
-  financiero («returns on», «high returns»…): el inglés de las notas lo usa como
-  verbo («the road returns to the lane»). Las autopruebas del final de `main`
-  comprueban que muerden la afirmación y el símbolo, y que no muerden la
-  negación ni el verbo.
+  salida 1, no una traza. Ronda 2: **«returns»** muerde solo salvo cuando es
+  el verbo, que las notas usan seguido de una de estas palabras: to, smoothly,
+  only, home, back, the, a, an, its… («the road returns to the lane», «the
+  level returns smoothly», «`/api/status` returns only…»); «Earn returns every
+  block» y «returns of 12 %» se rechazan. **«yield»** muerde con su adjetivo o
+  con una cifra («yield 12%», «yields of 5 %»); «yield to» sigue siendo ceder el
+  paso. **`MONEDA`** reconoce además la moneda escrita con palabras detrás de la
+  cifra («12 euros», «12 dólares», «12 dollars», «12 美元», «12 рублей»,
+  «shilingi 12»), sin distinguir mayúsculas solo en esas palabras (un
+  «$ rami-node … 10» de la web no es un precio), y se aplica ahora también a la
+  web, al README y a las notas. **Del visor se revisan todas las cadenas**, no
+  solo las de `t('…')` (`literales_codigo`, sin comentarios): la guía pasa sus
+  textos como datos (`t(P.titulo)`); en la integración con esta ronda son 1.943 cadenas y
+  ninguna da un falso positivo. La clase de letra de «recuperación … capital»
+  estaba escrita `[^\\W\\d_]` en una cadena `r"…"` (una «d» cortaba la
+  coincidencia: «recuperación del capital» pasaba); ahora es `[^\W\d_]`. Las
+  autopruebas del final de `main` comprueban que muerden la afirmación y el
+  símbolo, y que no muerden la negación ni el verbo.
 
 ## Cifras medidas
 
-Panel real (binario base v0.10.16 + proxy de esta rama), Chromium con
-SwiftShader, calidad media, 1280 × 800 salvo donde se dice.
+Panel real, Chromium con SwiftShader, calidad media, 1280 × 800 salvo donde se
+dice. Rondas 0 y 1: binario base v0.10.16 + proxy de esta rama. Ronda 2: binario
+de la integración (`/tmp/ramiharness/rami-gui-integ`, con la API de la escritura
+de vivienda) + proxy de esta rama sobre 80067fa, con los cinco módulos.
 
 | Prueba | Resultado |
 |---|---|
@@ -189,7 +247,15 @@ SwiftShader, calidad media, 1280 × 800 salvo donde se dice.
 | Guía la primera vez | Visor de 644 px (ventana de 1280): cerrada y 📖 resaltado; al abrirla, 300 px (47 %). Visor de 764 px (ventana de 1700): se abre sola, 300 px (39 %) |
 | Mentor con `/api/city/mentor` simulado (Dubái en vigor) | «… · parcel 250 RAMI (burned)», «… en esta parcela recibe del reparto 0,4 RAMI/block …», «La parcela cuesta 250 RAMI»; ni «entrada» ni «recuperación» |
 | `lexico.py` | Salida 0. Las siete frases del revisor se rechazan; «Tu parcela tendrá una gran revalorización.» en la tarjeta: salida 1; un valor de `lang_en.json` con clave viva cambiado a «…great returns on your capital»: salida 1; `frag_x.json` = `{"a": "b"}`: diagnóstico y salida 1, sin traza. Avisa de 4 traducciones retiradas (las claves viejas del mentor) |
-| Errores de consola | 0 en todas las sesiones de la ronda 1 (ciudad real, sintética, sin fecha, exploración de etiquetas y A/B), con los cinco módulos cargados y `extFallos()` vacío |
+| Errores de consola | 0 en todas las sesiones de la ronda 1 (ciudad real, sintética, sin fecha, exploración de etiquetas y A/B) y de la ronda 2 (tarjeta y guía en tres idiomas, vivienda, vuelos, placa, umbral y A/B), con los cinco módulos cargados y `extFallos()` vacío |
+| Ronda 2 · A/B, ocho encuadres fijos, contra `/tmp/ramiharness/referencia_integ_ab.json` | 4 de 8 idénticos en triángulos y llamadas (torres_cerca 909.372/29, bloques_manzana 798.932/28, ciudad_entera 1.807.624/101, centro 1.534.718/51). Difieren villas (966.040/22, −780 triángulos), naves (1.058.812, igual, con 31 llamadas, −1), a_pie_manzana (974.640/39, −3.860) y a_pie_torre (819.890/24, +780). En la ciudad real no hay parcelas: el módulo no dibuja placas, etiquetas ni lista (0 triángulos). Son los elementos móviles: dos pasadas del mismo código a la vez dieron en esos encuadres 965.780 y 966.040 (villas), 1.056.432/30 y 1.058.812/31 (naves), 966.280 y 974.640 (a_pie_manzana). 0 errores (`/tmp/ramiverif/memoria_r2_ab.json`) |
+| Ronda 2 · A/B de 80067fa sin cambios (mismo binario, otro proxy sobre `git archive 80067fa`) | Difiere de la referencia en 7 de 8 encuadres (esta rama, en 4): bloques_manzana 790.612/28 (−8.320), villas 967.468/23, naves 1.057.292/32, a_pie_manzana 972.520/40, a_pie_torre 817.290/24, ciudad_entera 1.807.624/102, centro 1.534.418/52; torres_cerca igual. Las diferencias de la rama están dentro de esa variación (`/tmp/ramiverif/memoria_r2_base_ab.json`) |
+| Ronda 2 · lista de encargos (ciudad sintética: 9 parcelas vivas y 1 pendiente en 6 distritos) | 6 filas, visible en la vista de portada; en esa vista pasan el recorte 0 de 6 etiquetas (1.535.152/55) |
+| Ronda 2 · clic en cada fila de la lista | La etiqueta del distrito del clic pasa el recorte: con `handle.flyTo`, en 2 de 6 (DIFC, Al Barsha); mirando al suelo detrás de la etiqueta, en 3 de 6 (DIFC, Al Sufouh, Al Barsha); con `buscaHueco`, **6 de 6**: Downtown y Dubai Marina a 1,8 celdas, Deira a 1,35, DIFC, Al Sufouh y Al Barsha a 0,9. Ninguna se monta sobre un rótulo (capturas) |
+| Ronda 2 · campos de vivienda de `/api/city` en la guía | `vivienda_desde: null` → «Esta red no tiene fecha de activación de la escritura de vivienda…»; `0` con `vivienda: true` → «La escritura de vivienda ya rige en esta cadena…»; sin los campos → la fecha del plan, 1 de marzo de 2027; los del nodo → la misma fecha y cuenta atrás de 158 d |
+| Ronda 2 · entrar con el módulo «umbral» de la integración | `umbral.entrar({ id: 'p:46:17', inmediato: true })` → `estado().dentro = true` y el paso «Entra en un edificio» de la guía queda marcado |
+| Ronda 2 · lista a pie | Órbita: visible, 6 filas; a pie: oculta; de vuelta a la órbita: visible. Placa a 3,2 m: 1 placa, 192 triángulos (869.860/25 el encuadre) |
+| Ronda 2 · idioma | Al pasar el panel a inglés: la tarjeta y la guía en inglés, «📋 Orders (22)», «📖 First steps 1/6», la placa «Block #85,280». En ruso (con el fragmento inyectado en `RAMI_I18N` como si ya estuviera fundido): «1 декабря 2026 г.», «Осталось 68 д 3 ч 35 мин», «📋 Заказы (0)» y la placa (captura) |
 | `node --check`, `check.py`, `lexico.py` | En verde |
 
 ## Capturas
@@ -227,6 +293,34 @@ Ronda de corrección 1:
 - `/tmp/ramiverif/memoria_r1_mentor.png` — las lecciones nuevas del mentor.
 - `/tmp/ramiverif/memoria_r1_aviso_2d.png` — el aviso en la vista 2D.
 
+Ronda de corrección 2:
+
+- `/tmp/ramiverif/memoria_r2_lista_skyline.png` — la vista de portada con la
+  ciudad sintética: la lista de encargos (6 distritos) abajo a la izquierda,
+  «📋 Encargos (22)» en la barrita; ninguna etiqueta pasa el recorte.
+- `/tmp/ramiverif/memoria_r2_vuelo_0.png` — tras el clic en «Downtown Dubái»:
+  «📋 Downtown Dubái: falta Seguridad ×3, +4» a 1,8 celdas, en un hueco libre
+  entre «Hipódromo de Meydan» y «Burj Khalifa».
+- `/tmp/ramiverif/memoria_r2_vuelo_5.png` — tras el clic en «Deira»: «📋 Deira:
+  falta Logística y puerto ×1, +2» a 1,35 celdas, sobre el rótulo del barrio sin
+  tocarlo.
+- `/tmp/ramiverif/memoria_r2_vuelo_3.png` — Al Sufouh con el vuelo de
+  `handle.flyTo` (antes del cambio): la etiqueta no pasa, el rótulo del barrio
+  ocupa su sitio.
+- `/tmp/ramiverif/memoria_r2_placa_en.png` — la placa con el panel en inglés:
+  «Block #85,280 / Empresa 1 · Hotel / @memoria_dxb», y la lista y la barrita
+  en inglés (antes de ocultar la lista a pie: su borde pisa la «@»).
+- `/tmp/ramiverif/memoria_r2_placa_es.png` — la misma placa en español,
+  «Bloque #85.280», a pie y ya sin la lista (a pie se oculta; vuelve en la
+  órbita).
+- `/tmp/ramiverif/memoria_r2_guia_es.png` — la guía abierta a pie en la ciudad
+  sintética: 300 px, «1 / 6 hechos» (bajar a pie, marcado solo).
+- `/tmp/ramiverif/memoria_r2_tarjeta_en.png` — la tarjeta antes de Dubái en
+  inglés sin el fragmento fundido: la frase nueva sale en español; la fecha,
+  «December 1, 2026», y «68 d 4 h 13 min to go».
+- `/tmp/ramiverif/memoria_r2_tarjeta_ru.png`, `memoria_r2_guia_ru.png` y
+  `memoria_r2_placa_ru.png` — en ruso, con el fragmento inyectado.
+
 ## Ronda de corrección 1 (revisión adversarial)
 
 1. **Negación del léxico demasiado amplia** → `NIEGA`/`NEGADO`: solo la
@@ -254,29 +348,57 @@ Ronda de corrección 1:
     parcelas; `SetParcel` sobre una parcela propia cambia el sector).
 11. **`frag_*.json` con otra forma rompía el CI** → diagnóstico.
 
+## Ronda de corrección 2 (revisión adversarial, sobre la integración 80067fa)
+
+1. **«recuperación del capital» pasaba el léxico** (importante) → la clase
+   `[^\\W\\d_]` de una cadena `r"…"` era «ni barra, ni W, ni d, ni _»; ahora es
+   `[^\W\d_]`. Autopruebas con «La recuperación del capital llega en 300
+   bloques» y «Recuperación de tu capital: 20 días». En una copia del árbol, esa
+   frase en `README.md:257` da salida 1.
+2. **Ningún encargo a la vista en 3D** (importante) → la lista de la vista 3D,
+   `vuela()` y `buscaHueco()` (arriba, «Los encargos»). Sin tocar el núcleo:
+   las etiquetas siguen en `ctx.etiquetas` y se recortan las últimas.
+3. **La guía leía `vivienda_rige`, que el nodo no publica, y trataba el 0 como
+   ausente** (importante) → `fechaDe()` y los booleanos `dubai` y `vivienda`
+   (arriba, «La guía»).
+4. **Del visor solo se revisaban los literales de `t('…')`** → todas las cadenas
+   (`literales_codigo`); «Mira la rentabilidad de la ciudad» en `PASOS` da
+   salida 1 en una copia del árbol.
+5. **«returns» y «yield» sueltos, y la moneda con palabras** → muerden (arriba,
+   «El léxico»), también en la web, el README y las notas.
+6. **«todavía no hay parcelas ni empresas» antes de Dubái** → «las parcelas de la
+   fase 0 no compran insumos ni importan nada».
+7. **Idioma y formato** → `applyLang` llama a `renderEncargos`; el módulo
+   repinta lo suyo al cambiar `<html lang>`; fechas largas en UTC y en el idioma
+   del panel en la guía y en la tarjeta; unidades de la cuenta atrás traducidas;
+   miles de la placa según el idioma.
+
 ## Lo que queda
 
-1. **«Entrar en un edificio» no se ha probado con el módulo «umbral» real**: en
-   esta rama es el esqueleto. La guía lee `handle.ext.umbral.estado().dentro`,
-   que es lo que publica la rama `feat/umbral` hoy; si cambia de nombre, el paso
-   se marca a mano.
+1. **«Entrar en un edificio»** se marca con el módulo «umbral» de la
+   integración (`handle.ext.umbral.estado().dentro`; prueba de la ronda 2 en la
+   tabla). Si «umbral» cambia ese nombre, el paso se marca a mano.
 2. **La placa queda donde el relieve la pone**: delante de algunos portales el
    relieve está por encima de la planta baja del edificio (1,3 m en la celda de
    prueba), y la puerta queda medio enterrada. Viene del núcleo (la planta baja
    es `cellH + 0,5`), no de la placa.
-3. **Las etiquetas de encargos ceden ante los rótulos del núcleo**: en la vista
-   de la ciudad de la prueba pasa 1 de 6 (Downtown); las demás se ven al
-   acercarse a su distrito o en la tarjeta. Es el contrato de `ctx.etiquetas`.
+3. **Las etiquetas de encargos ceden ante los rótulos del núcleo** en la vista
+   general (0 de 6 en la vista de portada de la prueba): es el contrato de
+   `ctx.etiquetas`. Lo que se ve siempre es la lista; al volar a un distrito
+   desde ella, su etiqueta busca un hueco (6 de 6 en la prueba). Si el
+   integrador quiere que la etiqueta enfocada gane sin moverse, hace falta un
+   cambio en el núcleo (recortar un conjunto de módulo antes que los rótulos).
 4. **Para el integrador, fuera de este frente**: el 💰 junto al precio de venta
-   sigue en `city3d.js` (carteles de venta de `applyCity`, línea ~2277, y el
-   texto de la ficha 3D, ~3080) y en `renderCityPanel` (`dashboard.html`,
-   «💰 En venta por…» y «· 💰 en venta por…»). No es un símbolo de moneda, pero
-   asocia el precio a dinero: propuesta, «🏷️». Además, al fusionar hay que podar
-   de `allkeys.json` y `lang_*.json` las cuatro claves retiradas del mentor
-   («recuperación», «recuperación en» y los dos textos con «cuánto gano»), que
-   `lexico.py` avisa y no rechaza; las lecciones 2, 3, 6, 7 y 8 del mentor nunca
-   tuvieron traducción (las 1, 4 y 5 la tienen ahora en `frag_memoria.json`).
+   sigue en 80067fa en `city3d.js` (carteles de venta de `applyCity`, línea
+   2476, y el texto de la ficha 3D, 4166) y en `dashboard.html` (2319 y 2358 en
+   `renderCityPanel`, y 2447 en la lista de viviendas). No es un símbolo de
+   moneda, pero asocia el precio a dinero: propuesta, «🏷️». Al fundir
+   `frag_memoria.json`, la clave vieja «Los encargos salen de la economía de
+   Dubái, que aún no rige en esta cadena: todavía no hay parcelas ni empresas.»
+   queda sin uso en `allkeys.json` y `lang_*.json` y se puede podar.
 5. **La hora de la guía se actualiza con el primer cuadro después de cada
    segundo**: con el dibujo por software a 0,2 cuadros por segundo tarda hasta
    cinco segundos en reflejar un cambio del selector.
-6. Las fechas de la guía van con el formato del navegador (`toLocaleDateString`).
+6. La cuenta atrás de la ciudad (`#cityCountdown`, en `loadCity`) sigue dando
+   la fecha con `toLocaleString()` en hora local; no es de este frente y no la
+   he cambiado. La tarjeta y la guía usan la fecha larga en UTC.

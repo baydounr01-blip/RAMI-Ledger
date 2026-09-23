@@ -87,19 +87,24 @@ INVERSION = {
         (palabra(r"inversi[oó]n(?:es)?|inversor(?:es|as?)?"), "RAMI no es una inversión"),
         (palabra(r"retorno de (?:la )?inversi[oó]n|ROI"), "RAMI no es una inversión"),
         # El vocabulario del retorno del capital (el mentor de la v0.9 lo usaba).
-        (palabra(r"flujos? de caja|capital de entrada|plazo de recuperaci[oó]n|recuperaci[oó]n (?:[^\\W\\d_]+ ){0,3}(?:capital|inversi[oó]n)|recuper(?:a|as|an|ar) (?:el|tu|su) capital"),
+        (palabra(r"flujos? de caja|capital de entrada|plazo de recuperaci[oó]n|recuperaci[oó]n (?:[^\W\d_]+ ){0,3}(?:capital|inversi[oó]n)|recuper(?:a|as|an|ar) (?:el|tu|su) capital"),
          "lo que cuesta la parcela y lo que reparte el fondo por bloque, en RAMI de prueba"),
         (palabra(r"cu[aá]nto gan(?:o|as|a|an|aré|arás)"), "«cuánto reparte», en RAMI de prueba"),
     ],
     "en": [
         (palabra(r"appreciation|appreciates? in value"), "RAMI has no monetary value"),
         (palabra(r"investment opportunit(?:y|ies)|invest(?:ing|ed)? in|investments?|investors?"), "RAMI is not an investment"),
-        # «returns» también es un verbo («the road returns to the lane»): solo en su sentido financiero.
-        (palabra(r"(?:financial|investment|guaranteed|expected|high|higher|annual|promised?|big|good|great|positive|future) returns|returns on"), "RAMI has no monetary value"),
+        # «returns» muerde solo, salvo cuando es el verbo: «the road returns to the
+        # lane», «the level returns smoothly», «`/api/status` returns only…» (lo que
+        # usan las notas). Como verbo lo sigue una de estas palabras; como
+        # sustantivo, cualquier otra («Earn returns every block», «returns of 12 %»).
+        (palabra(r"returns(?! (?:to|smoothly|only|home|back|immediately|the|a|an|its|their|his|her|it|them|when|after|once|null|true|false|nothing)(?![^\W\d_]))"),
+         "RAMI has no monetary value"),
         (palabra(r"profit(?:s|able|ability)?"), "RAMI has no monetary value"),
         (palabra(r"ROI"), "RAMI is not an investment"),
-        # «yield» también es ceder el paso (la calzada de la v0.10.4): solo el rendimiento.
-        (palabra(r"payback|pay back (?:the|your) capital|cash flows?|earnings|(?:annual|guaranteed|expected|high) yields?|yields? on"),
+        # «yield» también es ceder el paso (la calzada de la v0.10.4): solo el
+        # rendimiento, con su adjetivo o con la cifra («yield 12%», «yields of 5 %»).
+        (palabra(r"payback|pay back (?:the|your) capital|cash flows?|earnings|(?:annual|guaranteed|expected|high) yields?|yields? (?:on|of)|yields?(?= ?\d)"),
          "what the parcel costs and what the fund pays out per block, in test RAMI"),
         (palabra(r"how much (?:do|will|can) (?:i|you) earn"), "“how much does it pay out”, in test RAMI"),
     ],
@@ -173,7 +178,12 @@ def buscar_inversion(fichero, idioma, lineas, previas=None):
 
 
 # Un precio de la ciudad va en RAMI y nunca junto a un símbolo de moneda.
-MONEDA = re.compile(r"[€$£¥₽]\s?\d|\d\s?[€$£¥₽]|\b(?:US\$|USD|EUR|AED|GBP)\s?\d|\d\s?(?:USD|EUR|AED|GBP)\b|RAMI\s*[€$£¥₽]|[€$£¥₽]\s*RAMI|د\.إ")
+# También la moneda escrita con palabras detrás de la cifra, en los cinco idiomas:
+# «12 euros», «12 dólares», «12 dollars», «12 美元», «12 рублей», «shilingi 12».
+MONEDA_PALABRA = (r"euros?|d[oó]lar(?:es)?|dollars?|dirhams?|d[ií]rhams?|libras?|pounds? sterling|yuan(?:es)?|"
+                  r"rublos?|rubles?|евро|доллар\w*|рубл\w*|дирхам\w*|юан\w*|dola|yuro|shilingi")
+MONEDA = re.compile(r"[€$£¥₽]\s?\d|\d\s?[€$£¥₽]|\b(?:US\$|USD|EUR|AED|GBP)\s?\d|\d\s?(?:USD|EUR|AED|GBP)\b|RAMI\s*[€$£¥₽]|[€$£¥₽]\s*RAMI|د\.إ|"
+                    r"\d\s?(?i:" + MONEDA_PALABRA + r")(?![^\W\d_])|\d\s?(?:美元|欧元|人民币|迪拉姆|卢布|英镑)|(?i:dola|shilingi|yuro)\s\d")
 
 
 def buscar_moneda(fichero, lineas):
@@ -181,12 +191,21 @@ def buscar_moneda(fichero, lineas):
             for linea, texto in lineas if MONEDA.search(texto)]
 
 
-def literales_t(codigo):
-    """Textos del visor 3D: las cadenas que pasan por t('…') / ctx.t('…')."""
+def literales_codigo(codigo, linea0=1):
+    """Las cadenas de un JavaScript, sin comentarios: todo lo que puede acabar a la
+    vista. En el visor no basta con los literales de t('…'): la guía de
+    city/memoria.js pasa sus textos como datos (`t(P.titulo)`), y los de los otros
+    módulos pueden ir igual. Las cadenas de código ('rami.memoria.guia',
+    'position') no llevan léxico de estas listas; recorrer todas las del visor da
+    cero falsos positivos (medido en la v0.11.0 sobre 1.943 cadenas)."""
     out = []
-    for m in re.finditer(r"(?<![A-Za-z0-9_$])t\(\s*(?:'((?:[^'\\\n]|\\.)*)'|\"((?:[^\"\\\n]|\\.)*)\")", codigo):
-        texto = m.group(1) if m.group(1) is not None else m.group(2)
-        out.append((codigo[: m.start()].count("\n") + 1, texto))
+    sin = re.sub(r"/\*[\s\S]*?\*/", lambda x: re.sub(r"[^\n]", " ", x.group(0)), codigo)
+    sin = re.sub(r"(^|[^:\\])//[^\n]*", lambda x: x.group(1), sin)
+    for lit in re.finditer(r"'((?:[^'\\\n]|\\.)*)'|\"((?:[^\"\\\n]|\\.)*)\"", sin):
+        texto = lit.group(1) if lit.group(1) is not None else lit.group(2)
+        if len(texto) < 4:
+            continue
+        out.append((linea0 + sin[: lit.start()].count("\n"), texto))
     return out
 
 
@@ -209,15 +228,7 @@ def literales_js(codigo):
     """Cadenas de los bloques <script> del panel (lo que escribe el JS)."""
     out = []
     for m in re.finditer(r"<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)</script>", codigo):
-        bloque = m.group(1)
-        linea0 = codigo[: m.start()].count("\n") + 1
-        sin = re.sub(r"/\*[\s\S]*?\*/", lambda x: re.sub(r"[^\n]", " ", x.group(0)), bloque)
-        sin = re.sub(r"(^|[^:\\])//[^\n]*", lambda x: x.group(1), sin)
-        for lit in re.finditer(r"'((?:[^'\\\n]|\\.)*)'|\"((?:[^\"\\\n]|\\.)*)\"", sin):
-            texto = lit.group(1) if lit.group(1) is not None else lit.group(2)
-            if len(texto) < 4:
-                continue
-            out.append((linea0 + sin[: lit.start()].count("\n"), texto))
+        out += literales_codigo(m.group(1), codigo[: m.start()].count("\n") + 1)
     return out
 
 
@@ -292,14 +303,14 @@ def main():
     for lineas in (visible_html(html), literales_js(html)):
         hallazgos += todo("dashboard.html", "es", lineas)
         monedas += buscar_moneda("dashboard.html", lineas)
-    # El visor 3D y sus módulos (v0.11.0): lo que pasa por t().
+    # El visor 3D y sus módulos (v0.11.0): todas sus cadenas, no solo las de t().
     src = os.path.join(GUI, "src")
     visor = [os.path.join(src, "city3d.js")] + sorted(
         os.path.join(src, "city", f) for f in os.listdir(os.path.join(src, "city")) if f.endswith(".js"))
     for p in visor:
         if os.path.exists(p):
             rel = os.path.relpath(p, GUI)
-            lineas = literales_t(leer(p))
+            lineas = literales_codigo(leer(p))
             hallazgos += todo(rel, "es", lineas)
             monedas += buscar_moneda(rel, lineas)
     # Los diccionarios. Una traducción cuya clave española ya no aparece en
@@ -351,7 +362,9 @@ def main():
     for rel, lang in (("web/index.html", "es"), ("web/en/index.html", "en")):
         p = os.path.join(RAIZ, rel)
         if os.path.exists(p):
-            hallazgos += todo(rel, lang, visible_html(leer(p)))
+            lineas = visible_html(leer(p))
+            hallazgos += todo(rel, lang, lineas)
+            monedas += buscar_moneda(rel, lineas)
     for rel in ("README.md", "RELEASE_NOTES.md"):
         p = os.path.join(RAIZ, rel)
         if not os.path.exists(p):
@@ -361,6 +374,7 @@ def main():
         previas = [""] + crudas[:-1]
         for idioma in ("es", "en"):
             hallazgos += buscar(rel, idioma, lineas) + buscar_inversion(rel, idioma, lineas, previas)
+        monedas += buscar_moneda(rel, lineas)
     # El auditor se vigila a sí mismo: si dejara de ver texto, pasaría en silencio.
     prueba = visible_html('<p title="Quizá mañana">Es <b>probable</b></p>\n<!-- podría no -->')
     assert buscar("x", "es", prueba), "los patrones no muerden"
@@ -394,6 +408,20 @@ def main():
                           ("zh", "不衡量命中率或收益"), ("zh", "也不是投资"), ("sw", "hakipimi usahihi wala faida"),
                           ("es", "No es\n una inversión"), ("es", "La cartera tiene una pantalla de recuperación")):
         assert not buscar_inversion("x", idioma, [(1, frase)]), "la negación del proyecto se permite: " + frase
+    # Ronda 2 de la memoria: la clase de letra de «recuperación … capital», el
+    # «returns» y el «yield» sustantivos, la moneda con palabras y las cadenas del
+    # visor que no pasan por t('…') directamente.
+    for idioma, frase in (("es", "La recuperación del capital llega en 300 bloques"), ("es", "Recuperación de tu capital: 20 días"),
+                          ("en", "Earn returns every block"), ("en", "returns of 12 %"), ("en", "yield 12%")):
+        assert buscar_inversion("x", idioma, [(1, frase)]), "muerde: " + frase
+    for idioma, frase in (("en", "the level returns smoothly"), ("en", "`/api/status` returns only version"), ("en", "cars yield to the tram")):
+        assert not buscar_inversion("x", idioma, [(1, frase)]), "el verbo se permite: " + frase
+    for frase in ("12 euros", "12 Dólares", "12 dollars", "12 美元", "12 рублей", "shilingi 12"):
+        assert buscar_moneda("x", [(1, frase)]), "la moneda con palabras muerde: " + frase
+    assert not buscar_moneda("x", [(1, "$ rami-node show --network regtest 10")]), "el indicador del intérprete no es un precio"
+    assert buscar_inversion("x", "es", literales_codigo("var P = [{ titulo: 'Mira la rentabilidad de la ciudad' }]; // rentabilidad")), \
+        "las cadenas del visor que llegan a t() como datos se revisan"
+    assert not literales_codigo("/* 'rentabilidad' */ var a = 1; // 'rentabilidad'"), "los comentarios no cuentan"
     assert viva("Esta moneda", fuentes) and not viva("Clave retirada que no pide nadie 7f3a", fuentes), "la clave viva se encuentra"
     hallazgos += monedas
     if retiradas:

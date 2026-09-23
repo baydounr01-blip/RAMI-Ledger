@@ -190,8 +190,13 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
   la etiqueta que chocaría con uno de ellos no se dibuja. Los encargos de
   `memoria` se registran así; para que choquen poco se anclan en una empresa
   del distrito (no en su centro, donde cae el rótulo del barrio) y llevan un
-  texto corto. Un conjunto registrado y oculto (`mesh.visible = false`) sigue
-  pasando por el recorte, pero como va el último no le quita sitio a nadie.
+  texto corto. Como en la vista general casi todas ceden, `memoria` pone
+  además una lista en la vista 3D y un clic en una fila vuela a la etiqueta de
+  ese distrito (`vuela()`: `ctx.cam.flight` con la forma de `fly()` del
+  núcleo, mirando a la etiqueta y no al suelo, para que los rótulos del suelo
+  queden por debajo). Un conjunto registrado y oculto (`mesh.visible = false`)
+  sigue pasando por el recorte, pero como va el último no le quita sitio a
+  nadie.
 
 ## Dibujar a un destino intermedio (el gancho `pintar`)
 
