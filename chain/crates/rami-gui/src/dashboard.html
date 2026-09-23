@@ -641,7 +641,7 @@
           <div class="legend">
             <span style="--c:#1d2a3a">Libre</span>
             <span style="--c:#7ef0c0">Tuya (borde claro)</span>
-            <span style="--c:#ffd166">💰 En venta</span>
+            <span style="--c:#ffd166">🏷️ En venta</span>
             <span id="cityHover"></span>
             <span id="cityStats" style="margin-left:auto"></span>
           </div>
@@ -2137,7 +2137,9 @@
   // nadie ofrece y cuántas empresas lo importan— repartidos por el distrito de
   // las empresas que lo necesitan. La misma cuenta que `encargos` en
   // city/memoria.js (el visor la dibuja sobre los distritos): una empresa necesita
-  // el hueco si está entre los insumos de su sector.
+  // el hueco si está entre los insumos de su sector. (cx, cy) es una de esas
+  // empresas, la más cercana a su centroide: el clic abre la ficha de una empresa
+  // que lo necesita, no la de una celda libre.
   function encargosDe(d){
     if(!d || !d.huecos || !d.huecos.length || !d.parcels || !d.sectors) return [];
     var hueco = {}, porD = {}, out = [], dist = {};
@@ -2151,12 +2153,16 @@
         var e = porD[di] || (porD[di] = { distrito:di, faltan:{}, empresas:0, sx:0, sy:0 });
         e.faltan[h] = (e.faltan[h]||0) + 1; usa = true;
       });
-      if(usa){ var e2 = porD[di]; e2.empresas++; e2.sx += p.x; e2.sy += p.y; }
+      if(usa){ var e2 = porD[di]; e2.empresas++; e2.sx += p.x; e2.sy += p.y; (e2.celdas || (e2.celdas = [])).push([p.x|0, p.y|0]); }
     });
     Object.keys(porD).forEach(function(k){
-      var E = porD[k], D = dist[E.distrito] || {};
+      var E = porD[k], D = dist[E.distrito] || {}, mx = E.sx/E.empresas, my = E.sy/E.empresas, best = null, bd = Infinity;
       var fal = Object.keys(E.faltan).map(function(s){ return { sector:s|0, empresas:E.faltan[s] }; }).sort(function(a,b){ return (b.empresas-a.empresas) || (a.sector-b.sector); });
-      out.push({ distrito:E.distrito, nombre:D.nombre || ("#"+E.distrito), precio:D.precio||0, empresas:E.empresas, faltan:fal, cx:Math.round(E.sx/E.empresas), cy:Math.round(E.sy/E.empresas) });
+      E.celdas.forEach(function(c){
+        var d2 = (c[0]-mx)*(c[0]-mx) + (c[1]-my)*(c[1]-my);
+        if(d2 < bd || (d2 === bd && (c[1] < best[1] || (c[1] === best[1] && c[0] < best[0])))){ bd = d2; best = c; }
+      });
+      out.push({ distrito:E.distrito, nombre:D.nombre || ("#"+E.distrito), precio:D.precio||0, empresas:E.empresas, faltan:fal, cx:best[0], cy:best[1] });
     });
     return out.sort(function(a,b){ return (b.empresas-a.empresas) || (a.distrito-b.distrito); });
   }
@@ -2164,7 +2170,7 @@
     var el = document.getElementById("cityEncargos"), d = city.data; if(!el || !d) return;
     if(!d.dubai){
       el.innerHTML = "⏳ "+t("Los encargos salen de la economía de Dubái, que aún no rige en esta cadena: todavía no hay parcelas ni empresas.")+" "+
-        (d.dubai_desde ? t("Se activa el ")+esc(new Date(d.dubai_desde*1000).toLocaleString())+" · "+t("faltan")+" "+dhms(d.dubai_faltan_segundos)+"." : t("Esta red no tiene fecha de activación (regtest sin --dubai-desde). "));
+        (d.dubai_desde ? t("Dubái se activa el {f}; quedan {t}.").replace("{f}", esc(new Date(d.dubai_desde*1000).toLocaleString())).replace("{t}", dhms(d.dubai_faltan_segundos)) : t("Esta red no tiene fecha de activación de Dubái (regtest sin --dubai-desde)."));
       return;
     }
     var L = encargosDe(d);
@@ -2352,11 +2358,11 @@
     }).catch(function(){ city.mentorBusy = false; });
   }
   var LESSONS = [
-    ["1 · El capital de entrada", "Una parcela libre cuesta lo que marca su distrito y ese RAMI se quema: nadie lo cobra. Elige el distrito según lo que tienes; el desierto y el mar son baratos, Palm y Downtown caros."],
+    ["1 · Lo que cuesta la parcela", "Una parcela libre cuesta lo que marca su distrito y ese RAMI de prueba se quema: nadie lo cobra. Elige el distrito según lo que tienes; el desierto y el mar son baratos, Palm y Downtown caros."],
     ["2 · La demanda: dónde y qué", "Tu ingreso depende de tres factores que se multiplican: la demanda del sector, la actividad del distrito y la afinidad entre ambos (el oro en Deira, los bancos en DIFC, el puerto en Jebel Ali)."],
     ["3 · Los insumos", "Cada empresa necesita a otras. El 40 % de lo que cobras va a tus proveedores más cercanos; lo que nadie ofrece en la ciudad se importa y se quema. Cuantos más insumos existan, más pesas en el reparto."],
-    ["4 · Sé el proveedor", "Mira los huecos: lo que la ciudad importa lo cobra quien lo monte. Un proveedor gana con la demanda propia y con las ventas a las empresas que hoy importan."],
-    ["5 · Flujo de caja", "El fondo reparte cada bloque (~60 s): multiplica el ingreso por bloque por 1440 para ver un día. La recuperación es el capital dividido por el ingreso total por bloque, con la ciudad tal como está hoy."],
+    ["4 · Sé el proveedor", "Mira los huecos: lo que la ciudad importa lo cobra quien lo monte. Un proveedor recibe su parte del reparto por la demanda propia y por las ventas a las empresas que hoy importan."],
+    ["5 · El reparto por bloque", "El fondo reparte cada bloque (~60 s): multiplica lo que recibe una empresa por bloque por 1440 para ver un día de cadena. Son RAMI de prueba, sin valor monetario, y la cifra describe la ciudad tal como está hoy."],
     ["6 · Competencia", "Dos empresas del mismo sector en la misma zona se reparten el mismo peso. Antes de copiar a un vecino, mira cuántas hay ya y qué falta."],
     ["7 · Comprar y vender", "Parcelas y activos se venden en RAMI en una sola transacción: el comprador fija un precio máximo y el pago y el cambio de dueño ocurren juntos. Cada operación queda en la cadena y alimenta la cotización."],
     ["8 · Lo que no es", "Testnet sin valor monetario. El reparto cambia con cada bloque y con cada empresa nueva: las cifras del mentor describen el ahora, no prometen nada."]
@@ -2366,7 +2372,7 @@
     return '<div class="mentor-op"><div><span class="dot" style="--c:'+sectorColor(e.sector)+'"></span><b>'+esc(sectorName(e.sector))+'</b> · '+ramShort(total)+' RAMI/'+t("bloque")+' <span class="muted">('+ramShort(total*1440)+'/'+t("día")+')</span></div>'+
       '<div class="muted">'+t("del fondo")+' '+ramShort(e.ingreso_por_bloque)+' · '+t("ventas a quien importa")+' '+ramShort(e.ventas_por_bloque)+' · '+t("insumos")+' '+e.insumos_cubiertos.length+'/'+(e.insumos_cubiertos.length+e.insumos_faltantes.length)+
       (e.insumos_faltantes.length ? ' ('+t("faltan")+': '+e.insumos_faltantes.map(sectorName).join(", ")+')' : '')+' · '+t("competidores")+' '+e.competidores+' · '+t("afinidad")+' ×'+(e.afinidad_permil/1000).toFixed(1)+
-      (e.capex ? ' · '+t("entrada")+' '+ramShort(e.capex)+' RAMI'+(e.bloques_recuperacion ? ' → '+t("recuperación")+' '+fmtNum(e.bloques_recuperacion)+' '+t("bloques")+' (~'+(e.bloques_recuperacion/1440).toFixed(1)+' '+t("días")+')' : '') : '')+'</div></div>';
+      (e.capex ? ' · '+t("parcela")+' '+ramShort(e.capex)+' RAMI ('+t("se quema")+')' : '')+'</div></div>';
   }
   function renderMentor(){
     var m = city.mentor, el = document.getElementById("cityMentor"); if(!m){ el.innerHTML = ""; return; }
@@ -2382,7 +2388,7 @@
     if(m.huecos && m.huecos.length){
       h += '<div style="margin-top:10px"><b>'+t("Lo que la ciudad importa (nadie lo ofrece):")+'</b> '+m.huecos.slice(0,8).map(function(hu){ return '<span class="pill" style="--c:'+sectorColor(hu[0])+'">'+esc(sectorName(hu[0]))+' · '+hu[1]+'</span>'; }).join(" ")+'</div>';
     } else h += '<div class="note" style="margin-top:8px">'+t("Hoy ninguna empresa importa nada: todos los insumos que se necesitan existen en la ciudad.")+'</div>';
-    h += '<div style="margin-top:10px;display:flex;gap:6px"><input id="cyAsk" placeholder="'+t("Pregunta al mentor: ¿qué monto?, ¿cuánto gano con un hotel?, ¿qué falta?")+'" style="flex:1" autocomplete="off"><button class="btn small" id="cyAskBtn">'+t("Preguntar")+'</button></div>';
+    h += '<div style="margin-top:10px;display:flex;gap:6px"><input id="cyAsk" placeholder="'+t("Pregunta al mentor: ¿qué monto?, ¿cuánto reparte un hotel aquí?, ¿qué falta?")+'" style="flex:1" autocomplete="off"><button class="btn small" id="cyAskBtn">'+t("Preguntar")+'</button></div>';
     h += '<div id="cyAnswer" class="note" style="margin-top:6px"></div>';
     h += '<details style="margin-top:8px"><summary>📚 '+t("Escuela de negocios: 8 lecciones cortas")+'</summary>'+LESSONS.map(function(l){ return '<div class="lesson"><b>'+t(l[0])+'</b><br>'+t(l[1])+'</div>'; }).join("")+'</details>';
     h += '</div>';
@@ -2412,7 +2418,7 @@
       ans = sectorName(sec)+" "+t("necesita")+": "+ev.insumos_cubiertos.concat(ev.insumos_faltantes).map(sectorName).join(", ")+". "+(ev.insumos_faltantes.length ? t("Hoy faltan en la ciudad")+": "+ev.insumos_faltantes.map(sectorName).join(", ")+" ("+t("esa parte del 40 % se importa y se quema")+")." : t("Todos existen ya en la ciudad."));
     } else if(ev){
       var total = ev.ingreso_por_bloque + ev.ventas_por_bloque;
-      ans = t("Con la ciudad tal como está hoy, un")+" "+sectorName(sec)+" "+t("en esta parcela cobra")+" "+ramShort(total)+" RAMI/"+t("bloque")+" ("+ramShort(total*1440)+" "+t("al día")+"): "+ramShort(ev.ingreso_por_bloque)+" "+t("del fondo")+" + "+ramShort(ev.ventas_por_bloque)+" "+t("como proveedor de")+" "+ev.clientes_sin_proveedor+" "+t("empresas que hoy importan")+". "+t("Entrada")+" "+ramShort(ev.capex)+" RAMI"+(ev.bloques_recuperacion ? " → "+t("recuperación en")+" "+fmtNum(ev.bloques_recuperacion)+" "+t("bloques")+" (~"+(ev.bloques_recuperacion/1440).toFixed(1)+" "+t("días")+")." : ".")+" "+t("Competidores")+": "+ev.competidores+". "+t("Las cifras cambian con cada bloque y con cada empresa nueva.");
+      ans = t("Con la ciudad tal como está hoy, un")+" "+sectorName(sec)+" "+t("en esta parcela recibe del reparto")+" "+ramShort(total)+" RAMI/"+t("bloque")+" ("+ramShort(total*1440)+" "+t("al día")+"): "+ramShort(ev.ingreso_por_bloque)+" "+t("del fondo")+" + "+ramShort(ev.ventas_por_bloque)+" "+t("como proveedor de")+" "+ev.clientes_sin_proveedor+" "+t("empresas que hoy importan")+". "+(ev.capex ? t("La parcela cuesta")+" "+ramShort(ev.capex)+" RAMI ("+t("se quema")+"). " : "")+t("Competidores")+": "+ev.competidores+". "+t("Las cifras cambian con cada bloque y con cada empresa nueva.");
     } else if(/precio|cuesta|cost|price|vale/.test(q)){
       ans = (m.distrito ? m.distrito.nombre+": " : "")+t("una parcela libre cuesta")+" "+ramShort(m.precio_parcela)+" RAMI ("+t("se quema")+"). "+t("Acuñar: planta u objeto 1, vehículo 5, local 20 RAMI.");
     } else if(/vend|compr|sell|buy|mercado|market|cotiz/.test(q)){
@@ -2423,7 +2429,7 @@
       var ops = (m.oportunidades||[]).slice(0,3);
       ans = ops.length ? t("Los tres sectores con más ingreso estimado en esta parcela hoy:")+" "+ops.map(function(e){ return sectorName(e.sector)+" ("+ramShort(e.ingreso_por_bloque+e.ventas_por_bloque)+" RAMI/"+t("bloque")+")"; }).join(", ")+". "+t("Pregunta por uno de ellos para ver el detalle.") : t("Selecciona una parcela libre o tuya.");
     }
-    if(!ans) ans = t("Puedo responder a: qué monto aquí, cuánto gano con un sector, qué insumos necesita, qué falta en la ciudad, cuánto cuesta la parcela, cómo vender o comprar, y las lecciones.");
+    if(!ans) ans = t("Puedo responder a: qué monto aquí, cuánto reparte un sector aquí, qué insumos necesita, qué falta en la ciudad, cuánto cuesta la parcela, cómo vender o comprar, y las lecciones.");
     out.textContent = ans;
   }
   function cityAct(path, body, okMsg){

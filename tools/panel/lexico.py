@@ -74,58 +74,88 @@ PROHIBIDO = {
 
 # La zona de inversión (docs/METAVERSO.md §8): cuanto más creíble es la ciudad,
 # más se parece a una inversión. RAMI no tiene valor monetario (NOTICE.md), así
-# que ningún texto visible sugiere revalorización, rentabilidad, rendimiento ni
-# ganancia. Se permite la NEGACIÓN que el proyecto usa para decirlo: el término
-# vale si en su misma frase (sin cruzar «, ; : . ! ?») lo precede, a seis
-# palabras como mucho (doce caracteres en chino), una negación: «no es una
-# inversión», «ni promete rentabilidad», «not an investment», «nor does it
-# promise returns», «не является инвестицией», «不是投资», «si uwekezaji».
+# que ningún texto visible sugiere revalorización, rentabilidad, rendimiento,
+# ganancia ni recuperación del capital.
 INVERSION = {
     "es": [
         (palabra(r"revaloriz\w*"), "RAMI no tiene valor monetario: sin revalorización"),
         (palabra(r"rentab\w*"), "RAMI no tiene valor monetario: sin rentabilidad"),
         (palabra(r"rendimientos?"), "«fluidez», «coste» o la cifra medida (triángulos, cuadros por segundo)"),
-        (palabra(r"ganancias? (?:asegurad|garantizad)\w*"), "RAMI no tiene valor monetario"),
+        (palabra(r"ganancias?"), "RAMI no tiene valor monetario"),
         (palabra(r"oportunidad(?:es)? de inversi[oó]n"), "RAMI no es una inversión"),
         (palabra(r"invert(?:ir|ido|imos) en|inviert[ae]n? en"), "RAMI no es una inversión"),
         (palabra(r"inversi[oó]n(?:es)?|inversor(?:es|as?)?"), "RAMI no es una inversión"),
         (palabra(r"retorno de (?:la )?inversi[oó]n|ROI"), "RAMI no es una inversión"),
+        # El vocabulario del retorno del capital (el mentor de la v0.9 lo usaba).
+        (palabra(r"flujos? de caja|capital de entrada|plazo de recuperaci[oó]n|recuperaci[oó]n (?:[^\\W\\d_]+ ){0,3}(?:capital|inversi[oó]n)|recuper(?:a|as|an|ar) (?:el|tu|su) capital"),
+         "lo que cuesta la parcela y lo que reparte el fondo por bloque, en RAMI de prueba"),
+        (palabra(r"cu[aá]nto gan(?:o|as|a|an|aré|arás)"), "«cuánto reparte», en RAMI de prueba"),
     ],
     "en": [
         (palabra(r"appreciation|appreciates? in value"), "RAMI has no monetary value"),
         (palabra(r"investment opportunit(?:y|ies)|invest(?:ing|ed)? in|investments?|investors?"), "RAMI is not an investment"),
         # «returns» también es un verbo («the road returns to the lane»): solo en su sentido financiero.
-        (palabra(r"(?:financial|investment|guaranteed|expected|high|higher|annual|promised?|big|good|positive|future) returns|returns on"), "RAMI has no monetary value"),
+        (palabra(r"(?:financial|investment|guaranteed|expected|high|higher|annual|promised?|big|good|great|positive|future) returns|returns on"), "RAMI has no monetary value"),
         (palabra(r"profit(?:s|able|ability)?"), "RAMI has no monetary value"),
         (palabra(r"ROI"), "RAMI is not an investment"),
+        # «yield» también es ceder el paso (la calzada de la v0.10.4): solo el rendimiento.
+        (palabra(r"payback|pay back (?:the|your) capital|cash flows?|earnings|(?:annual|guaranteed|expected|high) yields?|yields? on"),
+         "what the parcel costs and what the fund pays out per block, in test RAMI"),
+        (palabra(r"how much (?:do|will|can) (?:i|you) earn"), "“how much does it pay out”, in test RAMI"),
     ],
     "zh": [
-        (re.compile(r"升值|投资回报|回报率|收益|投资机会|盈利|投资|利润"), "RAMI 没有货币价值，不是投资"),
+        (re.compile(r"升值|投资回报|回报率|收益|投资机会|盈利|投资|利润|回本|现金流|赚"), "RAMI 没有货币价值，不是投资"),
     ],
     "ru": [
-        (palabra(r"доходност\w*|прибыл\w*|инвестиц\w*|рентабельн\w*|рост стоимости"), "RAMI не имеет денежной стоимости и не является инвестицией"),
+        (palabra(r"доходност\w*|прибыл\w*|инвестиц\w*|рентабельн\w*|рост стоимости|окупаем\w*|окупа(?:ется|ются|ть)|денежн\w* пото\w*|заработа\w*"),
+         "RAMI не имеет денежной стоимости и не является инвестицией"),
     ],
     "sw": [
-        (palabra(r"faida|uwekezaji|kuwekeza|fursa ya uwekezaji|kupanda kwa thamani"), "RAMI haina thamani ya kifedha na si uwekezaji"),
+        (palabra(r"faida|uwekezaji|kuwekeza|fursa ya uwekezaji|kupanda kwa thamani|urejeshaji(?: wa mtaji)?|kurejesha mtaji|mtiririko wa fedha"),
+         "RAMI haina thamani ya kifedha na si uwekezaji"),
     ],
 }
-NEGACION = {
-    "es": palabra(r"no|ni|sin|nunca|jam[aá]s|ning[uú]n[oa]?|nada"),
-    "en": palabra(r"not|no|nor|never|without|neither|none|cannot|n't"),
-    "ru": palabra(r"не|ни|нет|без|никогда"),
-    "zh": re.compile(r"不|没有|无|非|并非|绝不|从不"),
-    "sw": palabra(r"si|sio|siyo|wala|bila|hakuna|kamwe|haina|hakipimi|hapimi"),
+
+# Se permite la NEGACIÓN que el proyecto usa para decirlo, y solo esa: el término
+# vale si lo niega una construcción de esta lista PEGADA a él —entre la negación
+# y el término, como mucho un artículo, o el primer miembro de una enumeración
+# negada («no mide acierto ni rentabilidad», «si uwekezaji wala faida»)—. Una
+# negación suelta más atrás en la frase no niega el término y no vale: «No te
+# pierdas esta oportunidad de inversión», «¿Por qué no invertir en Dubái?»,
+# «Sin comisiones y con rentabilidad garantizada», «Don't miss this investment
+# opportunity», «不要错过升值机会», «Не упустите доходность» muerden.
+_VERBOS_ES = r"es|son|será|serán|fue|mide|miden|promete|prometen|ofrece|ofrecen|garantiza|garantizan|da|dan|genera|generan|busca|buscan|hay"
+_VERBOS_EN = r"promise|promises|offer|offers|guarantee|guarantees|measure|measures|pay|pays|give|gives|generate|generates|seek|seeks"
+_VERBOS_RU = r"является|являются|измеряет|измеряют|обещает|обещают|гарантирует|гарантируют|приносит|приносят|даёт|дает|дают"
+NIEGA = {
+    "es": (r"(?:no|ni|nunca) (?:%s)|ni|sin|ning[uú]n|ninguna" % _VERBOS_ES,
+           r"un|una|el|la|los|las", r"ni|o"),
+    "en": (r"(?:is|are|was|be|it's)(?: not|n't)|isn't|aren't|not|never|without|"
+           r"(?:does|do|did|will|can|cannot)(?: not|n't)? (?:%s)|(?:nor|neither) (?:does|do|is|are) it(?: (?:%s))?" % (_VERBOS_EN, _VERBOS_EN),
+           r"a|an|the|any", r"or|nor"),
+    "ru": (r"не (?:%s)|не|ни|нет|без" % _VERBOS_RU, r"", r"или|ни"),
+    "sw": (r"si|sio|siyo|wala|bila|hakuna|haina|hakipimi|hapimi|haiahidi|haitoi", r"", r"wala|au"),
 }
-CLAUSULA = re.compile(r"[,;:.!?，；：。！？]")
+_PAL = r"[^\W\d_]+"
+NEGADO = {}
+for _idioma, (_neg, _det, _conj) in NIEGA.items():
+    _d = r"(?:(?:%s)\s+)?" % _det if _det else ""
+    NEGADO[_idioma] = re.compile(
+        r"(?<![^\W\d_'])(?:%s)\s+%s(?:(?:%s\s+){1,3}(?:%s)\s+%s)?$" % (_neg, _d, _PAL, _conj, _d), re.IGNORECASE)
+# En chino, sin espacios: la negación pegada, o «不衡量命中率或收益».
+NEGADO["zh"] = re.compile(r"(?:不是|并非|没有|无|不衡量|不承诺|不保证|不提供|不带来)(?:[\u4e00-\u9fff]{1,6}(?:或|和|、|也不))?$")
+CLAUSULA = re.compile(r"[,;:.!?¿¡，；：。！？]")
 
 
 def negado(idioma, texto, inicio):
-    """¿Hay una negación antes del término, en su misma cláusula y cerca?"""
+    """¿Niega el término una construcción de NIEGA pegada a él, en su cláusula?"""
     antes = CLAUSULA.split(texto[:inicio])[-1]
+    antes = re.sub(r"[*_`>]+", " ", antes)            # el Markdown (**no es**, > cita) no separa
+    antes = re.sub(r"\s+", " ", antes)
     if idioma == "zh":
-        return bool(NEGACION["zh"].search(antes[-12:]))
-    palabras = re.findall(r"[^\W\d_]+(?:'[^\W\d_]+)?", antes)[-6:]
-    return any(NEGACION[idioma].fullmatch(p) or (idioma == "en" and p.lower().endswith("n't")) for p in palabras)
+        return bool(NEGADO["zh"].search(antes.replace(" ", "")))
+    patron = NEGADO.get(idioma)
+    return bool(patron and patron.search(antes if antes.endswith(" ") or not antes else antes + " "))
 
 
 def buscar_inversion(fichero, idioma, lineas, previas=None):
@@ -222,6 +252,34 @@ def leer(p):
         return f.read()
 
 
+def fuentes_cliente():
+    """Todo lo que puede pedir un texto traducido: el panel, el visor y sus
+    módulos, y el Rust (nombres de distritos y mensajes que llegan por la API)."""
+    trozos = []
+    for base, _, ficheros in os.walk(os.path.join(RAIZ, "chain", "crates")):
+        if os.sep + "target" in base or os.sep + "vendor" in base:
+            continue
+        for f in ficheros:
+            if f.endswith((".rs", ".js", ".html")) and f != "i18n.js":
+                trozos.append(leer(os.path.join(base, f)))
+    return "\n".join(trozos)
+
+
+def viva(clave, fuentes):
+    """¿Pide alguna fuente la clave entera? Como literal ("…" o '…', también
+    escapada) o como texto de un elemento HTML (>…<). Una palabra suelta en un
+    comentario de Rust no la mantiene viva."""
+    for pre in ("@ph:", "@title:"):
+        if clave.startswith(pre):
+            clave = clave[len(pre):]
+    formas = set([clave, clave.replace('"', '\\"'), clave.replace("'", "\\'"),
+                  clave.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")])
+    for f in formas:
+        if re.search(r"""["'>]\s*""" + re.escape(f) + r"""\s*["'<]""", fuentes):
+            return True
+    return False
+
+
 def todo(fichero, idioma, lineas):
     """Léxico estimativo, zona de inversión y símbolos de moneda."""
     return buscar(fichero, idioma, lineas) + buscar_inversion(fichero, idioma, lineas)
@@ -244,25 +302,49 @@ def main():
             lineas = literales_t(leer(p))
             hallazgos += todo(rel, "es", lineas)
             monedas += buscar_moneda(rel, lineas)
+    # Los diccionarios. Una traducción cuya clave española ya no aparece en
+    # ninguna fuente del cliente es texto retirado: ningún t() la pide y no la
+    # lee nadie. Se avisa (el integrador la poda de allkeys.json y lang_*.json)
+    # pero no se rechaza; así un frente puede reescribir un texto sin tocar los
+    # diccionarios compartidos.
+    fuentes = fuentes_cliente()
+    retiradas = set()
     for lang in ("en", "ru", "zh", "sw"):
         p = os.path.join(GUI, "i18n-src", "lang_%s.json" % lang)
         if not os.path.exists(p):
             continue
         d = json.load(open(p, encoding="utf-8"))
-        lineas = [(i + 1, v) for i, v in enumerate(d.values()) if isinstance(v, str)]
-        hallazgos += todo("i18n-src/lang_%s.json" % lang, lang, lineas)
-        monedas += buscar_moneda("i18n-src/lang_%s.json" % lang, lineas)
+        rel = "i18n-src/lang_%s.json" % lang
+        for i, (clave, v) in enumerate(d.items()):
+            if not isinstance(v, str):
+                continue
+            h = todo(rel, lang, [(i + 1, v)]) + buscar_moneda(rel, [(i + 1, v)])
+            if h and not viva(clave, fuentes):
+                retiradas.add(clave)
+                continue
+            hallazgos += h
     # Fragmentos de traducción de cada frente (frag_*.json: {"es": {"en": …, …}})
-    # antes de que el integrador los funda en lang_*.json.
+    # antes de que el integrador los funda en lang_*.json. Un fragmento con otra
+    # forma es un fallo con diagnóstico, no una traza.
     i18n = os.path.join(GUI, "i18n-src")
     for f in sorted(os.listdir(i18n)):
         if not (f.startswith("frag_") and f.endswith(".json")):
             continue
-        d = json.load(open(os.path.join(i18n, f), encoding="utf-8"))
+        try:
+            d = json.load(open(os.path.join(i18n, f), encoding="utf-8"))
+        except ValueError as e:
+            hallazgos.append("i18n-src/%s: no es JSON válido (%s)" % (f, e))
+            continue
+        if not isinstance(d, dict):
+            hallazgos.append("i18n-src/%s: se espera {\"texto en español\": {\"en\": …, \"zh\": …, \"ru\": …, \"sw\": …}}" % f)
+            continue
         for i, (es, tr) in enumerate(d.items(), 1):
             hallazgos += todo("i18n-src/" + f, "es", [(i, es)])
             monedas += buscar_moneda("i18n-src/" + f, [(i, es)])
-            for lang, v in (tr or {}).items():
+            if not isinstance(tr, dict):
+                hallazgos.append("i18n-src/%s:%d «%s» → las traducciones van en un objeto {\"en\": …, \"zh\": …, \"ru\": …, \"sw\": …}" % (f, i, es[:60]))
+                continue
+            for lang, v in tr.items():
                 if isinstance(v, str):
                     hallazgos += todo("i18n-src/%s[%s]" % (f, lang), lang, [(i, v)])
                     monedas += buscar_moneda("i18n-src/" + f, [(i, v)])
@@ -301,7 +383,24 @@ def main():
     assert buscar_inversion("x", "es", [(1, "No lo dudes, la rentabilidad es alta")]), "una negación en otra cláusula no vale"
     assert buscar_moneda("x", [(1, "Parcela: 80 €")]) and buscar_moneda("x", [(1, "$25 RAMI")]), "el símbolo junto al precio muerde"
     assert not buscar_moneda("x", [(1, "Parcela libre: 80 RAMI")]), "el precio en RAMI se permite"
+    for idioma, frase in (("es", "No te pierdas esta oportunidad de inversión"), ("es", "¿Por qué no invertir en Dubái?"),
+                          ("es", "Sin comisiones y con rentabilidad garantizada"), ("en", "Don't miss this investment opportunity"),
+                          ("en", "No fees and great returns on your parcel"), ("zh", "不要错过升值机会"), ("ru", "Не упустите доходность"),
+                          ("es", "La recuperación es el capital dividido por el ingreso"), ("es", "1 · El capital de entrada"),
+                          ("en", "payback in 300 blocks"), ("zh", "回本需要"), ("ru", "окупаемость через"), ("sw", "Pata faida kubwa")):
+        assert buscar_inversion("x", idioma, [(1, frase)]), "una negación que no niega el término no vale: " + frase
+    for idioma, frase in (("es", "no mide acierto ni rentabilidad"), ("en", "is never sold and is not an investment"),
+                          ("ru", "она не измеряет меткость или доходность"), ("ru", "это не инвестиция"),
+                          ("zh", "不衡量命中率或收益"), ("zh", "也不是投资"), ("sw", "hakipimi usahihi wala faida"),
+                          ("es", "No es\n una inversión"), ("es", "La cartera tiene una pantalla de recuperación")):
+        assert not buscar_inversion("x", idioma, [(1, frase)]), "la negación del proyecto se permite: " + frase
+    assert viva("Esta moneda", fuentes) and not viva("Clave retirada que no pide nadie 7f3a", fuentes), "la clave viva se encuentra"
     hallazgos += monedas
+    if retiradas:
+        print("Aviso: %d traducciones con léxico de la zona de inversión cuya clave ya no está en ninguna fuente "
+              "(texto retirado; el integrador las poda de allkeys.json y lang_*.json):" % len(retiradas))
+        for c in sorted(retiradas):
+            print("  «%s»" % c[:100])
     if hallazgos:
         print("Léxico prohibido (ICD 203 §2.6, zona de inversión o símbolo de moneda) en la copia visible:")
         for h in hallazgos:

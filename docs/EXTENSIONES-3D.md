@@ -123,11 +123,13 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
   la pestaña de la ciudad abierta.
 - **`window.RamiMemoria`**: `memoria.js` publica sus funciones puras
   (`nivelPatina`, `patina`, `encargos`) aunque no haya visor, para las pruebas.
-- **Etiquetas que no compiten**: `ctx.etiquetas(ls)` recorta los conjuntos de
-  los módulos los últimos, detrás de los rótulos de barrio y de hito. Un
-  conjunto que tiene que verse siempre que esté encendido (los encargos) no se
-  registra: se recorta solo entre sí con `ls.cull(camera, pos, W, H, rects)` en
-  `cuadro` y se dibuja con `renderOrder` 51.
+- **Etiquetas de los módulos**: `ctx.etiquetas(ls)` recorta los conjuntos de
+  los módulos los últimos, detrás de los rótulos de barrio, de hito y de venta:
+  la etiqueta que chocaría con uno de ellos no se dibuja. Los encargos de
+  `memoria` se registran así; para que choquen poco se anclan en una empresa
+  del distrito (no en su centro, donde cae el rótulo del barrio) y llevan un
+  texto corto. Un conjunto registrado y oculto (`mesh.visible = false`) sigue
+  pasando por el recorte, pero como va el último no le quita sitio a nadie.
 
 ## Reglas de la casa
 

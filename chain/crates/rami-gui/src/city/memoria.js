@@ -79,7 +79,10 @@
    * es la cifra de `huecos` (el consenso no cuenta la propia parcela como
    * proveedora, y ningún sector se tiene a sí mismo de insumo).
    * Devuelve [{ distrito, nombre, precio, empresas, faltan: [{ sector, empresas }], cx, cy }],
-   * de más a menos empresas; a igualdad, por id de distrito.
+   * de más a menos empresas; a igualdad, por id de distrito. (cx, cy) es la
+   * celda de una de esas empresas —la más cercana a su centroide; a igualdad,
+   * la de menor y y luego menor x—: el centroide redondeado puede caer en una
+   * celda libre o en otro distrito, y la ficha que abre el clic sería otra.
    */
   function encargos(d) {
     if (!d || !d.huecos || !d.huecos.length || !d.parcels || !d.sectors) return [];
@@ -98,16 +101,19 @@
         if (!e) e = porD[di] = { distrito: di, faltan: {}, empresas: 0, sx: 0, sy: 0 };
         e.faltan[h] = (e.faltan[h] || 0) + 1; usa = true;
       }
-      if (usa) { e.empresas++; e.sx += p.x; e.sy += p.y; }
+      if (usa) { e.empresas++; e.sx += p.x; e.sy += p.y; (e.celdas || (e.celdas = [])).push(p.x | 0, p.y | 0); }
     }
     for (var k in porD) {
       if (!Object.prototype.hasOwnProperty.call(porD, k)) continue;
       var E = porD[k], fal = [], s;
       for (s in E.faltan) if (Object.prototype.hasOwnProperty.call(E.faltan, s)) fal.push({ sector: s | 0, empresas: E.faltan[s] });
       fal.sort(function (a, b) { return (b.empresas - a.empresas) || (a.sector - b.sector); });
-      var D = dist[E.distrito] || {};
-      lista.push({ distrito: E.distrito, nombre: D.nombre || ('#' + E.distrito), precio: D.precio || 0, empresas: E.empresas, faltan: fal,
-        cx: Math.round(E.sx / E.empresas), cy: Math.round(E.sy / E.empresas) });
+      var D = dist[E.distrito] || {}, mx = E.sx / E.empresas, my = E.sy / E.empresas, bx = 0, by = 0, bd = Infinity;
+      for (j = 0; j < E.celdas.length; j += 2) {
+        var ex = E.celdas[j], ey = E.celdas[j + 1], d2 = (ex - mx) * (ex - mx) + (ey - my) * (ey - my);
+        if (d2 < bd || (d2 === bd && (ey < by || (ey === by && ex < bx)))) { bd = d2; bx = ex; by = ey; }
+      }
+      lista.push({ distrito: E.distrito, nombre: D.nombre || ('#' + E.distrito), precio: D.precio || 0, empresas: E.empresas, faltan: fal, cx: bx, cy: by });
     }
     lista.sort(function (a, b) { return (b.empresas - a.empresas) || (a.distrito - b.distrito); });
     return lista;
@@ -124,13 +130,17 @@
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   /** «… {n} …» → el valor: la frase entera pasa por t() y cada idioma pone el número donde le toca. */
   function fmt(s, v) { return String(s).replace(/\{(\w+)\}/g, function (m, k) { return v[k] !== undefined ? String(v[k]) : m; }); }
+  function hhmm(h) { var m = Math.floor(h * 60 + 1e-6) % 1440; return Math.floor(m / 60) + ':' + ('0' + m % 60).slice(-2); }
   function dhm(seg) { seg = Math.max(0, seg | 0); var d = Math.floor(seg / 86400), h = Math.floor(seg % 86400 / 3600), m = Math.floor(seg % 3600 / 60); return (d ? d + ' d ' : '') + h + ' h ' + m + ' min'; }
 
   var CSS = [
     '.mem-barra{position:absolute;left:10px;bottom:10px;z-index:3;display:flex;gap:6px;flex-wrap:wrap}',
     '.mem-barra button{font:600 12px system-ui,sans-serif;color:#e9eff7;background:rgba(8,13,20,.82);border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:5px 9px;cursor:pointer}',
     '.mem-barra button.on{border-color:#ffb35c;color:#ffd7a8}',
-    '.mem-guia{position:absolute;right:10px;top:54px;bottom:48px;width:min(340px,62%);z-index:3;overflow:auto;display:none;',
+    '.mem-barra button.nuevo{border-color:#7ef0c0;color:#7ef0c0}',
+    // Sin min(): los webviews viejos no la entienden. En el visor de 644 px del
+    // panel a 1280 × 800, 300 px; más estrecho, el 62 %.
+    '.mem-guia{position:absolute;right:10px;top:54px;bottom:48px;width:62%;max-width:300px;z-index:3;overflow:auto;display:none;',
     'font:13px/1.45 system-ui,sans-serif;color:#e9eff7;background:rgba(8,13,20,.92);border:1px solid rgba(255,255,255,.16);border-radius:12px;padding:12px 14px}',
     '.mem-guia.on{display:block}',
     '.mem-guia h3{margin:0 0 4px;font-size:14px}',
@@ -312,26 +322,31 @@
     // =============================================================================
     // 2. Los encargos
     // =============================================================================
-    var encRects = { arr: new Float32Array(4 * 64), n: 0 };
     var lista = [], encLabels = null, verEncargos = leeLocal(ENC_CLAVE) !== '0';
     function nombreSector(k) { return M.sectorName(k); }
+    // Corta (el primer insumo y cuántos más): la lista entera está en la
+    // tarjeta «Encargos» del panel, y una etiqueta larga choca con más rótulos.
     function textoEncargo(e) {
-      var partes = [], i;
-      for (i = 0; i < e.faltan.length && i < 2; i++) partes.push(t(nombreSector(e.faltan[i].sector)) + ' ×' + e.faltan[i].empresas);
-      if (e.faltan.length > 2) partes.push('+' + (e.faltan.length - 2));
+      var partes = [t(nombreSector(e.faltan[0].sector)) + ' ×' + e.faltan[0].empresas];
+      if (e.faltan.length > 1) partes.push('+' + (e.faltan.length - 1));
       return '📋 ' + fmt(t('{distrito}: falta {lista}'), { distrito: e.nombre, lista: partes.join(', ') });
     }
     function ponEncargos(d) {
       lista = encargos(d && d.datos ? d.datos : d);
-      // Sin `ctx.etiquetas`: el núcleo recorta los conjuntos de los módulos los
-      // últimos, y en la vista de la ciudad los rótulos de barrio (que caen justo
-      // en los mismos distritos) los tapaban todos. Se recortan solo entre sí
-      // (`cuadro`) y se dibujan encima; el botón 📋 los quita.
-      if (!encLabels) { encLabels = new ctx.LabelSet(ctx.uniformes.viewport, false); encLabels.mesh.renderOrder = 51; ctx.scene.add(encLabels.mesh); }
+      // Con `ctx.etiquetas`, como manda el contrato: el núcleo las recorta con sus
+      // rótulos (barrios, hitos, ventas) y la que chocaría con uno no se dibuja.
+      // Ancladas en una empresa del distrito (no en su centro, donde cae el
+      // rótulo del barrio) y a 0,9 celdas de altura (585 m; tope 700): los
+      // rótulos del núcleo van a 8 m del suelo y, en la vista oblicua, la altura
+      // sube la etiqueta por encima de ellos. Medido en la vista de la ciudad con
+      // la ciudad sintética: a 0,3 celdas (195 m) no pasaba ninguna; a 0,9 pasa
+      // la de Downtown sin tocar ningún rótulo. La lista entera está en la
+      // tarjeta del panel.
+      if (!encLabels) { encLabels = new ctx.LabelSet(ctx.uniformes.viewport, false); encLabels.mesh.name = 'memoria_encargos'; ctx.scene.add(encLabels.mesh); ctx.etiquetas(encLabels); }
       var items = [], i;
       for (i = 0; i < lista.length && i < 40; i++) {
         var e = lista[i], w = M.cellWorld(U.clamp(e.cx, 0, ctx.N() - 1), U.clamp(e.cy, 0, ctx.N() - 1));
-        items.push({ x: w.x, y: w.y + U.clamp(ctx.CELL() * 0.3, 60, 260), z: w.z, text: textoEncargo(e), color: '#ffb35c', size: 12, bold: true, pin: true, maxDist: S.L * 0.9, priority: 3 });
+        items.push({ x: w.x, y: w.y + U.clamp(ctx.CELL() * 0.9, 60, 700), z: w.z, text: textoEncargo(e), color: '#ffb35c', size: 12, bold: true, pin: true, maxDist: S.L * 0.9, priority: 3 });
       }
       encLabels.set(items);
       encLabels.mesh.visible = verEncargos && items.length > 0;
@@ -342,10 +357,10 @@
     // 3. La barrita y la guía del día uno
     // =============================================================================
     var raiz = ctx.container, barra = null, btnEnc = null, btnGuia = null, guia = null, estilo = null, reloj = 0;
-    var jugador = { perfil: false, saldo: 0 }, oyentes = [];
+    var jugador = { perfil: false, saldo: 0 }, oyentes = [], resaltar = false;
     var progreso = { h: {}, c: 0 };
-    try { var pg0 = JSON.parse(leeLocal(GUIA_CLAVE) || 'null'); if (pg0 && typeof pg0 === 'object') progreso = { h: pg0.h || {}, c: pg0.c ? 1 : 0, visto: 1 }; } catch (e0) { /* progreso nuevo */ }
-    function guarda() { guardaLocal(GUIA_CLAVE, JSON.stringify({ h: progreso.h, c: progreso.c })); }
+    try { var pg0 = JSON.parse(leeLocal(GUIA_CLAVE) || 'null'); if (pg0 && typeof pg0 === 'object') progreso = { h: pg0.h || {}, c: pg0.c ? 1 : 0, visto: pg0.v || pg0.c ? 1 : 0 }; } catch (e0) { /* progreso nuevo */ }
+    function guarda() { guardaLocal(GUIA_CLAVE, JSON.stringify({ h: progreso.h, c: progreso.c, v: progreso.visto ? 1 : 0 })); }
 
     var PASOS = [
       { id: 'mirar', titulo: 'Mira la ciudad', texto: 'Arrastra para girar y usa la rueda para acercarte. «Centro» y «Dubái» te llevan volando.',
@@ -371,28 +386,39 @@
     }
     function abreGuia(v) {
       if (!guia) return;
-      progreso.c = v ? 0 : 1; guarda();
+      progreso.c = v ? 0 : 1; if (v) { progreso.visto = 1; resaltar = false; } guarda();
       guia.className = 'mem-guia' + (v ? ' on' : '');
       if (v) pintaGuia();
       pintaBarra();
     }
 
     function fechas() {
-      var dd = (S.city && S.city.datos) || {}, ahora = Date.now() / 1000;
-      var dub = dd.dubai_desde || PLAN_DUBAI, viv = dd.vivienda_desde || PLAN_VIVIENDA;
+      var cargada = !!(S.city && S.city.datos), dd = cargada ? S.city.datos : {}, ahora = Date.now() / 1000;
+      // La fecha de Dubái es la de la cadena. Solo sin datos todavía se enseña la
+      // del plan; con datos y sin `dubai_desde` (regtest sin --dubai-desde), lo
+      // mismo que la tarjeta del panel: esta red no tiene fecha.
+      var dub = cargada ? dd.dubai_desde : PLAN_DUBAI, viv = dd.vivienda_desde || PLAN_VIVIENDA;
       function fecha(s) { try { return new Date(s * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }); } catch (e) { return new Date(s * 1000).toISOString().slice(0, 10); } }
-      var h = '<p>🏙️ <b>' + esc(fecha(dub)) + '</b> — ' + (dd.dubai || ahora >= dub ? esc(t('Dubái ya rige en esta cadena: parcelas, empresas, mercado y encargos.'))
+      var h = dd.dubai ? '<p>🏙️ ' + esc(t('Dubái ya rige en esta cadena: parcelas, empresas, mercado y encargos.')) + '</p>'
+        : !dub ? '<p>🏙️ ' + esc(t('Esta red no tiene fecha de activación de Dubái (regtest sin --dubai-desde).')) + '</p>'
+        : '<p>🏙️ <b>' + esc(fecha(dub)) + '</b> — ' + (ahora >= dub ? esc(t('Dubái ya rige en esta cadena: parcelas, empresas, mercado y encargos.'))
         : esc(fmt(t('se activa Dubái: parcelas, empresas, mercado y encargos. Faltan {t}.'), { t: dhm(dub - ahora) }))) + '</p>';
       h += '<p>🏠 <b>' + esc(fecha(viv)) + '</b> — ' + (dd.vivienda_rige || ahora >= viv ? esc(t('rige la escritura de vivienda: tu piso, en el libro mayor.'))
         : esc(fmt(t('se activa la escritura de vivienda: tu piso, en el libro mayor. Faltan {t}.'), { t: dhm(viv - ahora) }))) + '</p>';
       return h;
     }
     function manana() {
-      var dd = (S.city && S.city.datos) || {}, h = '<b>' + esc(t('Por qué vuelves mañana')) + '</b><ul>', hora = M.dubaiHour(), i;
+      var dd = (S.city && S.city.datos) || {}, h = '<b>' + esc(t('Por qué vuelves mañana')) + '</b><ul>', i;
       var nEnc = 0; for (i = 0; i < lista.length; i++) nEnc += lista[i].faltan.length;
-      h += '<li>' + (dd.dubai ? esc(fmt(t('Los encargos cambian con cada bloque: hoy hay {n} en {d} distritos.'), { n: nEnc, d: lista.length }))
+      // Los huecos dependen solo de las parcelas (ciudad::huecos): cambian cuando
+      // se funda una empresa o una cambia de sector, no con cada bloque.
+      h += '<li>' + (dd.dubai ? esc(fmt(t('Los encargos cambian cuando se funda una empresa o una cambia de sector: hoy hay {n} en {d} distritos.'), { n: nEnc, d: lista.length }))
         : esc(t('Los encargos empiezan con Dubái: cada bloque, el consenso calcula qué insumos importa la ciudad.'))) + '</li>';
-      h += '<li>' + esc(fmt(t('La luz sigue la hora real de Dubái: ahora son las {h}.'), { h: Math.floor(hora) + ':' + ('0' + Math.floor((hora % 1) * 60)).slice(-2) })) + '</li>';
+      // La hora real de Dubái (UTC+4) sale del reloj, no de M.dubaiHour(), que
+      // devuelve la hora fijada con el selector «Hora del día» si la hay.
+      var real = ((Date.now() / 3600000 + 4) % 24 + 24) % 24, fijada = S.hour !== null && S.hour !== undefined;
+      h += '<li>' + esc(fijada ? fmt(t('En Dubái son las {h}; la luz de la escena está fijada a las {f} (elige «Hora real de Dubái» para que la siga).'), { h: hhmm(real), f: hhmm(S.hour) })
+        : fmt(t('La luz sigue la hora real de Dubái: ahora son las {h}.'), { h: hhmm(real) })) + '</li>';
       var mio = null;
       for (i = 0; i < placas.length; i++) if (placas[i].mia && (!mio || placas[i].since < mio.since)) mio = placas[i];
       if (mio) {
@@ -428,7 +454,7 @@
       btnEnc.textContent = '📋 ' + t('Encargos') + ' (' + nEnc + ')';
       btnEnc.className = verEncargos ? 'on' : '';
       btnGuia.textContent = '📖 ' + t('Primeros pasos') + ' ' + hechos() + '/' + PASOS.length;
-      btnGuia.className = guia && guia.className.indexOf(' on') >= 0 ? 'on' : '';
+      btnGuia.className = guia && guia.className.indexOf(' on') >= 0 ? 'on' : (resaltar ? 'nuevo' : '');
     }
     function oye(el, ev, fn, op) { el.addEventListener(ev, fn, op || false); oyentes.push([el, ev, fn, op || false]); }
 
@@ -461,46 +487,77 @@
       oye(ctx.canvas, 'pointermove', function (ev) { if (abajo && S.mode === 'orbit' && Math.abs(ev.clientX - abajo.x) + Math.abs(ev.clientY - abajo.y) > 40) marca('mirar', true); });
       oye(ctx.canvas, 'pointerup', function () { abajo = null; });
       oye(ctx.canvas, 'wheel', function () { if (S.mode === 'orbit') marca('mirar', true); }, { passive: true });
-      guia.className = 'mem-guia' + (!progreso.c && hechos() < PASOS.length ? ' on' : '');
-      if (guia.className.indexOf(' on') >= 0) pintaGuia();
+      // Se abre sola la primera vez solo si deja ciudad a la vista: en un visor
+      // de menos de 760 px taparía más de un tercio (la placa, a pie). Entonces
+      // el botón 📖 se resalta hasta que se abre una vez.
+      var nueva = !progreso.c && !progreso.visto && hechos() < PASOS.length;
+      var ancho = raiz.clientWidth || 0;
+      guia.className = 'mem-guia' + (!progreso.c && hechos() < PASOS.length && (progreso.visto || ancho >= 760) ? ' on' : '');
+      resaltar = nueva && guia.className.indexOf(' on') < 0;
+      if (guia.className.indexOf(' on') >= 0) { progreso.visto = 1; guarda(); pintaGuia(); }
       pintaBarra();
     }
 
+    /** Solo las partes de la guía abierta que cambian solas (fechas, cuenta atrás, hora, encargos). */
+    function refrescaGuia() {
+      if (!guia || guia.className.indexOf(' on') < 0) return;
+      var f = guia.querySelector('.mem-fechas'), m = guia.querySelector('.mem-manana');
+      if (f) f.innerHTML = fechas();
+      if (m) m.innerHTML = manana();
+    }
+    /**
+     * Lo que usan las placas y los encargos de la vista de la ciudad: las
+     * parcelas (sitio, sector, fundación, nombres, dueño), los huecos, los
+     * distritos y quién soy. La altura y la cuenta atrás no entran.
+     */
+    var firmaVista = '';
+    function firmaCiudad(d) {
+      var dd = d && d.datos ? d.datos : d;
+      if (!dd) return '';
+      var ps = dd.parcels || [], out = [!!S.cellH, dd.me || '', JSON.stringify(dd.huecos || []), (dd.districts || []).length], i, p;
+      for (i = 0; i < (dd.districts || []).length; i++) out.push(dd.districts[i].id + '=' + dd.districts[i].nombre + '=' + dd.districts[i].precio);
+      for (i = 0; i < ps.length; i++) { p = ps[i]; out.push(p.x + ',' + p.y + ',' + p.kind + ',' + p.since + ',' + (p.pending ? 1 : 0) + ',' + p.distrito + ',' + (p.owner || '') + ',' + (p.name || '') + ',' + (p.handle || '')); }
+      return out.join('|');
+    }
     /** Cada segundo: la cuenta atrás de la guía abierta y si el módulo «umbral» dice que estás dentro. */
     function cadaSegundo() {
       try {
         var u = ctx.handle && ctx.handle.ext && ctx.handle.ext.umbral;
         if (u && typeof u.estado === 'function') { var st = u.estado(); if (st && st.dentro) marca('entrar', true); }
       } catch (eU) { /* el otro módulo manda; aquí solo se mira */ }
-      // Solo las partes que cambian solas (la cuenta atrás y la hora): repintar la
-      // guía entera cada segundo se comería un clic que cayera en medio.
-      if (guia && guia.className.indexOf(' on') >= 0) {
-        var f = guia.querySelector('.mem-fechas'), m = guia.querySelector('.mem-manana');
-        if (f) f.innerHTML = fechas();
-        if (m) m.innerHTML = manana();
-      }
+      refrescaGuia();
     }
 
     creaMallaPlacas();
     montaUI();
 
     return {
-      listo: function () { if (S.city) { calculaPlacas(S.city); ponEncargos(S.city); } },
-      ciudad: function (d) { calculaPlacas(d); ponEncargos(d); if (guia && guia.className.indexOf(' on') >= 0) pintaGuia(); },
+      listo: function () { if (S.city) { firmaVista = firmaCiudad(S.city); calculaPlacas(S.city); ponEncargos(S.city); } },
+      // Antes de Dubái /api/city cambia en cada sondeo (la cuenta atrás), así que
+      // este gancho llega cada ~5 s: se rehace solo lo que dependa de algo que
+      // cambió, y de la guía abierta solo sus partes vivas (repintarla entera se
+      // comería un clic o el foco de una casilla).
+      ciudad: function (d) {
+        var firma = firmaCiudad(d);
+        if (firma !== firmaVista) { firmaVista = firma; calculaPlacas(d); ponEncargos(d); }
+        refrescaGuia();
+      },
       cuadro: function (dt) {
         actualizaPlacas(dt || 0);
-        if (encLabels && encLabels.mesh.visible && encLabels.items.length) {
-          ctx.camera.getWorldPosition(_cam); encRects.n = 0;
-          var r = ctx.renderer.domElement;
-          encLabels.cull(ctx.camera, _cam, r.clientWidth || 1, r.clientHeight || 1, encRects);
-        }
-        reloj += dt || 0;
-        if (reloj >= 1) { reloj = 0; cadaSegundo(); }
+        // Con el reloj de pared y no con dt: el núcleo recorta dt y, con un
+        // dibujo lento (0,2–2 cuadros por segundo por software), «cada segundo»
+        // en tiempo simulado tardaría medio minuto de verdad.
+        var ya = Date.now();
+        if (ya - reloj >= 1000) { reloj = ya; cadaSegundo(); }
       },
       modo: function (m) { if (m === 'walk') marca('a_pie', true); },
       estadisticas: function (o) {
         var activas = 0; for (var i = 0; i < huecos.length; i++) if (huecos[i].clave) activas++;
-        o.memoria = { placas: placas.length, placasVisibles: activas, triangulosPlacas: activas ? HUECOS_PLACA * IPP / 3 : 0, encargos: lista.length, etiquetasEncargos: encLabels && encLabels.mesh.visible ? encLabels.items.length : 0 };
+        // etiquetasEncargos: las encendidas; …Visibles: las que pasan el recorte con los rótulos del núcleo.
+        var pasan = 0;
+        if (encLabels && encLabels.mesh.visible && encLabels.lvis) for (i = 0; i < encLabels.items.length; i++) if (encLabels.lvis[i * 4]) pasan++;
+        o.memoria = { placas: placas.length, placasVisibles: activas, triangulosPlacas: activas ? HUECOS_PLACA * IPP / 3 : 0, encargos: lista.length,
+          etiquetasEncargos: encLabels && encLabels.mesh.visible ? encLabels.items.length : 0, etiquetasEncargosVisibles: pasan };
       },
       soltar: function () {
         for (var i = 0; i < oyentes.length; i++) oyentes[i][0].removeEventListener(oyentes[i][1], oyentes[i][2], oyentes[i][3]);

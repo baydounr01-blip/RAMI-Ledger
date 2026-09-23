@@ -256,8 +256,8 @@ Lo que es consenso (`rami-core/src/ciudad.rs`, detalle y pruebas en
   estado.
 - **El mentor:** una regla pública (no una persona) que, con las mismas
   funciones del reparto, dice qué cobraría hoy cada sector en cada parcela,
-  qué insumos faltan, cuántos competidores hay y en cuántos bloques se
-  recupera el capital. El panel añade una escuela de negocios de ocho
+  qué insumos faltan, cuántos competidores hay y cuánto cuesta la parcela
+  (RAMI de prueba que se quema). El panel añade una escuela de negocios de ocho
   lecciones cortas para quien empieza. Son cifras del estado actual, no una
   promesa; el panel lo dice en cada respuesta.
 - **Presencia y chat efímeros:** los visitantes se ven como avatares y hablan
