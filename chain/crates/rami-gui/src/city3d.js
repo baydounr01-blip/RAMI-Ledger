@@ -1028,7 +1028,9 @@
     // oficina (huecos de 4,5 por 3,6 m), 1 = lisa, sin ventanas (villas, naves,
     // granjas, depósitos), 2 = muro cortina (paños de 1,5 m con montantes finos),
     // 3 = ventana corrida (una cinta de fachada a fachada por planta). Las mallas
-    // sin el atributo leen 0.
+    // sin el atributo leen 0. Desde la v0.11.0 lleva además la identidad del
+    // edificio: aflags = fachada + 4·(1 + id), con id de 0 a 1023 (flagsEdificio);
+    // el tipo es aflags módulo 4 y un 0 en la parte alta quiere decir «sin id».
     'attribute float aflags;',
     'varying vec3 vNormalW; varying vec3 vWorld; varying float vLocalY; varying float vFlags; varying float vBase;',
     'void main(){',
@@ -1067,7 +1069,10 @@
     // caja: fondo, paredes, suelo o techo, lo primero que toque. Encima, un
     // mueble (un plano a media profundidad, de pie en el suelo) y, en una de
     // cada tres salas, una persiana bajada. Todo sale de dos sorteos: `hb`, el
-    // del edificio (oficina fría o vivienda cálida), y `hs`, el de la sala.
+    // del edificio (oficina fría o vivienda cálida), y `hs`, el de la sala. El
+    // edificio se reconoce por su id en `aflags` (flagsEdificio), que es el mismo
+    // en toda su malla; solo lo que no lo lleva (los hitos modelados a mano, las
+    // mallas de los módulos) cae en el sorteo por tesela de 500 m y cota del pie.
     // Devuelve el albedo de lo que se ve en .rgb, en .a cuánta luz de día le
     // llega (cae con el fondo), y en `lamp` cuánto la ilumina la lámpara de noche.
     'vec4 interiorSala(vec2 q, vec3 v, vec3 nh, float hb, float hs, out float lamp){',
@@ -1100,7 +1105,8 @@
     '}',
     'void main(){',
     '  #include <logdepthbuf_fragment>',
-    '  float tipo = floor(vFlags + 0.5);',
+    '  float af = floor(vFlags + 0.5);',
+    '  float tipo = mod(af, 4.0), idE = floor(af * 0.25);',
     '  float lisa = step(0.5, tipo) * step(tipo, 1.5), cortina = step(1.5, tipo) * step(tipo, 2.5), cinta = step(2.5, tipo);',
     '  float uWin = uWindows * (1.0 - lisa);',
     '  vec3 base = vec3(0.8);',
@@ -1136,8 +1142,9 @@
     '  float hayS = 0.0, lampS = 1.0; vec3 salaAlb = vec3(0.0);',
     '  if (uInterior > 0.5 && glass > 0.01) {',
     '    vec3 nh = normalize(vec3(n.x, 0.0, n.z) + vec3(1e-5, 0.0, 0.0));',
-    '    float hb = hash21(floor(vWorld.xz * 0.002) + vBase * 0.731);',
-    '    float hs = hash21(cell * vec2(0.93, 1.07) + floor(vWorld.xz * 0.002) + 17.0);',
+    '    vec2 eid = idE > 0.5 ? vec2(idE * 0.618034, 7.31) : floor(vWorld.xz * 0.002) + vBase * 0.731;',
+    '    float hb = hash21(eid);',
+    '    float hs = hash21(cell * vec2(0.93, 1.07) + eid + 17.0);',
     '    vec4 si = interiorSala(uvw / vec2(4.5, 3.6), v, nh, hb, hs, lampS);',
     '    salaAlb = si.rgb; hayS = 1.0;',
     '    vec3 dentro = salaAlb * (amb * 0.30 + uSunColor * 0.04 * max(uSun.y, 0.0)) * si.a;',
@@ -1162,6 +1169,42 @@
     '  #include <encodings_fragment>',
     '  #include <fog_fragment>',
     '}'].join('\n');
+  /**
+   * El valor de `aflags` de un edificio (v0.11.0): su fachada (0–3) más
+   * 4·(1 + id), con el id de 0 a 1023 sacado de la semilla entera de su posición
+   * redondeada al metro (canal 21 de la morfología: el mismo número en toda
+   * máquina). Los interiores por paralaje sortean con él la paleta de salas del
+   * edificio entero; antes la sacaban de la tesela de 500 m, y una fachada que
+   * cruzaba x o z = 500·k cambiaba de paleta a media altura. Un float guarda
+   * exactos los enteros hasta 2²⁴: aquí el mayor es 4.099.
+   */
+  function flagsEdificio(fachada, x, z) {
+    return (fachada | 0) + 4 * (1 + (semillaMorfologia(Math.round(x), Math.round(z), 21) & 1023));
+  }
+  /**
+   * Cascadas de sombra para un material de three (Lambert, Phong, Standard)
+   * (v0.11.0). En r150, lights_fragment_begin aplica la sombra de cada luz
+   * direccional solo a la luz de SU luz, y las cascadas tienen intensidad 0: sin
+   * esto, el material solo ve el mapa del sol, que en alta y ultra es la caja
+   * cercana (150 m a pie). Se cambia esa línea por la máscara entera
+   * (getShadowMask, el producto de todos los mapas, lo mismo que leen los
+   * materiales propios del visor) para cada luz direccional con sombra: las
+   * cascadas no tienen color, así que solo cuenta en la del sol. Con una sola luz
+   * con sombra (media) el resultado es el de siempre. Si three cambia el trozo y
+   * la línea no aparece, el material se queda como estaba.
+   */
+  var SOMBRA_DIR_R150 = 'directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;';
+  function sombraEnCascadas(material) {
+    material.onBeforeCompile = function (sh) {
+      var trozo = THREE.ShaderChunk.lights_fragment_begin;
+      if (trozo.indexOf(SOMBRA_DIR_R150) < 0 || sh.fragmentShader.indexOf('#include <lights_fragment_begin>') < 0) return;
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <shadowmap_pars_fragment>', '#include <shadowmap_pars_fragment>\n#include <shadowmask_pars_fragment>')
+        .replace('#include <lights_fragment_begin>', 'float sombraCascadas = getShadowMask();\n' +
+          trozo.replace(SOMBRA_DIR_R150, 'directLight.color *= directLight.visible ? sombraCascadas : 1.0;'));
+    };
+    return material;
+  }
   function makeBuildingMaterial(shared, windows) {
     var u = THREE.UniformsUtils.merge([THREE.UniformsLib.lights, THREE.UniformsLib.fog]);
     u.uSun = shared.uSun; u.uSunColor = shared.uSunColor; u.uSkyColor = shared.uSkyColor; u.uGroundColor = shared.uGroundColor; u.uNight = shared.uNight; u.uDusk = shared.uDusk; u.uEnv = shared.uEnv;
@@ -1986,6 +2029,17 @@
 
     // --- Comprobación de WebGL ANTES de tocar el DOM ------------------------
     var canvas = document.createElement('canvas'), gl = null;
+    // `antialias` se queda encendido aunque el posproceso (city/espejismo.js)
+    // dibuje la escena en su propio destino con multimuestreo y al lienzo solo
+    // llegue un triángulo de pantalla. Tres motivos: en r150 la capa de las gafas
+    // (XRWebGLLayer) hereda el `antialias` de ESTE contexto, y en VR se dibuja
+    // directo; la calidad baja no lleva posproceso y se cambia en caliente, pero
+    // los atributos del contexto no; y si el módulo falla, el núcleo dibuja al
+    // lienzo. Lo que cuesta, calculado (no medido: aquí no hay tarjeta): las
+    // cuatro muestras de color y profundidad del lienzo son 32 bytes por píxel
+    // del búfer de dibujo que, con posproceso, no se usan: 66 MB a 1920×1080,
+    // 118 MB a 2560×1440 y 265 MB a 3840×2160. El destino del posproceso suma
+    // 40 bytes por píxel (sus muestras y sus texturas resueltas).
     var glAttrs = { antialias: true, alpha: false, powerPreference: 'high-performance', preserveDrawingBuffer: false };
     try {
       gl = canvas.getContext('webgl2', glAttrs) || canvas.getContext('webgl', glAttrs) || canvas.getContext('experimental-webgl', glAttrs);
@@ -2033,7 +2087,10 @@
     // (updateShadowFrame). getShadowMask() de three ya multiplica todas las luces
     // con sombra, así que los cuatro materiales propios (edificios, calzada,
     // terreno, mar) las leen sin tocar su código; y como cada mapa devuelve 1
-    // fuera de su caja, la cercana solo cuenta donde llega. Añadir o quitar una
+    // fuera de su caja, la cercana solo cuenta donde llega. Los materiales de
+    // three (Lambert: plantas, cajas, lecho marino) NO: aplican a cada luz solo su
+    // mapa, y el del sol es aquí el de la caja cercana; por eso llevan
+    // sombraEnCascadas, que les pone la misma máscara. Añadir o quitar una
     // luz cambia NUM_DIR_LIGHTS y recompila todos los materiales de la escena:
     // por eso el número se fija al montar y al cambiar de calidad, nunca por cuadro.
     var cascadas = [];
@@ -2289,8 +2346,8 @@
       var crate = new THREE.BoxGeometry(a * 0.7, a * 0.7, a * 0.7); crate.translate(0, a * 0.35, 0);
       var local = new THREE.BoxGeometry(a * 1.2, a * 0.9, a * 0.8); local.translate(0, a * 0.45, 0);
       var ring = new THREE.TorusGeometry(a * 0.8, a * 0.06, 6, 20); ring.rotateX(Math.PI / 2); ring.translate(0, a * 0.08, 0);
-      C.plants = inst(cone, new THREE.MeshLambertMaterial({ color: 0xffffff }), 256, 'plants');
-      C.crates = inst(crate, new THREE.MeshLambertMaterial({ color: 0xffffff }), 256, 'crates');
+      C.plants = inst(cone, sombraEnCascadas(new THREE.MeshLambertMaterial({ color: 0xffffff })), 256, 'plants');
+      C.crates = inst(crate, sombraEnCascadas(new THREE.MeshLambertMaterial({ color: 0xffffff })), 256, 'crates');
       C.locals = inst(local, plainMat, 256, 'locals');
       C.cars = inst(carGeometry(), plainMat, 256, 'cars');
       C.rings = inst(ring, new THREE.MeshBasicMaterial({ color: new THREE.Color(colors.lease), transparent: true, opacity: 0.85 }), 256, 'rings');
@@ -2367,7 +2424,7 @@
         var TT = teselas[clave] || (teselas[clave] = { acc: newAcc(), abase: [], aflags: [] });
         _m4b.compose(_pv.set(w.x, y0, w.z), _q.setFromEuler(_e.set(0, rotR, 0)), _sv.set(1, 1, 1));
         pushParts(TT.acc, ed.p, _m4b);
-        var fachada = fachadaParcela(arch, real01(semillaMorfologia(x, y, 15)));
+        var fachada = flagsEdificio(fachadaParcela(arch, real01(semillaMorfologia(x, y, 15))), w.x, w.z);
         while (TT.abase.length * 3 < TT.acc.pos.length) { TT.abase.push(y0 + ed.suelo - 1); TT.aflags.push(fachada); }
         parcelasSolidas.push({ x: w.x, z: w.z, hw: ed.hw, hd: ed.hd, yaw: rotR, y0: y0, h: ed.top, tipo: 'parcela', id: 'parcela:' + x + ':' + y, nombre: pc.name || '', celda: ci });
         cnt.arch[arch]++;
@@ -2635,7 +2692,7 @@
 
     // --- Hitos y skylines --------------------------------------------------------
     function buildLandmarks(meta) {
-      var list = meta.landmarks || [], acc = newAcc(), labels = [], i, parent = new THREE.Matrix4();
+      var list = meta.landmarks || [], acc = newAcc(), labels = [], i, parent = new THREE.Matrix4(), flags = [];
       S.landmarks = []; S.lmIndex = {};
       for (i = 0; i < list.length; i++) {
         var l = list[i], fn = SHAPES[l.shape] || SHAPES.tower;
@@ -2645,6 +2702,9 @@
         var dims = { h: l.h || 50, w: l.w || 60, d: l.d || 60 };
         parent.compose(new THREE.Vector3(w.x, hy - 1, w.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -(l.rot || 0) * Math.PI / 180, 0)), new THREE.Vector3(1, 1, 1));
         pushParts(acc, fn(dims, lcg(strSeed(l.id || l.name || ('lm' + i)))), parent);
+        // Retícula (0), como leían sin el atributo, y su id para los interiores.
+        var flH = flagsEdificio(0, w.x, w.z);
+        while (flags.length * 3 < acc.pos.length) flags.push(flH);
         var entry = { id: l.id, name: l.name, x: w.x, y: hy, z: w.z, h: dims.h, w: dims.w, d: dims.d,
           rot: (l.rot || 0) * Math.PI / 180, lat: l.lat, lon: l.lon, shape: l.shape };
         S.landmarks.push(entry); S.lmIndex[l.id] = entry;
@@ -2656,7 +2716,8 @@
         labels.push({ x: w.x, y: hy + dims.h + 12, z: w.z, text: l.name, color: colors.labelLandmark, size: 12, maxDist: S.L * 0.55, bold: false, pin: true, priority: 3 });
       }
       if (acc.pos.length) {
-        C.landmarks = new THREE.Mesh(accGeometry(acc), buildMat);
+        var gl0 = accGeometry(acc); gl0.setAttribute('aflags', new THREE.Float32BufferAttribute(flags, 1));
+        C.landmarks = new THREE.Mesh(gl0, buildMat);
         C.landmarks.castShadow = true; C.landmarks.receiveShadow = true; C.landmarks.frustumCulled = false;
         scene.add(C.landmarks);
       }
@@ -2778,7 +2839,8 @@
           var T = teselas[clave] || (teselas[clave] = { acc: newAcc(), abase: [], aflags: [] });
           _m4b.compose(_pv.set(e.x, e.y, e.z), _q.setFromEuler(_e.set(0, e.yaw, 0)), _sv.set(1, 1, 1));
           pushParts(T.acc, edificioPartes(e), _m4b);
-          while (T.abase.length * 3 < T.acc.pos.length) { T.abase.push(e.y); T.aflags.push(e.fachada); }
+          var fl = flagsEdificio(e.fachada, e.x, e.z);
+          while (T.abase.length * 3 < T.acc.pos.length) { T.abase.push(e.y); T.aflags.push(fl); }
           dibujados.push(e.solido);
           total++;
         }
@@ -3598,7 +3660,7 @@
       scene.add(S.sea);
       var bedGeo = new THREE.PlaneGeometry(S.L * 8, S.L * 8, 1, 1); bedGeo.rotateX(-Math.PI / 2);
       var bedCol = new Uint8Array(3); terrainColor(bedH, 0, 0, bedCol, 0);
-      S.seabed = new THREE.Mesh(bedGeo, new THREE.MeshLambertMaterial({ color: new THREE.Color(bedCol[0] / 255, bedCol[1] / 255, bedCol[2] / 255) }));
+      S.seabed = new THREE.Mesh(bedGeo, sombraEnCascadas(new THREE.MeshLambertMaterial({ color: new THREE.Color(bedCol[0] / 255, bedCol[1] / 255, bedCol[2] / 255) })));
       S.seabed.position.set(S.center.x, bedH + 5, S.center.z); S.seabed.frustumCulled = false;
       scene.add(S.seabed);
       S.sky = makeSky(1000, skyMat); scene.add(S.sky);
@@ -4557,19 +4619,65 @@
      * Profundidad lineal (el experimento de la v0.11.0): planos cercano y lejano
      * por cuadro. Con un búfer de 24 bits el error de profundidad a una distancia
      * z es de unos z² / (cercano · 2²⁴) metros, así que lo que manda es el plano
-     * cercano: a pie 0,5 m (1 km → 12 cm; el logarítmico va con 0,3); en órbita, la
-     * décima parte de la altura sobre el suelo o de la distancia al objetivo, la
-     * menor, hasta 500 m (a esa distancia la esfera del cielo, de 1 km de radio,
-     * sigue entera dentro del cono en pantallas de hasta 2,4:1). El lejano llega
-     * hasta donde la niebla ya lo ha tapado todo. En VR no se toca: enterVR fija
-     * los suyos.
+     * cercano, y el cercano no puede pasar de lo que la cámara tiene al lado: lo
+     * que queda más cerca que él no se dibuja. Por eso sale de la HOLGURA de la
+     * cámara (holguraCamara), no de su altura sobre el terreno: volando con E
+     * pegado a una fachada, o en la planta 30 de una torre con los pies en el
+     * suelo del piso, la altura es de cien metros y la pared está a dos.
+     *
+     *   - A pie sin volar (walk.fly < 2, que es también como lleva un módulo al
+     *     jugador por dentro de un edificio): 0,5 m fijos. El logarítmico va con
+     *     0,3; a 1 km el error es de 12 cm.
+     *   - Volando y en órbita: la mitad de la holgura, entre 0,5 y 500 m (a 500 m
+     *     la esfera del cielo, de 1 km de radio, sigue entera dentro del cono en
+     *     pantallas de hasta 2,4:1), en escalones de 2^¼ hacia abajo por debajo
+     *     de ese tope: el plano no cambia en cada paso y el patrón de
+     *     profundidad no tiembla.
+     *
+     * El lejano llega hasta donde la niebla ya lo ha tapado todo. En VR no se
+     * toca: enterVR fija los suyos.
      */
+    // Lo que no está en el catastro y sobresale del suelo o de una azotea sin
+    // estar en ninguna huella: palmeras, farolas, coches, gente, marquesinas (a
+    // ras de suelo) y rótulos y remates (sobre la coronación, hasta 12 m).
+    var HOLGURA_SUELO = 30, HOLGURA_AZOTEA = 15;
+    var _hLoc = { x: 0, z: 0 };
+    /**
+     * La distancia de `p` a lo más cercano que el visor sabe dónde está, hasta
+     * `rmax`: el terreno (menos HOLGURA_SUELO), la caja de cada sólido del
+     * catastro en las celdas que alcanza `rmax` (con HOLGURA_AZOTEA de más por
+     * arriba) y los avatares. Recorre como mucho (2·rmax/256 + 1)² celdas, sin
+     * reservar memoria: un sólido repetido en dos celdas da la misma distancia.
+     */
+    function holguraCamara(p, rmax) {
+      var hol = Math.min(rmax, Math.max(0, p.y - groundH(p.x, p.z) - HOLGURA_SUELO)), cat = S.catastro, i, j, n;
+      if (cat && hol > 0) {
+        var i0 = Math.max(0, Math.floor((p.x - hol) / SOLIDO_CELDA)), i1 = Math.min(cat.nx - 1, Math.floor((p.x + hol) / SOLIDO_CELDA));
+        var j0 = Math.max(0, Math.floor((p.z - hol) / SOLIDO_CELDA)), j1 = Math.min(cat.nz - 1, Math.floor((p.z + hol) / SOLIDO_CELDA));
+        for (j = j0; j <= j1; j++) for (i = i0; i <= i1; i++) {
+          var lista = cat.bins[j * cat.nx + i]; if (!lista) continue;
+          for (n = 0; n < lista.length; n++) {
+            var so = cat.items[lista[n]]; aLocal(so, p.x, p.z, _hLoc);
+            var ex = Math.max(Math.abs(_hLoc.x) - so.hw, 0), ez = Math.max(Math.abs(_hLoc.z) - so.hd, 0);
+            var top = so.y0 + so.h + HOLGURA_AZOTEA, ey = p.y > top ? p.y - top : (p.y < so.y0 ? so.y0 - p.y : 0);
+            var d = Math.sqrt(ex * ex + ey * ey + ez * ez); if (d < hol) hol = d;
+          }
+        }
+      }
+      for (n = 0; n < S.avatarOrder.length && hol > 0; n++) {
+        var av = S.avatars[S.avatarOrder[n]]; if (!av) continue;
+        var da = av.cur.distanceTo(p) - 3; if (da < hol) hol = Math.max(0, da);
+      }
+      return hol;
+    }
     function planosProfundidad() {
       if (profundidad !== 'lineal' || S.xr) return;
       _cp.setFromMatrixPosition(camera.matrixWorld);
-      var alto = Math.max(0, _cp.y - groundH(_cp.x, _cp.z)), near;
-      if (S.mode === 'walk') near = clamp(alto * 0.3, 0.5, 300);
-      else near = clamp(Math.min(alto, cam.cur.radius) * 0.1, 1, 500);
+      var near = 0.5;
+      if (S.mode !== 'walk' || walk.fly >= 2) {
+        near = clamp(holguraCamara(_cp, 1000) * 0.5, 0.5, 500);
+        if (near < 500) near = Math.pow(2, Math.floor(Math.log(near) / Math.LN2 * 4) / 4);
+      }
       var far = clamp(_cp.distanceTo(S.center) + S.L * 1.7, 4000, 900000);
       if (camera.near !== near || camera.far !== far) { camera.near = near; camera.far = far; camera.updateProjectionMatrix(); }
     }
@@ -4892,7 +5000,11 @@
       cascadas: function () { return cascadas; },
       uniformes: { viewport: viewportUniform, lod: lodUniform, drop: dropUniform, noche: nightUniform, fantasma: ghostTime },
       util: { fnv1a: fnv1a, hash2: hash2, semillaMorfologia: semillaMorfologia, semillaRopaje: semillaRopaje, real01: real01, lcg: lcg,
-        clamp: clamp, lerp: lerp, smoothstep: smoothstep, strSeed: strSeed, lin1: lin1, lin3: lin3 },
+        clamp: clamp, lerp: lerp, smoothstep: smoothstep, strSeed: strSeed, lin1: lin1, lin3: lin3,
+        /** v0.11.0: que un material de three (Lambert, Phong, Standard) lea las tres cascadas de sombra y no solo la del sol. */
+        sombraEnCascadas: sombraEnCascadas,
+        /** v0.11.0: el valor de `aflags` de un edificio (fachada + su id para los interiores por paralaje). */
+        flagsEdificio: flagsEdificio },
       geom: { prim: prim, newAcc: newAcc, pushPart: pushPart, pushParts: pushParts, accGeometry: accGeometry, piezas: piezas,
         cuerpoTorre: cuerpoTorre, cuerpoBloque: cuerpoBloque, cuerpoNave: cuerpoNave, cuerpoVilla: cuerpoVilla, parcelaPartes: parcelaPartes,
         edificioPartes: edificioPartes, carGeometry: carGeometry, avatarBodyGeometry: avatarBodyGeometry, avatarLimbGeometry: avatarLimbGeometry,

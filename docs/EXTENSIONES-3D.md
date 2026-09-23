@@ -84,12 +84,28 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
   `localStorage['rami.profundidad'] = 'lineal'` antes de montar). Con `'lineal'`
   el núcleo ajusta `camera.near` y `camera.far` cada cuadro
   (`planosProfundidad`); quien lea la profundidad los toma de la cámara en ese
-  cuadro. `cascadas()` son las luces de sombra que hay además del sol (dos en
+  cuadro. El cercano sale de la holgura de la cámara (terreno, sólidos del
+  catastro, avatares): 0,5 m a pie con `walk.fly < 2`; volando y en órbita, la
+  mitad de la holgura, hasta 500 m. Un módulo que lleve al jugador en alto
+  (un piso, un ascensor) lo deja con `walk.fly = 0` y tiene 0,5 m; si dibuja
+  geometría propia fuera de cualquier huella del catastro y lejos del suelo,
+  que la meta en el catastro o no la verá de cerca con el lineal.
+  `cascadas()` son las luces de sombra que hay además del sol (dos en
   alta y ultra, ninguna en baja y media); tienen intensidad cero y no hay que
-  moverlas: `updateShadowFrame` las coloca.
+  moverlas: `updateShadowFrame` las coloca. Los materiales propios que usan
+  `getShadowMask()` ya leen las tres; un material de three (Lambert, Phong,
+  Standard) solo aplica a cada luz su propio mapa, y el del sol es la caja
+  cercana (150 m a pie): pasadlo por `ctx.util.sombraEnCascadas(material)`
+  antes de su primer dibujo para que lea las tres.
+- **Edificios** (v0.11.0): `aflags` lleva la fachada (0–3) más 4·(1 + id);
+  quien lo lea para saber la fachada, que tome `aflags % 4`. Quien funda
+  edificios con `buildMat` y quiera interiores con paleta por edificio, que
+  escriba `ctx.util.flagsEdificio(fachada, x, z)`; con la fachada sola (id 0)
+  la paleta sale de la tesela de 500 m.
 - **Genotipo** (`ctx.util`): `semillaMorfologia(x, y, canal)`,
   `semillaRopaje(x, y, dueno, desde)`, `real01`, `lcg`, `hash2`, `fnv1a`,
-  `strSeed`, `clamp`, `lerp`, `smoothstep`, `lin1`, `lin3`. **Solo enteros para
+  `strSeed`, `clamp`, `lerp`, `smoothstep`, `lin1`, `lin3`, y dos de la
+  v0.11.0: `sombraEnCascadas`, `flagsEdificio`. **Solo enteros para
   decidir**: la forma, el sitio y el horario de algo salen de aquí, nunca de
   `Math.random`, para que dos máquinas vean lo mismo.
 - **Geometría** (`ctx.geom`): `prim`, `newAcc`, `pushPart(s)`, `accGeometry`, el
@@ -118,7 +134,9 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
 ### Dibujar a un destino intermedio (el gancho `pintar`)
 
 Quien dibuja la escena en un `WebGLRenderTarget` en vez de en el lienzo tiene
-que saber dos cosas de three r150 y de los materiales del visor:
+que saber cinco cosas de three r150 y de los materiales del visor. Con las
+cinco, el pase neutro de `espejismo.js` (los efectos a cero) da los mismos
+bytes que el dibujo directo (diferencia máxima 0, medido con `readPixels`).
 
 1. Fuera del lienzo three compila los materiales con salida lineal, y los del
    visor mezclan la niebla **después** del tono y de la codificación sRGB, con
@@ -126,17 +144,28 @@ que saber dos cosas de three r150 y de los materiales del visor:
    da una escena oscura y una niebla desplazada. `espejismo.js` marca su destino
    con `isXRRenderTarget = true`, textura en `sRGBEncoding` y
    `internalFormat: 'RGBA8'`: los materiales compilan el mismo programa que para
-   el lienzo y el destino guarda los mismos bytes (comprobado píxel a píxel).
-2. `renderer.info` se reinicia en cada `render()`. Para que `stats()` y
+   el lienzo y el destino guarda los bytes que habría recibido el lienzo.
+2. El color de la niebla (`scene.fog.color`) y el del fondo
+   (`scene.background`) three los convierte de lineal a sRGB al subirlos
+   **solo** cuando dibuja al lienzo (`getRenderTarget() === null`); a un
+   destino, aunque sea de XR, los sube tal cual. Hay que hacer esa conversión a
+   mano mientras se dibuja la escena y devolver los colores después
+   (`convertLinearToSRGB()` sobre una copia guardada, como en `pintar` de
+   `espejismo.js`). Sin esto la calima del horizonte sale hasta 12 niveles más
+   oscura.
+3. `renderer.info` se reinicia en cada `render()`. Para que `stats()` y
    `bench()` cuenten la escena y además las pasadas propias, se dibuja la escena
    con `autoReset` como esté y las pasadas con `autoReset = false`, y se deja
    como estaba.
-3. La profundidad se lee con `DepthTexture` (sin filtro). Un pase a media
+4. La profundidad se lee con `DepthTexture` (sin filtro). Un pase a media
    resolución que la lea en el centro de SUS píxeles cae en la arista entre dos
    texels, y el redondeo cambia de fila en fila: hay que llevar la coordenada al
    centro de un texel de la profundidad antes de leer (`espejismo.js`, `AO_FS`).
-   Los destinos se sueltan en `tamano` y en `calidad` y se rehacen en el
-   siguiente `pintar`.
+   Con el búfer logarítmico la distancia es `2^(d · log2(lejano + 1)) − 1`; con
+   el lineal (`ctx.profundidad() === 'lineal'`), la perspectiva con los planos
+   **del cuadro**, que cambian con la cámara: se leen en cada `pintar`.
+5. Los destinos se sueltan en `tamano` y en `calidad` y se rehacen en el
+   siguiente `pintar`. En VR no hay `pintar` que valga: `xrFrame` dibuja directo.
 
 ## Reglas de la casa
 

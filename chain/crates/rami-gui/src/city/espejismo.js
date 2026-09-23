@@ -54,7 +54,18 @@
 
     // Intensidades de cada efecto a 1. `ajuste` las multiplica (las pruebas las
     // ponen a 0 para el pase neutro).
-    var FUERZA_AO = 0.9, RESPLANDOR = 0.55, UMBRAL = 0.70, RODILLA = 0.2;
+    var FUERZA_AO = 0.9, RESPLANDOR = 0.55;
+    // El umbral del resplandor, en lineal de pantalla (máximo de los tres canales
+    // tras el tono ACES), de día y de noche; entre medias se mezcla con uNight.
+    // Medido sin cielo, a las 11 h y en alta: en la ciudad entera el 52 % de los
+    // píxeles (arena al sol y calima) pasa de 0,70 y el 9,5 % de 0,85, pero solo
+    // el 0,18 % de 0,90; el vidrio con el sol de frente, 0,80–0,95. De noche, a
+    // pie entre torres, las ventanas encendidas y las farolas se quedan en
+    // 0,70–0,85 y nada pasa de 0,90. Con un umbral fijo de 0,70 y rodilla de 0,2
+    // —la de la primera vuelta— el resplandor empezaba en 0,50 y de día velaba el
+    // desierto entero. De día empieza ahora en 0,87 (reflejos del sol) y de noche
+    // en 0,52 (ventanas, farolas, rótulos).
+    var UMBRAL_DIA = 0.92, RODILLA_DIA = 0.05, UMBRAL_NOCHE = 0.64, RODILLA_NOCHE = 0.12;
     var P = ctx.Q().post || null;
     var ajuste = { activo: true, ao: 1, resplandor: 1, curva: 1, verAO: 0 };
     var T = null;                       // destinos del tamaño actual
@@ -169,7 +180,8 @@
 
     // --- Resplandor ---------------------------------------------------------------
     // Umbral suave en lineal de pantalla (lo que ya salió del tono ACES): pasan
-    // los brillos del sol en el vidrio, las ventanas encendidas y los rótulos.
+    // los brillos del sol en el vidrio, las ventanas encendidas y los rótulos,
+    // y no la arena al sol (el umbral de día y de noche, arriba, con sus cifras).
     // El cielo no: con la calima de Dubái es casi blanco a mediodía y, si
     // entrara, todo el cuadro quedaría velado; se reconoce porque no escribe
     // profundidad. Cuatro lecturas bilineales cubren 4×4 píxeles: un píxel suelto
@@ -246,7 +258,7 @@
       ao: THREE.UniformsUtils.merge([unifProf(), { tProf: { value: null }, uTexel: { value: new THREE.Vector2() }, uProy: { value: new THREE.Vector4() },
         uProjM: { value: new THREE.Matrix4() }, uNucleo: { value: nucleo(12) }, uRadio: { value: 1 } }]),
       blur: THREE.UniformsUtils.merge([unifProf(), { tAO: { value: null }, tProf: { value: null }, uPaso: { value: new THREE.Vector2() } }]),
-      umbral: { tColor: { value: null }, tProf: { value: null }, uTexel: { value: new THREE.Vector2() }, uUmbral: { value: UMBRAL }, uRodilla: { value: RODILLA } },
+      umbral: { tColor: { value: null }, tProf: { value: null }, uTexel: { value: new THREE.Vector2() }, uUmbral: { value: UMBRAL_DIA }, uRodilla: { value: RODILLA_DIA } },
       baja: { tFuente: { value: null }, uTexel: { value: new THREE.Vector2() } },
       sube: { tFuente: { value: null }, uTexel: { value: new THREE.Vector2() } },
       fin: THREE.UniformsUtils.merge([unifProf(), { tColor: { value: null }, tAO: { value: null }, tBrillo: { value: null }, tProf: { value: null },
@@ -358,6 +370,9 @@
         // 3. Resplandor.
         var nB = T.niveles.length;
         if (nB && f.resplandor > 0) {
+          var noche = ctx.shared && ctx.shared.uNight ? Math.min(1, Math.max(0, ctx.shared.uNight.value)) : 0;
+          U.umbral.uUmbral.value = UMBRAL_DIA + (UMBRAL_NOCHE - UMBRAL_DIA) * noche;
+          U.umbral.uRodilla.value = RODILLA_DIA + (RODILLA_NOCHE - RODILLA_DIA) * noche;
           U.umbral.tColor.value = T.escena.texture; U.umbral.tProf.value = prof; U.umbral.uTexel.value.set(1 / T.w, 1 / T.h);
           pasa(M.umbral, T.niveles[0]);
           for (i = 1; i < nB; i++) {
