@@ -403,8 +403,10 @@ pruebas con el código de esta ronda.
 
 Panel real (binario de la integración `rami-gui-integ` + proxy con este
 JavaScript), Chromium sin pantalla con SwiftShader, calidad media salvo donde se
-dice. Los scripts de prueba están fuera del repositorio (arnés de /tmp); sus
-resultados, en `/tmp/ramiverif/vida_r2_*.json`.
+dice. Los scripts de prueba están fuera del repositorio, en
+`/tmp/ramiwt/vida/r2_scripts/` (`r2_solapes.mjs`, `llenado.mjs`, `coste.mjs`,
+`margenes.mjs`, `fotos*.mjs`…; los `rev_*.mjs` son los de la revisión con otra
+salida); sus resultados, en `/tmp/ramiverif/vida_r2_*.json`.
 
 ### Lo que se construye
 
