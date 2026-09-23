@@ -294,7 +294,7 @@ los coches, dibujados mientras ocupen 1,5 píxeles, suman hasta 37.960.
 - **La escritura**: `/api/city` con la ciudad entera dividida en 64, unos
   29 MB en el peor caso.
 - **Descarga**: el JavaScript del visor pasa de 287.559 a 805.849 bytes. El
-  binario final de `rami-gui` para Linux, 9.104.056 bytes frente a 8.297.880
+  binario final de `rami-gui` para Linux, 9.099.960 bytes frente a 8.297.880
   en el punto de partida (+9,7 %).
 
 ### Cómo se ha comprobado
