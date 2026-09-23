@@ -3062,9 +3062,36 @@
     // 11,5°: el carril ajeno se estiraría sin fin por el propio.
     var CRUCE_SENO_MIN = 0.2;
     var CRUCE_HOLGURA = 0.6;                     // metros de aire entre dos carrocerías que se cruzan
-    var POP_MIN = 0.5;                           // un coche recolocado aparece a más de POP_MIN·R_VIVO de la cámara
+    // Un coche recolocado aparece a más de POP_MIN·R_VIVO de la cámara (ronda 1)
+    // y, desde la ronda 2, además fuera de la vista: fuera del campo de la cámara
+    // o más allá de donde se dibuja. Con solo la distancia, la revisión contó 136
+    // apariciones a 500–900 m dentro de lo dibujado (calidad media). Sin la
+    // distancia (probado: solo fuera del campo y a más de 120 m), los recolocados
+    // caían detrás de la cámara, junto al foco, y el tráfico se apretaba alrededor
+    // de quien mira: en diez minutos de ultra en el barrio de torres, con todo lo
+    // demás igual, 5 coches pasaron de un minuto parados y se abrieron 331
+    // válvulas; con la distancia, ninguno y 238.
+    var POP_MIN = 0.5;
+    // Un salto del foco de más de SALTO·R_VIVO entre dos pasos (ir a pie a otro
+    // barrio, un vuelo con cuadros de segundos) recoloca a todos alrededor del
+    // foco nuevo de una vez, sin la regla de no aparecer a la vista: no hay nada
+    // visto que conservar. Antes, al llegar, el primer minuto no había ningún
+    // coche a menos de un kilómetro.
+    var SALTO = 0.5;
+    // Un coche se dibuja si está a menos de COCHES_DIBUJO de la cámara o si su
+    // largo ocupa al menos DIBUJO_PX píxeles (ronda 2: en las vistas de la
+    // ciudad y del centro, con la cámara a kilómetros, no se dibujaba ninguno).
+    var DIBUJO_PX = 1.5;
+    // Simulación por cercanía (ronda 2): con cuadros cortos (dt ≤ LOD_DT), el
+    // coche a más de LOD_R metros de la cámara se actualiza uno de cada LOD_CADA
+    // cuadros con el tiempo acumulado, o sea, con pasos de 0,05–0,1 s como los
+    // de las pruebas de choques. En ultra, a pie o en órbita cercana, nueve de
+    // cada diez coches están a más de 400 m. A 400 m, 20 posiciones por segundo
+    // no se distinguen de 60.
+    var LOD_R = 400, LOD_CADA = 3, LOD_DT = 1 / 30;
     var ATASCO_S = 40;                           // segundos parado en un ciclo de esperas antes del desatasco
     var _cajas = [];                             // los cruces por delante de un coche: [d0, d1, …] en metros de marcha
+    var _frus = new THREE.Frustum(), _frusM = new THREE.Matrix4(), _frusI = new THREE.Matrix4(), _frusEsf = new THREE.Sphere(new THREE.Vector3(), 3), _frusOk = false;
     // La válvula, 30 s: en diez minutos de hora punta con 800 coches, sin ella
     // 163 coches pasaban de un minuto parados esperando un hueco en la preferente
     // (ninguno en un ciclo de esperas: siempre había un coche en marcha al final
@@ -3118,18 +3145,34 @@
       R.alcMax = 0;
       for (i = 0; i < R.conf.length; i++) { var e = R.conf[i].alc = alcanceConf(R, R.conf[i]); R.alcMax = Math.max(R.alcMax, e); z.push([R.conf[i].t - e, R.conf[i].t + e]); }
       for (i = 0; i < R.cebras.length; i++) z.push([R.cebras[i].t - R.cebras[i].med - 1, R.cebras[i].t + R.cebras[i].med + 1]);
+      // Ni sobre el agua (ronda 2): donde la costa corta la cinta en oblicuo, el
+      // semicírculo exterior de la vuelta pasaba por encima del agua aunque el eje
+      // no (la revisión, ruta 138). Se retrasa de 5 en 5 m hasta que quede en tierra.
+      var agua = 0;
       while (cambio && it++ < 60) {
         cambio = false;
         for (i = 0; i < z.length; i++) if (z[i][1] > tc1 - COCHE_HL - 2 && z[i][0] < tc1 + need) { tc1 = z[i][0] - need - 0.01; cambio = true; }
+        if (!cambio && tc1 - 5 > need + VUELTA_TRAMO_MIN && vueltaEnAgua(R, tc1, 1, rmax)) { tc1 -= 5; cambio = true; agua++; }
       }
       cambio = true; it = 0;
       while (cambio && it++ < 60) {
         cambio = false;
         for (i = 0; i < z.length; i++) if (z[i][0] < tc0 + COCHE_HL + 2 && z[i][1] > tc0 - need) { tc0 = z[i][1] + need + 0.01; cambio = true; }
+        if (!cambio && tc0 + 5 < R.len - need - VUELTA_TRAMO_MIN && vueltaEnAgua(R, tc0, -1, rmax)) { tc0 += 5; cambio = true; agua++; }
       }
       R.vueltaLibre = tc1 - tc0 >= VUELTA_TRAMO_MIN;
       if (!R.vueltaLibre) { tc0 = need; tc1 = R.len - need; }
-      R.tc0 = tc0; R.tc1 = tc1;
+      R.tc0 = tc0; R.tc1 = tc1; R.vueltaAgua = agua;
+    }
+    /** ¿Pisa el agua el semicírculo exterior (carril exterior más medio coche) de la vuelta en `tc` hacia `e`? */
+    function vueltaEnAgua(R, tc, e, rmax) {
+      var k, rho = rmax + COCHE_HW;
+      for (k = 0; k <= 12; k++) {
+        var ph = Math.PI * k / 12;
+        puntoCarril(R, clamp(tc + e * rho * Math.sin(ph), 0, R.len), e * rho * Math.cos(ph), _cq);
+        if (surfaceH(_cq.x, _cq.z) <= 0.6) return true;
+      }
+      return false;
     }
     /**
      * Los tramos de cada vía que van montados sobre otra casi paralela (ronda 1).
@@ -3352,11 +3395,13 @@
      * Pone un coche en una calle cercana al foco: ruta, punto, sentido y carril
      * salen de la serie del tráfico. Nunca en la zona de la vuelta, dentro de un
      * cruce ni encima de otro coche de su carril (`porRuta`, la lista por ruta).
-     * Con `ojo` (la cámara, al recolocar) tampoco a menos de POP_MIN·R_VIVO de
-     * ella: la revisión contó 50 coches en diez minutos que aparecían de golpe a
-     * menos de 250 m del foco. Sin `ojo` (al montar el tráfico) el último intento
-     * vale aunque no cumpla; al recolocar, si ninguno cumple, el coche espera al
-     * turno siguiente.
+     * Con `ojo` (la cámara, al recolocar) tampoco a la vista (`aLaVista`: dentro
+     * del campo de la cámara y a menos de lo que se dibuja) ni a menos de
+     * POP_MIN·R_VIVO de ella: la revisión contó 50 coches en diez minutos que
+     * aparecían de golpe a menos de 250 m del foco (ronda 1) y 136 a 500–900 m
+     * de la cámara (ronda 2). Sin `ojo` (al montar el tráfico o tras un salto
+     * del foco) el último intento vale aunque no cumpla; al recolocar, si ninguno
+     * cumple, el coche espera al turno siguiente.
      */
     function colocaCoche(c, cand, rnd, ojo, porRuta) {
       if (!cand.lista.length) return false;
@@ -3373,7 +3418,12 @@
         if (t < R.tc0 + mv || t > R.tc1 - mv) { if (!ultimo) continue; t = clamp(t, R.tc0 + mv, Math.max(R.tc0 + mv, R.tc1 - mv)); }
         var p = puntoArco(R.V.muestras, R.V.arco, R.s0 + t), mal = false;
         if ((p.x - cand.x) * (p.x - cand.x) + (p.z - cand.z) * (p.z - cand.z) > R_VIVO * R_VIVO) mal = true;
-        if (!mal && ojo && (p.x - ojo.x) * (p.x - ojo.x) + (p.z - ojo.z) * (p.z - ojo.z) < POP_MIN * POP_MIN * R_VIVO * R_VIVO) mal = true;
+        if (!mal && ojo) {
+          var d2o = (p.x - ojo.x) * (p.x - ojo.x) + (p.z - ojo.z) * (p.z - ojo.z);
+          // Con el punto del eje y el radio de la calzada: el carril puede caer
+          // hasta el borde, y un carril exterior dentro del campo es un coche visto.
+          if (d2o < POP_MIN * POP_MIN * R_VIVO * R_VIVO || aLaVista(p.x, cotaVia(R.V, R.s0 + t), p.z, d2o, R.semi + 3)) mal = true;
+        }
         // Ni dentro de un cruce ni a menos de su distancia de frenado (y 15 m)
         // antes de uno: un coche que aparece a 24 m/s a veinte metros de un cruce
         // no ve a tiempo al que ya lo está cruzando.
@@ -3388,13 +3438,31 @@
         c.R = R; c.t = t; c.dir = dir;
         c.k = kk; c.off = R.carriles[c.k];
         c.vmax = R.vmax * (0.85 + 0.15 * rnd()) * (1 - 0.03 * c.k);
-        c.vel = c.vmax * 0.8; c.desvio = 0; c.lado = 0; c.parado = 0; c.espera = 0; c.cede = null; c.conf = null; c.forzado = null; c.anillo = -1; c.vu = -1;
+        c.vel = c.vmax * 0.8; c.desvio = 0; c.lado = 0; c.parado = 0; c.espera = 0; c.cede = null; c.conf = null; c.forzado = null; c.anillo = -1; c.vu = -1; c.dtLod = 0;
         c.desvMin = 1.2 - c.off; c.desvMax = R.semi - 1.2 - c.off;
         if (porRuta) (porRuta[R.id] || (porRuta[R.id] = [])).push(c);
         poseCoche(c);
         return true;
       }
       return false;
+    }
+    /**
+     * ¿Se vería un coche en (x, y, z), a d2 (metros²) de la cámara? Dentro del
+     * campo de la cámara del último paso de updateTraffic y a menos de lo que se
+     * dibuja, con una esfera de radio `r` (3 m si no se da). Sin campo calculado
+     * (antes del primer paso), sí.
+     */
+    function aLaVista(x, y, z, d2, r) {
+      var lim = limiteDibujo() + (r || 3);
+      if (d2 > lim * lim) return false;
+      if (!_frusOk) return true;
+      _frusEsf.center.set(x, y + 1, z); _frusEsf.radius = r || 3;
+      return _frus.intersectsSphere(_frusEsf);
+    }
+    /** Hasta dónde se dibuja un coche: COCHES_DIBUJO, o más lejos mientras su largo ocupe DIBUJO_PX píxeles. */
+    function limiteDibujo() {
+      var h = (renderer.domElement && renderer.domElement.height) || 800, tf = Math.tan(camera.fov * Math.PI / 360) || 0.47;
+      return Math.max(COCHES_DIBUJO, 2 * COCHE_HL * h * 0.5 / tf / DIBUJO_PX);
     }
     function buildTraffic(count) {
       if (S.traffic && S.traffic.mesh) { scene.remove(S.traffic.mesh); S.traffic.mesh.dispose(); }
@@ -3417,7 +3485,7 @@
       m.instanceColor.needsUpdate = true; m.count = 0; m.visible = false;
       scene.add(m);
       S.traffic = { cars: cars, mesh: m, rnd: rnd, vivo: true, turno: 0, cand: cand, candClave: null, porRuta: {}, anillos: {},
-                    valvulas: 0, recolocados: 0, desatascos: 0, cediendo: 0, anteCebra: 0, dibujados: 0 };
+                    valvulas: 0, recolocados: 0, desatascos: 0, cediendo: 0, anteCebra: 0, dibujados: 0, saltos: 0, focoPrev: { x: f.x, z: f.z } };
     }
     /** Dónde está el que mira: los pies a pie y en VR, el centro de la órbita si no. */
     function focoTrafico() {
@@ -3615,6 +3683,15 @@
      * llega: está esperando a algo (gente en su paso, su fila), y si arranca
      * mientras `c` cruza, frena por él (la preferente no entra en el carril de
      * quien ya está cruzando: ver la rama «manda» de updateTraffic).
+     * Salvo (ronda 2) el que está parado ante ESTE cruce (`cajaOcupada`) porque
+     * otro coche de la ruta de `c` le cruza el carril en marcha (o forzado por la
+     * válvula): ese sí llega. Sin la excepción, mientras la preferente esperaba a
+     * que se vaciara su carril, la que cede seguía pasando en fila, sin hueco: en
+     * diez minutos de ultra junto a la glorieta 0, seis preferentes pasaron de un
+     * minuto parados (72 s el que más). Solo en marcha: si el que la para está
+     * quieto (la cortesía para ante uno que espera en su línea), ceder a esa
+     * preferente cerraba ciclos de cuatro coches (dos que ceden en sentidos
+     * contrarios y los dos sentidos de la preferente, cada uno cortés con el otro).
      */
     function debeCeder(c, cf) {
       var l = S.traffic.porRuta[cf.otra.id], i;
@@ -3624,7 +3701,11 @@
         var g = geoCruce(c, cf, y);
         if (g.xy > g.b1) continue;                                              // ya pasó
         if (g.xy >= g.b0) return y;                                             // dentro
-        if (y.vel < 0.5) continue;
+        if (y.vel < 0.5) {
+          var yz = y.causa;
+          if (y.motivo === 'cajaOcupada' && y.conf === cf.par && yz && yz !== c && (yz.vel >= 0.5 || yz.forzado)) return y;
+          continue;
+        }
         var ta = (g.b0 - g.xy) / Math.max(y.vel, 2);
         if (ta < tiempoHasta(g.a1 - g.xc, c.vel, c.vmax) + CEDE_MARGEN) return y;
       }
@@ -3678,7 +3759,7 @@
           // que queda se acerca a v²/2a y la condición dejaría de cumplirse al
           // cuadro siguiente, y el coche dudaría entre frenar y seguir.
           // La cortesía para ANTES de la calzada ajena entera (x0 − 1), no solo
-          // del carril de ese coche: parado a medias podría quedar dentro del
+          // del carril de ese coche: parado a medias queda dentro del
           // carril de otro que espera en el mismo cruce, y los dos se esperarían
           // (en la prueba, en cuanto la cortesía paraba ante el carril, salieron
           // ciclos de cuatro coches: dos que ceden y dos preferentes corteses).
@@ -3756,12 +3837,22 @@
       // posición del cuadro anterior.)
       camera.updateWorldMatrix(true, false);
       _cp.setFromMatrixPosition(camera.matrixWorld);
+      // El campo de la cámara, para no recolocar a nadie a la vista (ronda 2).
+      _frusI.copy(camera.matrixWorld).invert();
+      _frus.setFromProjectionMatrix(_frusM.multiplyMatrices(camera.projectionMatrix, _frusI)); _frusOk = true;
       // Los coches viven cerca de quien mira: el que queda lejos se vuelve a poner
-      // en una calle cercana, lejos de la cámara. Se miran unos pocos por cuadro, por turnos.
+      // en una calle cercana, fuera de la vista. Se miran unos pocos por cuadro, por turnos.
       if (tr.vivo) {
         var f = focoTrafico(), clave = Math.floor(f.x / RUTA_CELDA) + ':' + Math.floor(f.z / RUTA_CELDA);
         if (clave !== tr.candClave) { tr.candClave = clave; tr.cand = candidatasCerca(f.x, f.z, R_VIVO); }
-        if (tr.cand.lista.length) {
+        var fp = tr.focoPrev, salto = !fp || (f.x - fp.x) * (f.x - fp.x) + (f.z - fp.z) * (f.z - fp.z) > SALTO * SALTO * R_VIVO * R_VIVO;
+        tr.focoPrev = { x: f.x, z: f.z };
+        if (salto && tr.cand.lista.length) {
+          // Un salto del foco: todos alrededor del foco nuevo, como al montar el tráfico.
+          var prS = {};
+          for (j = 0; j < cars.length; j++) { cars[j].fuera = !colocaCoche(cars[j], tr.cand, tr.rnd, null, prS); cars[j].causa = null; }
+          tr.saltos++;
+        } else if (tr.cand.lista.length) {
           var lejos = (R_VIVO * 1.3) * (R_VIVO * 1.3), mira = Math.max(8, Math.ceil(cars.length / 30));
           for (j = 0; j < mira; j++) {
             var cc = cars[tr.turno = (tr.turno + 1) % cars.length];
@@ -3771,9 +3862,14 @@
         }
       }
       ordenaColas(cars);
-      tr.cediendo = 0; tr.anteCebra = 0;
+      tr.cediendo = 0; tr.anteCebra = 0; tr.nPaso = (tr.nPaso || 0) + 1;
+      var lod = tr.vivo && dt > 0 && dt <= LOD_DT, nLod = 0;
       for (i = 0; i < cars.length; i++) {
         var c = cars[i]; if (c.fuera) continue;
+        // `dtc`: el tiempo de este coche, con lo acumulado mientras se saltaba.
+        c.dtLod = (c.dtLod || 0) + dt;
+        if (lod && (c.i + tr.nPaso) % LOD_CADA && (c.x - _cp.x) * (c.x - _cp.x) + (c.z - _cp.z) * (c.z - _cp.z) > LOD_R * LOD_R) { nLod++; continue; }
+        var dtc = c.dtLod; c.dtLod = 0;
         var P = c.R;
         // El hueco libre por delante: el coche de su fila y, si el jugador pisa el
         // carril, el jugador. Se para a COCHE_FRENO metros del obstáculo; antes,
@@ -3889,21 +3985,27 @@
           } else {
             // La preferente no cede, pero no entra en el carril de quien ya está
             // cruzando (o forzado, o sin sitio ya para pararse ante su línea), ni en
-            // un cruce que no podría dejar libre. Coche a coche: aunque esté ya
+            // un cruce que no puede dejar libre. Coche a coche: aunque esté ya
             // sobre la calzada ajena, frena antes del carril del que cruza si le da.
             if ((oc = ocupaCarril(c, cf, true)) && (oc.arco >= frena || c.vel < 4)) { mm = 'cajaOcupada'; dS = oc.arco; yc = oc.y; }
             else if (xc < x0 - 0.5) {
-              // No entrar en un cruce que no podría dejar libre se decide antes de
+              // No entrar en un cruce que no puede dejar libre se decide antes de
               // su propio paso de peatones: en los cruces de dos calles de barrio el
               // paso de la preferente cae justo donde se pararía (x0 − 1), y quien
               // se paraba encima tapaba a la gente que cruzaba. Si ya no le da
               // para pararse antes del paso, sigue.
-              var dEntra = x0 - 1 - xc, q;
+              var dEntra = x0 - 1 - xc, q, sobre = -Infinity;
               for (q = 0; q < P.cebras.length; q++) {
                 var dq = (P.cebras[q].t - c.t) * c.dir, mq = P.cebras[q].med;
-                if (dq + mq > 0 && dq - mq < x0 - xc + 1) dEntra = Math.min(dEntra, dq - mq - COCHE_HL - 1.5);
+                if (dq - mq < COCHE_HL && dq + mq > -COCHE_HL) sobre = Math.max(sobre, dq + mq + COCHE_HL + 0.3);
+                else if (dq + mq > 0 && dq - mq < x0 - xc + 1) dEntra = Math.min(dEntra, dq - mq - COCHE_HL - 1.5);
               }
               if (dEntra < -0.5) dEntra = x0 - 1 - xc;               // ya está sobre el paso: como antes, en el borde del cruce
+              // Con el coche encima de un paso (ronda 2), la parada es donde la cola
+              // lo deja libre, aunque sea pasado el borde del cruce: parado en el
+              // borde, la cola quedaba sobre el paso y la gente —una función del
+              // tiempo— le pasaba por encima (10 contactos en diez minutos de ultra).
+              if (sobre > dEntra) dEntra = sobre;
               if (dEntra >= frena || c.vel < 4) {
                 yc = cajaTapada(c, cf.t, alcSal);
                 mm = yc ? 'cajaTapada' : (salidaTapada(c, cf.t, alcSal + 8) ? 'salidaTapada' : '');
@@ -3982,18 +4084,18 @@
         else { c.cede = null; if (c.vel > 1) c.conf = null; }
         if (c.vel > 1) c.espera = 0;
         var meta = Math.min(vlim, c.vmax * Math.sqrt(clamp((hueco - COCHE_FRENO) / D, 0, 1)));
-        c.vel = meta < c.vel ? Math.max(meta, c.vel - COCHE_DECEL * 1.5 * dt) : Math.min(meta, c.vel + COCHE_ACEL * dt);
-        if (c.vel < 0.5) { c.parado += dt; if (c.cede) c.espera += dt; } else c.parado = 0;
+        c.vel = meta < c.vel ? Math.max(meta, c.vel - COCHE_DECEL * 1.5 * dtc) : Math.min(meta, c.vel + COCHE_ACEL * dtc);
+        if (c.vel < 0.5) { c.parado += dtc; if (c.cede) c.espera += dtc; } else c.parado = 0;
         var desvioAntes = c.desvio;
-        c.desvio += clamp(quiere - c.desvio, -DESVIO_V * dt, DESVIO_V * dt);
+        c.desvio += clamp(quiere - c.desvio, -DESVIO_V * dtc, DESVIO_V * dtc);
         if (gira) {
-          c.vu += c.vel * dt;
+          c.vu += c.vel * dtc;
           if (c.vu >= Math.PI * c.off) {
             // Vuelta hecha: carril k del otro sentido, desde el centro de la vuelta.
             c.dir = -c.ve; c.t = clamp(c.vtc + c.dir * (c.vu - Math.PI * c.off), 0, P.len); c.vu = -1; c.forzado = null; c.conf = null;
           }
         } else {
-          c.t += c.vel * dt * c.dir * (c.anillo >= 0 ? c.kAnillo : 1);
+          c.t += c.vel * dtc * c.dir * (c.anillo >= 0 ? c.kAnillo : 1);
           if ((c.dir > 0 && c.t >= P.tc1) || (c.dir < 0 && c.t <= P.tc0)) {
             // Empieza la vuelta: el arco que ya ha recorrido pasado el centro.
             c.ve = c.dir; c.vtc = c.dir > 0 ? P.tc1 : P.tc0; c.vu = Math.abs(c.t - c.vtc); c.t = c.vtc; c.lado = 0; c.forzado = null;
@@ -4004,7 +4106,7 @@
         // la derecha es girar en sentido horario visto desde arriba, o sea, yaw
         // negativo.
         c.yaw = Math.atan2(-c.fz, c.fx);
-        if (dt > 0 && c.anillo < 0 && c.vu < 0) c.yaw -= Math.atan2((c.desvio - desvioAntes) / dt, Math.max(c.vel, 1));
+        if (dtc > 0 && c.anillo < 0 && c.vu < 0) c.yaw -= Math.atan2((c.desvio - desvioAntes) / dtc, Math.max(c.vel, 1));
       }
       // El desatasco (ronda 1): un coche parado más de ATASCO_S segundos que está
       // en un ciclo de esperas (siguiendo `causa` se vuelve a él) no va a salir
@@ -4013,26 +4115,29 @@
       // cruce) los evita casi siempre: esto es la red de seguridad.
       for (i = 0; i < cars.length; i++) {
         var ca = cars[i]; if (ca.fuera || ca.parado < ATASCO_S) continue;
+        // Se quita el del ciclo que no se ve (el más lejano de los que no se ven)
+        // o, si se ven todos, el más lejano (ronda 2).
         var cx = ca.causa, nq = 0, ciclo = false, peor = ca, dmax = (ca.x - _cp.x) * (ca.x - _cp.x) + (ca.z - _cp.z) * (ca.z - _cp.z);
+        var oculto = !aLaVista(ca.x, ca.y, ca.z, dmax);
         while (cx && nq < 16) {
           if (cx === ca) { ciclo = true; break; }
           if (cx.vel >= 0.5 || cx.fuera) break;
-          var dq = (cx.x - _cp.x) * (cx.x - _cp.x) + (cx.z - _cp.z) * (cx.z - _cp.z);
-          if (dq > dmax) { dmax = dq; peor = cx; }
+          var dq = (cx.x - _cp.x) * (cx.x - _cp.x) + (cx.z - _cp.z) * (cx.z - _cp.z), oc = !aLaVista(cx.x, cx.y, cx.z, dq);
+          if ((oc && !oculto) || (oc === oculto && dq > dmax)) { dmax = dq; peor = cx; oculto = oc; }
           cx = cx.causa; nq++;
         }
         if (ciclo && tr.cand && tr.cand.lista.length && colocaCoche(peor, tr.cand, tr.rnd, _cp, tr.porRuta)) { tr.desatascos++; peor.causa = null; }
       }
-      // Se dibujan los que quedan a menos de COCHES_DIBUJO de la cámara (`_cp`,
+      // Se dibujan los que quedan a menos de limiteDibujo() de la cámara (`_cp`,
       // leída al principio); los demás siguen vivos pero no se envían.
-      var m = tr.mesh, n = 0, lim = COCHES_DIBUJO * COCHES_DIBUJO;
+      var m = tr.mesh, n = 0, lim = limiteDibujo() * limiteDibujo();
       for (i = 0; i < cars.length; i++) {
         var cd = cars[i]; if (cd.fuera) continue;
         if ((cd.x - _cp.x) * (cd.x - _cp.x) + (cd.z - _cp.z) * (cd.z - _cp.z) > lim) continue;
         dummy.position.set(cd.x, cd.y, cd.z); dummy.rotation.set(0, cd.yaw, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix();
         m.setMatrixAt(n, dummy.matrix); m.setColorAt(n, cd.col); n++;
       }
-      m.count = n; m.visible = n > 0; tr.dibujados = n;
+      m.count = n; m.visible = n > 0; tr.dibujados = n; tr.saltadosLod = nLod;
       m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true;
     }
 
@@ -6130,7 +6235,7 @@
         var o = { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame, landmarks: S.landmarks.length, skyline: S.clusterTotal, solidos: S.catastro ? S.catastro.items.length : 0, trozosBarrio: S.trozosBarrio, trozosParcela: S.trozosParcela, ocultos: S.ocultos, trozosFantasma: S.trozosFantasma, avatars: S.avatarOrder.length, quality: qualityName, mode: S.xr ? 'vr' : S.mode, env: env, ext: {} };
         var trf = S.traffic;
         if (trf && trf.cars) o.trafico = { coches: trf.cars.length, dibujados: trf.dibujados || 0, cediendo: trf.cediendo || 0, anteCebra: trf.anteCebra || 0,
-          valvulas: trf.valvulas || 0, recolocados: trf.recolocados || 0, desatascos: trf.desatascos || 0,
+          valvulas: trf.valvulas || 0, recolocados: trf.recolocados || 0, desatascos: trf.desatascos || 0, saltos: trf.saltos || 0, saltadosLod: trf.saltadosLod || 0,
           girando: trf.cars.filter(function (c) { return !c.fuera && c.vu >= 0; }).length, rutas: (S.trafficPaths || []).length, cebras: (S.cebras || []).length };
         emitir('estadisticas', o.ext);
         o.profundidad = profundidad; o.efectos = efectosActivos(o.ext);
@@ -6202,6 +6307,8 @@
           vivo: function (v) { if (S.traffic) S.traffic.vivo = !!v; },
           /** Segundos de espera antes de la válvula (Infinity la quita), para probar que no hay bloqueos sin ella. */
           paciencia: function (sg) { if (sg !== undefined) CEDE_PACIENCIA = sg; return CEDE_PACIENCIA; },
+          /** La simulación por cercanía (ronda 2): `lod(false)` actualiza todos los coches en cada paso. */
+          lod: function (v) { if (v !== undefined) LOD_CADA = v ? 3 : 1; return LOD_CADA > 1; },
           escenario: function (lista) {
             var tr = S.traffic, i; if (!tr || !tr.cars) return 0;
             for (i = 0; i < tr.cars.length; i++) {
@@ -6218,7 +6325,7 @@
             var tr = S.traffic, i; if (!tr || !tr.cars) return;
             var f = focoTrafico(), cand = candidatasCerca(f.x, f.z, R_VIVO), pr = {};
             for (i = 0; i < tr.cars.length; i++) { tr.cars[i].fuera = false; if (!colocaCoche(tr.cars[i], cand, tr.rnd, null, pr)) tr.cars[i].fuera = true; }
-            tr.vivo = true;
+            tr.vivo = true; tr.focoPrev = { x: f.x, z: f.z };
           },
           pose: function (c) { return poseCoche(c); }, puntoCarril: function (R, t, lat) { return puntoCarril(R, t, lat, {}); },
           /** La geometría de un cruce entre dos coches (geoCruce) y la calzada ajena por el carril de uno (bandaCruce), copiadas. */

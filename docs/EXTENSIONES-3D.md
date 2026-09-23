@@ -259,10 +259,15 @@ bytes que el dibujo directo (diferencia máxima 0, medido con `readPixels`).
 
 - `handle.stats().trafico`: coches, dibujados, cuántos ceden y cuántos esperan
   ante un paso este cuadro, activaciones de la válvula de paciencia,
-  recolocados, desatascos (coches de un ciclo de esperas recolocados), cuántos
-  están dando la vuelta, rutas y pasos de peatones.
+  recolocados, desatascos (coches de un ciclo de esperas recolocados), saltos
+  (veces que el foco saltó y se recolocaron todos a su alrededor),
+  `saltadosLod` (coches lejanos que este cuadro no se actualizaron: la
+  simulación por cercanía), cuántos están dando la vuelta, rutas y pasos de
+  peatones.
 - `handle._debug.trafico`: `estado()`, `rutas()`, `vivo(bool)` (recolocar los
-  coches lejanos), `paciencia(s)` (la válvula; `Infinity` la quita),
+  coches lejanos), `paciencia(s)` (la válvula; `Infinity` la quita), `lod(bool)`
+  (la simulación por cercanía: con `false` se actualizan todos los coches en
+  cada paso),
   `escenario([{ ruta, t, dir, carril, vel, vmax }, …])` (deja solo esos coches)
   y `normal()`; `pose(c)`, `puntoCarril(R, t, lateral)`, `geo(c, cf, y)` (dónde
   se cortan los carriles de dos coches en un cruce) y `banda(c, cf)` (la calzada
@@ -286,6 +291,11 @@ bytes que el dibujo directo (diferencia máxima 0, medido con `readPixels`).
   `paradas(i)` (las paradas del barrio i, con su bordillo), `dibujados()`,
   `limpia()`, `reconstruye(porTrozos)` (de una vez, o por trozos como al
   cambiar las parcelas), `reconstruyendo()`, `enCalzada(x, z)`,
-  `diagnostico()`; `stats().ext.vida` con las cifras (entre ellas
-  `construccionMs`, `trozos`, `trozoMaxMs`, `fasesMs` de la última construcción
-  y `aplazados`, los caminos que este cuadro dejó para el siguiente).
+  `diagnostico()`, `empleo()` (cuántos trabajan en las parcelas, cuántos puestos
+  suman sus plantillas y cuántos van a las oficinas de cada barrio) y
+  `huella(dx, dz)` (la prueba de márgenes del genotipo: reconstruye con los
+  puntos desplazados y devuelve la huella por partes); `stats().ext.vida` con
+  las cifras (entre ellas `construccionMs`, `trozos`, `trozoMaxMs`, `fasesMs`
+  de la última construcción, `calentados` —caminos precalculados antes del
+  cambio de población—, `caminos` y `podas` de la caché y `aplazados`, los
+  caminos que este cuadro dejó para el siguiente).
