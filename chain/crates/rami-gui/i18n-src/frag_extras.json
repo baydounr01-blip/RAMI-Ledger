@@ -88,5 +88,23 @@
     "zh": "迪拜下一次",
     "ru": "следующая в Дубае",
     "sw": "inayofuata Dubai"
+  },
+  "la del calendario, hasta": {
+    "en": "the scheduled one, until",
+    "zh": "日程中的沙尘暴，持续到",
+    "ru": "по календарю, до",
+    "sw": "ya kalenda, hadi"
+  },
+  "la del calendario, quitada en este equipo hasta": {
+    "en": "the scheduled one, turned off on this device until",
+    "zh": "日程中的沙尘暴，已在本设备上关闭，直到",
+    "ru": "по календарю, отключена на этом устройстве до",
+    "sw": "ya kalenda, imezimwa kwenye kifaa hiki hadi"
+  },
+  "pulsa para quitarla": {
+    "en": "press to turn it off",
+    "zh": "点击即可关闭",
+    "ru": "нажмите, чтобы отключить",
+    "sw": "bonyeza ili kuizima"
   }
 }

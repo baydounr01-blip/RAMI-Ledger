@@ -74,6 +74,12 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
   `C` (mallas instanciadas y conjuntos de etiquetas), `cam` (órbita), `walk`
   (`pos`, `yaw`, `pitch`, `fly`, `speed`), `EYE` (1,7 m), `keys()`,
   `puntero()`, `Q()`, `calidad()`, `N()`, `CELL()`, `LIFT()`, `rotR()`.
+  Desde la v0.11.0 el plano de los barrios (`S.edificios`) no pisa las vías
+  del mapa: `planificarBarrios` rechaza, además de las calles de la trama, las
+  posiciones cuya huella entra en la calzada o la acera de `ejesDelMapa`
+  (`enViaDelMapa`); `S.rechazadosPorVia` cuenta los rechazos. Lo que un módulo
+  levante sobre una vía del mapa (el viaducto de `extras`) no se encuentra un
+  edificio de barrio dentro.
 - **Materiales y luz**: `shared` (uniformes compartidos: `uSun`, `uSunColor`,
   `uSkyColor`, `uGroundColor`, `uNight`, `uDusk`, `uEnv`), `buildMat`,
   `plainMat`, `terrainMat`, `makeBuildingMaterial(shared, ventanas)`, `mats`

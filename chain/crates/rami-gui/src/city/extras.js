@@ -64,10 +64,10 @@
   // Tormenta: 1 de cada 17 días de Dubái, por la tarde (ver `tormentaDelDia`).
   var TORMENTA = { CADA: 17, CANAL: 41, SAL: 0x7a11, VIS: 380, RAMPA: 1800 };
   var CALIDAD = {
-    baja: { mover: false, arena: 300 },
-    media: { mover: true, arena: 900 },
-    alta: { mover: true, arena: 1500 },
-    ultra: { mover: true, arena: 2000 }
+    baja: { mover: false, arena: 600 },
+    media: { mover: true, arena: 1500 },
+    alta: { mover: true, arena: 2500 },
+    ultra: { mover: true, arena: 3500 }
   };
 
   global.RamiCity3D.extend('extras', function (ctx) {
@@ -132,7 +132,7 @@
       b.appendChild(vol);
       b.appendChild(boton('sonido', '🔇', t('Sonido de la ciudad (sintetizado): viento, tráfico, pasos y noche'), function () { alternaSonido(); }));
       b.appendChild(boton('foto', '📷', t('Modo foto: sin interfaz, focal ajustable y descarga en PNG'), function () { entraFoto(); }));
-      b.appendChild(boton('tormenta', '🌪', t('Tormenta de arena'), function () { tormenta.forzada = tormenta.forzada === true ? null : true; pintaBotones(); }));
+      b.appendChild(boton('tormenta', '🌪', t('Tormenta de arena'), function () { botonTormenta(); }));
       container.appendChild(b); ui.barra = b;
 
       // Barra del modo foto
@@ -156,10 +156,14 @@
       B.sonido.textContent = snd.activo ? '🔊' : '🔇';
       B.sonido.classList.toggle('on', !!snd.activo);
       if (ui.vol) ui.vol.classList.toggle('rx-oculto', !snd.activo);
-      B.tormenta.classList.toggle('on', tormenta.forzada === true);
-      var p = proximasTormentas(1)[0];
-      B.tormenta.title = t('Tormenta de arena') + (tormenta.forzada === true ? ' · ' + t('activada a mano') : '') +
-        (p ? ' · ' + t('próxima en Dubái') + ': ' + fechaDubai(p.ini) + '–' + horaDubai(p.fin) : '');
+      var cal = tormentaEnCurso(), quitada = cal && tormenta.quitadaHasta >= cal.fin;
+      B.tormenta.classList.toggle('on', tormenta.forzada === true || (!!cal && !quitada && tormenta.forzada !== false));
+      var p = proximasTormentas(1)[0], tt = t('Tormenta de arena');
+      if (tormenta.forzada === true) tt += ' · ' + t('activada a mano');
+      else if (cal && quitada) tt += ' · ' + t('la del calendario, quitada en este equipo hasta') + ' ' + horaDubai(cal.fin);
+      else if (cal) tt += ' · ' + t('la del calendario, hasta') + ' ' + horaDubai(cal.fin) + ' · ' + t('pulsa para quitarla');
+      else if (p) tt += ' · ' + t('próxima en Dubái') + ': ' + fechaDubai(p.ini) + '–' + horaDubai(p.fin);
+      B.tormenta.title = tt; B.tormenta.setAttribute('aria-label', tt);
       if (B.nivel) { B.nivel.classList.toggle('on', foto.nivel); B.travelling.classList.toggle('on', foto.travelling); B.libre.classList.toggle('on', S.mode === 'walk' && walk.fly >= 2); }
     }
 
@@ -234,8 +238,14 @@
       pintaBotones();
     }
     // Preferencia guardada: el contexto nace en el primer gesto sobre la página.
-    function primerGesto() {
+    // Si ese gesto es el propio botón 🔇 no se hace nada aquí: lo resuelve su
+    // clic, que llega justo después y enciende. Encendiendo también aquí, el
+    // clic lo apagaba al momento y guardaba '0': el visitante pedía sonido y
+    // perdía la preferencia.
+    function primerGesto(ev) {
       doc.removeEventListener('pointerdown', primerGesto, true); doc.removeEventListener('keydown', primerGesto, true);
+      var B = ui.botones.sonido;
+      if (ev && B && ev.target && B.contains(ev.target)) return;
       if (lsLee('rami.sonido') === '1' && !snd.activo) alternaSonido();
     }
     if (doc && lsLee('rami.sonido') === '1') { doc.addEventListener('pointerdown', primerGesto, true); doc.addEventListener('keydown', primerGesto, true); }
@@ -370,7 +380,11 @@
     function entraFoto() {
       if (foto.activo || !S.ready || S.xr) return;
       foto.activo = true;
-      foto.guardado = { fov: camera.fov, mode: S.mode, fly: walk.fly, pantalla: [] };
+      // La pose entera, para devolverla tal cual al salir (la cámara libre pasa
+      // a pie y vuela; el travelling mueve la órbita o los pies).
+      foto.guardado = { fov: camera.fov, mode: S.mode, fly: walk.fly, pos: walk.pos.clone(), yaw: walk.yaw, pitch: walk.pitch,
+        cur: { theta: cam.cur.theta, phi: cam.cur.phi, radius: cam.cur.radius, target: cam.cur.target.clone() },
+        goal: { theta: cam.goal.theta, phi: cam.goal.phi, radius: cam.goal.radius, target: cam.goal.target.clone() }, flight: cam.flight, pantalla: [] };
       foto.focal = clamp(focalDeFov(camera.fov), 14, 200);
       if (ui.focR) { ui.focR.value = String(rangoDeFocal(foto.focal)); ui.focT.textContent = Math.round(foto.focal) + ' mm'; }
       // Fuera la interfaz: todo lo que cuelga del contenedor salvo el lienzo y
@@ -382,14 +396,31 @@
         foto.guardado.pantalla.push({ el: h, display: h.style.display }); h.style.display = 'none';
       }
       if (ui.foto) ui.foto.classList.remove('rx-oculto');
+      // Escape también desde el documento: al pulsar 📷 el botón desaparece, el
+      // foco pasa al body y el gancho `tecla` (que escucha en el lienzo) no se
+      // entera.
+      if (doc) doc.addEventListener('keydown', escapeFoto, true);
       ocultaEtiquetas();
       pintaBotones();
+    }
+    function escapeFoto(ev) {
+      if (foto.activo && ev && (ev.key === 'Escape' || ev.key === 'Esc')) { saleFoto(); ev.preventDefault(); ev.stopPropagation(); }
     }
     function saleFoto() {
       if (!foto.activo) return;
       foto.activo = false; foto.pendiente = false;
+      if (doc) doc.removeEventListener('keydown', escapeFoto, true);
       var g = foto.guardado, i;
       camera.fov = g.fov; camera.clearViewOffset(); camera.updateProjectionMatrix();
+      if (!S.xr) {
+        if (S.mode !== g.mode) ctx.setMode(g.mode);
+        walk.pos.copy(g.pos); walk.yaw = g.yaw; walk.pitch = g.pitch; walk.fly = g.fly;
+        if (g.mode !== 'walk') {
+          var ks = ['cur', 'goal'], q;
+          for (q = 0; q < 2; q++) { var v = cam[ks[q]], o = g[ks[q]]; v.theta = o.theta; v.phi = o.phi; v.radius = o.radius; v.target.copy(o.target); }
+          cam.flight = g.flight;
+        }
+      }
       for (i = 0; i < g.pantalla.length; i++) g.pantalla[i].el.style.display = g.pantalla[i].display;
       for (i = 0; i < foto.ocultas.length; i++) foto.ocultas[i].visible = true;
       for (i = 0; i < foto.objetos.length; i++) foto.objetos[i].visible = true;
@@ -473,7 +504,7 @@
     // la niebla: camera.far se recorta al final de la niebla (a pie, 420 m) y las
     // teselas de más allá no se envían. El fondo se pinta del color de la arena,
     // así que lo recortado no se nota.
-    var tormenta = { forzada: null, k: 0, kMano: 0, base: null, fondo: null, arena: null, cielo: null, visibilidad: 0, far: 0, viento: 0, dia: -1, hoy: null, aplicada: false };
+    var tormenta = { forzada: null, quitadaHasta: 0, k: 0, kMano: 0, base: null, fondo: null, arena: null, cielo: null, visibilidad: 0, far: 0, viento: 0, dia: -1, hoy: null, aplicada: false };
     function diaDubai(tsec) { return Math.floor((tsec + 4 * 3600) / 86400); }
     function tormentaDelDia(d) {
       var h = U.semillaMorfologia(d | 0, TORMENTA.SAL, TORMENTA.CANAL) >>> 0;
@@ -497,9 +528,13 @@
     function fechaDubai(tsec) { var d = new Date((tsec + 4 * 3600) * 1000); return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()) + ' ' + pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes()); }
     function horaDubai(tsec) { var d = new Date((tsec + 4 * 3600) * 1000); return pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes()); }
 
-    // Partículas: una caja de 60 m alrededor de la cámara; cada grano se mueve
+    // Partículas: una caja de 30 m alrededor de la cámara; cada grano se mueve
     // con el viento en el sombreador y se envuelve con mod(), así que la CPU no
-    // toca un solo vértice por cuadro.
+    // toca un solo vértice por cuadro. La primera versión llevaba 900 granos en
+    // una caja de 60 m, del color de la niebla: a pie se veían 2 o 3 por cuadro.
+    // Con la caja a la mitad la densidad es 8 veces mayor (y 1.500 granos en
+    // calidad media, 13 veces), y el grano es más claro que la niebla para que
+    // se despegue del fondo.
     var ARENA_VS = [
       '#include <common>',
       '#include <logdepthbuf_pars_vertex>',
@@ -520,11 +555,11 @@
       'void main(){',
       '  #include <logdepthbuf_fragment>',
       '  vec2 c = gl_PointCoord - 0.5; float r = dot(c, c) * 4.0; if (r > 1.0) discard;',
-      '  gl_FragColor = vec4(uColor, (1.0 - r) * vA * uK * 0.8);',
+      '  gl_FragColor = vec4(uColor, (1.0 - r) * vA * uK * 0.9);',
       '}'].join('\n');
     function creaArena(n) {
       if (tormenta.arena) { scene.remove(tormenta.arena); tormenta.arena.geometry.dispose(); }
-      var R = 30, pos = new Float32Array(n * 3), fase = new Float32Array(n), r = U.lcg(4101), i;
+      var R = 15, pos = new Float32Array(n * 3), fase = new Float32Array(n), r = U.lcg(4101), i;
       for (i = 0; i < n; i++) { pos[i * 3] = (r() * 2 - 1) * R; pos[i * 3 + 1] = (r() * 2 - 1) * R; pos[i * 3 + 2] = (r() * 2 - 1) * R; fase[i] = r(); }
       var g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('aFase', new THREE.BufferAttribute(fase, 1));
@@ -543,8 +578,24 @@
       b.luz.copy(ctx.sun.color); b.hemiC.copy(ctx.hemi.color); b.hemiS.copy(ctx.hemi.groundColor);
       b.niebla = (info && info.niebla) || b.niebla || scene.fog.color.clone();
     }
+    /** La tormenta del calendario que está soplando ahora (con sus rampas), o null. */
+    function tormentaEnCurso() {
+      var tsec = ahora(); intensidadCalendario(tsec);
+      var x = tormenta.hoy; return x && tsec >= x.ini && tsec < x.fin ? x : null;
+    }
+    // El botón 🌪: sin tormenta del calendario la pone y la quita a mano; con
+    // una soplando, la quita en este equipo hasta que acabe (el calendario es
+    // el mismo para todos, pero verla o no es cosa de cada uno) y la devuelve
+    // si se vuelve a pulsar.
+    function botonTormenta() {
+      var cal = tormentaEnCurso();
+      if (tormenta.forzada === true) tormenta.forzada = null;
+      else if (cal) tormenta.quitadaHasta = tormenta.quitadaHasta >= cal.fin ? 0 : cal.fin;
+      else tormenta.forzada = true;
+      pintaBotones();
+    }
     function cuadroTormenta(dt, now) {
-      var tsec = ahora(), kc = intensidadCalendario(tsec);
+      var tsec = ahora(), kc = tsec < tormenta.quitadaHasta ? 0 : intensidadCalendario(tsec);
       // La activada a mano sube y baja en tres segundos.
       tormenta.kMano = clamp(tormenta.kMano + (tormenta.forzada === true ? 1 : -1) * dt / 3, 0, 1);
       var k = tormenta.forzada === false ? 0 : Math.max(kc, tormenta.kMano);
@@ -576,12 +627,14 @@
       tormenta.visibilidad = fog.far;
       if (S.sky) S.sky.visible = k < 0.5;
       if (S.stars) S.stars.visible = k < 0.3;
-      // Lo que queda detrás de la niebla no se dibuja.
+      // Lo que queda detrás de la niebla no se dibuja. En VR no: las gafas
+      // llevan su propia proyección, y la franja del terreno del último cuadro
+      // fuera de las gafas no seguiría al jugador, así que se deshace.
       if (!S.xr) {
         var far = Math.max(fog.far * 1.03, camera.near * 10);
         if (far < camera.far) { camera.far = far; camera.updateProjectionMatrix(); }
         recorteTerreno(camera.far);
-      }
+      } else if (tormenta.filasTerreno) recorteTerreno(null);
       tormenta.far = camera.far;
       // Granos de arena alrededor de la cámara.
       var P = tormenta.arena;
@@ -591,8 +644,8 @@
         camera.getWorldPosition(u.uCam.value);
         u.uTime.value = (now / 1000) % 1000;
         var vv = 7 + 5 * k; u.uWind.value.set(Math.sin(rumbo) * vv, 0.4, -Math.cos(rumbo) * vv);
-        u.uK.value = k; u.uColor.value.setRGB(0.62 * luz, 0.46 * luz, 0.29 * luz);
-        u.uSize.value = 0.12 * (renderer().domElement.height || 600) / Math.tan(camera.fov * Math.PI / 360) * 0.5;
+        u.uK.value = k; u.uColor.value.setRGB(1.0 * luz, 0.86 * luz, 0.64 * luz);
+        u.uSize.value = 0.10 * (renderer().domElement.height || 600) / Math.tan(camera.fov * Math.PI / 360) * 0.5;
       }
     }
     var _col = new THREE.Color();
@@ -686,6 +739,48 @@
       var dx = b.x - a.x, dz = b.z - a.z, L2 = dx * dx + dz * dz || 1, u = clamp(((x - a.x) * dx + (z - a.z) * dz) / L2, 0, 1);
       var ex = a.x + dx * u - x, ez = a.z + dz * u - z; return Math.sqrt(ex * ex + ez * ez);
     }
+    /** Medio ancho total de la vía del metro (calzada, bordillo y acera), el que usa el núcleo. */
+    function medioVia(tr) {
+      var an = tr.regla === 'via' ? { calzada: 42, acera: 5 } : (tr.largo > 40000 ? { calzada: 42, acera: 5 } : (tr.largo > 15000 ? { calzada: 26, acera: 4 } : { calzada: 15, acera: 3 }));
+      return an.calzada * 0.5 + 0.45 + an.acera;
+    }
+    /** ¿Tierra firme? El campo de alturas y la malla que se dibuja, los dos por encima del agua. */
+    function enTierra(x, z) { return (S.field ? S.field.atWorld(x, z) : 1) >= 0.5 && M.surfaceH(x, z) > 0.3; }
+    /**
+     * ¿Hay sitio para una huella de radio r? Se mira el plano de los barrios
+     * (todos los planificados, no los que dibuja la calidad) y los hitos: los
+     * dos son iguales en todas las máquinas. Las parcelas no cuentan: cambian
+     * con la cadena, y la estación decide el horario de los trenes.
+     */
+    function sitioLibre(x, z, r) {
+      var i, j, E = S.edificios || [], it = (S.catastro && S.catastro.items) || [];
+      for (i = 0; i < E.length; i++) for (j = 0; j < E[i].length; j++) {
+        var e = E[i][j], dx = e.x - x, dz = e.z - z, re = Math.sqrt(e.w * e.w + e.d * e.d) * 0.5 + r;
+        if (dx * dx + dz * dz < re * re) return false;
+      }
+      for (i = 0; i < it.length; i++) {
+        var so = it[i]; if (so.tipo !== 'hito') continue;
+        var hx = so.x - x, hz = so.z - z, rh = Math.sqrt(so.hw * so.hw + so.hd * so.hd) + r;
+        if (hx * hx + hz * hz < rh * rh) return false;
+      }
+      return true;
+    }
+    /**
+     * Sitio de una estación en la distancia s del eje: el andén sobre tierra y
+     * la torre de acceso fuera de la calzada (a medioVia + 4,5 m del eje), en
+     * tierra y sin edificio, a un lado o al otro. null si no cabe.
+     */
+    function sitioEstacion(s) {
+      var P = ejePunto(s, {}), rx = -P.tz, rz = P.tx, lat = metro.medioVia + 4.5, dx = METRO.ANDEN * 0.3, k, lado;
+      for (k = -2; k <= 2; k++) if (!enTierra(P.x + P.tx * k * 30, P.z + P.tz * k * 30)) return null;
+      for (lado = 1; lado >= -1; lado -= 2) {
+        var x = P.x + P.tx * dx + rx * lat * lado, z = P.z + P.tz * dx + rz * lat * lado;
+        if (!M.insideMap(x, z) || !enTierra(x, z) || !enTierra(x + rx * 4 * lado, z + rz * 4 * lado)) continue;
+        if (!sitioLibre(x, z, 6)) continue;
+        return { s: s, lado: lado, lat: lat, dx: dx, suelo: M.groundH(x, z) };
+      }
+      return null;
+    }
     /** Esquinas redondeadas: una curva de Bézier cuadrática de tangente R·tan(θ/2) en cada vértice. */
     function redondea(p, R) {
       var out = [p[0]], i, k;
@@ -748,10 +843,25 @@
         for (i = 0; i <= n; i++) H[i] = Math.max(H2[i], gnd[i] + 8.5);
       }
       e.H = H; e.gnd = gnd; metro.eje = e;
-      // Estaciones: n+1 paradas repartidas por igual, las terminales metidas 70 m.
-      var ne = Math.max(2, Math.round(e.L / METRO.ESTACION)), paradas = [];
-      for (i = 0; i <= ne; i++) paradas.push(clamp(i * e.L / ne, 70, e.L - 70));
-      metro.paradas = paradas;
+      // Estaciones: n+1 paradas repartidas por igual, las terminales metidas 70 m,
+      // y cada una movida lo mínimo (pasos de 60 m, hasta ±480 m) para que caiga
+      // en tierra y tenga sitio para su torre de acceso (ver `sitioEstacion`).
+      var ne = Math.max(2, Math.round(e.L / METRO.ESTACION)), paradas = [], sitios = [], sinAcceso = 0, movidas = 0;
+      metro.medioVia = medioVia(tr);
+      for (i = 0; i <= ne; i++) {
+        var s0 = clamp(i * e.L / ne, 70, e.L - 70), sit = null, dsx;
+        for (j = 0; j <= 16 && !sit; j++) {
+          dsx = (j & 1 ? 1 : -1) * Math.ceil(j / 2) * 60;
+          var sx = s0 + dsx;
+          if (sx < 70 || sx > e.L - 70) continue;
+          if (i > 0 && sx < paradas[i - 1] + 600) continue;
+          sit = sitioEstacion(sx);
+        }
+        if (sit) { if (sit.s !== s0) movidas++; paradas.push(sit.s); }
+        else { sinAcceso++; paradas.push(s0); }
+        sitios.push(sit);
+      }
+      metro.paradas = paradas; metro.sitios = sitios;
       // --- Geometría por teselas -------------------------------------------
       var teselas = {}, choques = 0, choqueIds = [], pilares = 0, TES = M.TESELA_VIA, lh = U.lin3(HORMIGON), lb = U.lin3(BALASTO), lc = U.lin3(CARRIL);
       function tes(x, z) { var k = Math.floor(x / TES) + ':' + Math.floor(z / TES); return teselas[k] || (teselas[k] = G.newAcc()); }
@@ -799,19 +909,28 @@
         ], par);
         pilares++;
       }
-      // Estaciones: andenes, bóveda dorada, mamparas de vidrio y torre de acceso.
+      // Estaciones: andenes, bóveda dorada, mamparas de vidrio y, fuera de la
+      // calzada, la torre de acceso con su pasarela cubierta (las de la línea
+      // roja de verdad cruzan así la Sheikh Zayed Road). La torre iba antes a
+      // 13,5 m del eje, dentro de los 21 m de calzada: los coches la cruzaban.
+      var CLARO_T = [0.86, 0.84, 0.80], ORO = [0.86, 0.72, 0.46], VIDRIO_T = [0.34, 0.50, 0.60];
       for (i = 0; i < paradas.length; i++) {
-        var P = ejePunto(paradas[i], {}), yaw = Math.atan2(-P.tz, P.tx), g0 = M.groundH(P.x, P.z);
+        var P = ejePunto(paradas[i], {}), yaw = Math.atan2(-P.tz, P.tx), st = sitios[i];
         q.setFromAxisAngle(yv, yaw); pv.set(P.x, P.y, P.z); par.compose(pv, q, sv);
-        var L2 = METRO.ANDEN, dh = P.y - g0;
-        G.pushParts(tes(P.x, P.z), [
+        var L2 = METRO.ANDEN, piezasE = [
           { sx: L2, sy: 2.9, sz: 3.2, y: -1.9, z: 6.3, c: HORMIGON }, { sx: L2, sy: 2.9, sz: 3.2, y: -1.9, z: -6.3, c: HORMIGON },
-          { g: 'halfcyl', a: 20, sx: 11, sy: L2 + 6, sz: 18.5, x: (L2 + 6) / 2, y: 5.2, rz: Math.PI / 2, c: [0.86, 0.72, 0.46] },
-          { sx: L2, sy: 4.2, sz: 0.3, y: 1, z: 8.2, c: [0.34, 0.50, 0.60] }, { sx: L2, sy: 4.2, sz: 0.3, y: 1, z: -8.2, c: [0.34, 0.50, 0.60] },
-          { sx: 9, sy: dh + 5.5, sz: 7, x: L2 * 0.3, y: -dh, z: 13.5, c: [0.86, 0.84, 0.80] },
-          { sx: 9, sy: 1.4, sz: 7, x: L2 * 0.3, y: 5.5, z: 13.5, c: [0.86, 0.72, 0.46] },
-          { sx: 4, sy: 3.5, sz: 2.4, x: L2 * 0.3, y: 1, z: 9.1, c: [0.86, 0.84, 0.80] }
-        ], par);
+          { g: 'halfcyl', a: 20, sx: 11, sy: L2 + 6, sz: 18.5, x: (L2 + 6) / 2, y: 5.2, rz: Math.PI / 2, c: ORO },
+          { sx: L2, sy: 4.2, sz: 0.3, y: 1, z: 8.2, c: VIDRIO_T }, { sx: L2, sy: 4.2, sz: 0.3, y: 1, z: -8.2, c: VIDRIO_T }
+        ];
+        if (st) {
+          var lado = st.lado, zt = st.lat * lado, dh = P.y - st.suelo, pz0 = 8.35, pz1 = st.lat - 3.5;
+          piezasE.push(
+            { sx: 9, sy: dh + 5.5, sz: 7, x: st.dx, y: -dh, z: zt, c: CLARO_T },
+            { sx: 9, sy: 1.4, sz: 7, x: st.dx, y: 5.5, z: zt, c: ORO },
+            { sx: 4, sy: 3.4, sz: pz1 - pz0, x: st.dx, y: 1, z: lado * (pz0 + pz1) / 2, c: CLARO_T },
+            { sx: 4.1, sy: 1.1, sz: pz1 - pz0, x: st.dx, y: 2.6, z: lado * (pz0 + pz1) / 2, c: VIDRIO_T });
+        }
+        G.pushParts(tes(P.x, P.z), piezasE, par);
       }
       // Una malla por tesela, con su esfera envolvente.
       var grupo = new THREE.Group(); grupo.name = 'extras: metro';
@@ -858,9 +977,24 @@
       var colT = new THREE.Color(1, 1, 1); for (i = 0; i < nC; i++) im.setColorAt(i, colT);
       im.instanceColor.needsUpdate = true;
       scene.add(im); metro.trenes = im;
-      metro.info = { km: Math.round(e.L / 100) / 10, indiceVia: tr.indice, regla: tr.regla, muestras: n + 1, pilares: pilares, choques: choques, choqueIds: choqueIds.slice(0, 12), estaciones: paradas.length,
+      metro.info = { km: Math.round(e.L / 100) / 10, indiceVia: tr.indice, regla: tr.regla, muestras: n + 1, pilares: pilares, choques: choques, choqueIds: choqueIds.slice(0, 12), estaciones: paradas.length, estacionesMovidas: movidas, estacionesSinAcceso: sinAcceso,
         triangulosViaducto: tri0, teselas: metro.teselas.length, trenes: metro.nTrenes, intervalo: Math.round(metro.intervalo), ciclo: Math.round(metro.ciclo) };
       metro.listo = true;
+    }
+    /**
+     * Vuelve a contar los sólidos que el viaducto atraviesa. Se llama en `listo`
+     * y tras cada `ciudad`: una parcela comprada puede levantar su edificio
+     * bajo el viaducto después de construirlo (los pilares no se rehacen: es
+     * un aviso en las estadísticas, no una corrección).
+     */
+    function recuentaChoques() {
+      var e = metro.eje; if (!e || !metro.info) return;
+      var n = 0, ids = [], i;
+      for (i = 0; i <= e.n; i++) {
+        var so = ctx.catastro.bajo(e.X[i], e.Z[i]);
+        if (so && so.y0 + so.h > e.H[i] - 2) { n++; if (ids.indexOf(so.id) < 0) ids.push(so.id); }
+      }
+      metro.info.choques = n; metro.info.choqueIds = ids.slice(0, 12);
     }
     function tiempoTramo(D) {
       var v = METRO.VMAX, a = METRO.ACEL;
@@ -1072,6 +1206,7 @@
     // =========================================================================
     creaInterfaz();
     return {
+      ciudad: function () { recuentaChoques(); },
       listo: function () {
         construyeMetro();
         construyeBarcos();
@@ -1105,7 +1240,7 @@
         o.extras = {
           metro: metro.info ? copia(metro.info, { cochesDibujados: metro.dibujados }) : null,
           barcos: barcos.info ? copia(barcos.info, { dibujados: barcos.dibujados }) : null,
-          tormenta: { intensidad: Math.round(tormenta.k * 100) / 100, forzada: tormenta.forzada, visibilidad: Math.round(tormenta.visibilidad), far: Math.round(tormenta.far), filasTerreno: tormenta.filasTerreno || 0, proxima: p ? fechaDubai(p.ini) + '–' + horaDubai(p.fin) : null },
+          tormenta: { intensidad: Math.round(tormenta.k * 100) / 100, forzada: tormenta.forzada, quitadaHasta: tormenta.quitadaHasta ? horaDubai(tormenta.quitadaHasta) : null, visibilidad: Math.round(tormenta.visibilidad), far: Math.round(tormenta.far), filasTerreno: tormenta.filasTerreno || 0, proxima: p ? fechaDubai(p.ini) + '–' + horaDubai(p.fin) : null },
           foto: { activo: foto.activo, focal: Math.round(foto.focal), fov: Math.round(camera.fov * 10) / 10, nivel: foto.nivel, travelling: foto.travelling, capturas: foto.capturas },
           sonido: { activo: !!snd.activo, estado: snd.ac ? snd.ac.state : 'sin crear', nodos: snd.nodos },
           triangulos: gasto.triangulos, llamadas: gasto.llamadas
@@ -1117,6 +1252,8 @@
         if (snd.ac) { try { snd.ac.close(); } catch (e) { /* nada */ } snd.ac = null; }
         if (ui.barra && ui.barra.parentNode) ui.barra.parentNode.removeChild(ui.barra);
         if (ui.foto && ui.foto.parentNode) ui.foto.parentNode.removeChild(ui.foto);
+        if (doc) doc.removeEventListener('keydown', escapeFoto, true);
+        if (ui.css && ui.css.parentNode) ui.css.parentNode.removeChild(ui.css);
         if (ctx.servicios.sonido && ctx.servicios.sonido.play) ctx.servicios.sonido = null;
       },
       publico: {
@@ -1125,15 +1262,21 @@
         reloj: function (ms, congelado) {
           fijo = null; desfase = ms === null || ms === undefined ? 0 : Number(ms) - Date.now();
           if (congelado && ms !== null && ms !== undefined) fijo = Number(ms) / 1000;
+          pintaBotones();
           return ahora();
         },
         /** true = tormenta a mano, false = sin tormenta aunque toque, null = calendario. */
-        tormenta: function (v) { if (v !== undefined) { tormenta.forzada = v; if (v === true) tormenta.kMano = 1; if (v !== true) tormenta.kMano = 0; pintaBotones(); } return tormenta.k; },
+        tormenta: function (v) { if (v !== undefined) { tormenta.forzada = v; tormenta.quitadaHasta = 0; if (v === true) tormenta.kMano = 1; if (v !== true) tormenta.kMano = 0; pintaBotones(); } return tormenta.k; },
         calendario: function (n, desdeSeg) { return proximasTormentas(n || 5, desdeSeg).map(function (x) { return { dia: x.dia, inicio: fechaDubai(x.ini), fin: horaDubai(x.fin), rumbo: x.rumbo }; }); },
         tormentaDelDia: tormentaDelDia,
         metro: function () { return metro.info; },
         tren: function (k, tsec) { if (!metro.listo) return null; var p = posTren(k, tsec === undefined ? ahora() : tsec), e = ejePunto(p.s, {}); return { s: p.s, dir: p.dir, parado: p.parado, x: e.x, y: e.y, z: e.z, tx: e.tx, tz: e.tz }; },
-        estacion: function (i) { if (!metro.listo) return null; var e = ejePunto(metro.paradas[i], {}); return { s: metro.paradas[i], x: e.x, y: e.y, z: e.z, tx: e.tx, tz: e.tz, suelo: M.groundH(e.x, e.z) }; },
+        estacion: function (i) {
+          if (!metro.listo) return null;
+          var e = ejePunto(metro.paradas[i], {}), st = metro.sitios[i], o = { s: metro.paradas[i], x: e.x, y: e.y, z: e.z, tx: e.tx, tz: e.tz, suelo: M.groundH(e.x, e.z), campo: S.field ? S.field.atWorld(e.x, e.z) : null, torre: null };
+          if (st) { var tx = e.x + e.tx * st.dx - e.tz * st.lat * st.lado, tz = e.z + e.tz * st.dx + e.tx * st.lat * st.lado; o.torre = { x: tx, z: tz, lado: st.lado, lat: st.lat, suelo: M.groundH(tx, tz), campo: S.field ? S.field.atWorld(tx, tz) : null, bajo: (ctx.catastro.bajo(tx, tz) || {}).id || null }; }
+          return o;
+        },
         barcos: function (tsec) {
           var out = [], i, j, tt = tsec === undefined ? ahora() : tsec;
           for (i = 0; i < barcos.rutas.length; i++) for (j = 0; j < barcos.rutas[i].n; j++) {
