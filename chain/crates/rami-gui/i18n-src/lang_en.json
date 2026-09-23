@@ -841,5 +841,13 @@
  "Subir al piso": "Go up to the flat",
  "Bajar al zaguán": "Go down to the lobby",
  "Restaurar muebles": "Restore furniture",
- "Coches expuestos": "Cars on display"
+ "Coches expuestos": "Cars on display",
+ "Metro de Dubái": "Dubai Metro",
+ "{d} d {h} h {m} min": "{d} d {h} h {m} min",
+ "{h} h {m} min": "{h} h {m} min",
+ "La escritura de vivienda ya rige en esta cadena: tu piso, en el libro mayor.": "The housing deed is already in force on this chain: your flat, in the ledger.",
+ "Volar al distrito": "Fly to the district",
+ "Los encargos salen de la economía de Dubái, que aún no rige en esta cadena: las parcelas de la fase 0 no compran insumos ni importan nada.": "Orders come from Dubai's economy, which is not yet in force on this chain: phase-0 parcels do not buy inputs or import anything.",
+ "Esta red no tiene fecha de activación de la escritura de vivienda (regtest sin --vivienda-desde).": "This network has no activation date for the housing deed (regtest without --vivienda-desde).",
+ "Tu vivienda no tiene planta en este edificio": "Your home has no floor in this building"
 }

@@ -841,5 +841,13 @@
  "Subir al piso": "Подняться в квартиру",
  "Bajar al zaguán": "Спуститься в вестибюль",
  "Restaurar muebles": "Вернуть мебель на место",
- "Coches expuestos": "Автомобили в экспозиции"
+ "Coches expuestos": "Автомобили в экспозиции",
+ "Metro de Dubái": "Метро Дубая",
+ "{d} d {h} h {m} min": "{d} д {h} ч {m} мин",
+ "{h} h {m} min": "{h} ч {m} мин",
+ "La escritura de vivienda ya rige en esta cadena: tu piso, en el libro mayor.": "Жилищная запись уже действует в этой цепочке: ваша квартира в реестре.",
+ "Volar al distrito": "Перелететь к району",
+ "Los encargos salen de la economía de Dubái, que aún no rige en esta cadena: las parcelas de la fase 0 no compran insumos ni importan nada.": "Заказы возникают из экономики Дубая, которая в этой цепочке ещё не действует: участки фазы 0 не покупают ресурсы и ничего не ввозят.",
+ "Esta red no tiene fecha de activación de la escritura de vivienda (regtest sin --vivienda-desde).": "У этой сети нет даты активации права собственности на жильё (regtest без --vivienda-desde).",
+ "Tu vivienda no tiene planta en este edificio": "У вашей квартиры нет этажа в этом здании"
 }

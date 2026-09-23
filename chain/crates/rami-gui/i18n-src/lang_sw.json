@@ -747,7 +747,7 @@
  "Sonido de la ciudad (sintetizado): viento, tráfico, pasos y noche": "Sauti ya jiji (iliyotengenezwa): upepo, magari, hatua na usiku",
  "Tormenta de arena": "Dhoruba ya mchanga",
  "Travelling lento": "Mwendo wa polepole wa kamera",
- "Volumen": "Sauti",
+ "Volumen": "Kiwango cha sauti",
  "activada a mano": "imewashwa kwa mkono",
  "próxima en Dubái": "inayofuata Dubai",
  "la del calendario, hasta": "ya kalenda, hadi",
@@ -841,5 +841,13 @@
  "Subir al piso": "Panda hadi nyumbani",
  "Bajar al zaguán": "Shuka hadi ukumbini",
  "Restaurar muebles": "Rejesha fanicha",
- "Coches expuestos": "Magari yanayoonyeshwa"
+ "Coches expuestos": "Magari yanayoonyeshwa",
+ "Metro de Dubái": "Metro ya Dubai",
+ "{d} d {h} h {m} min": "siku {d} saa {h} dakika {m}",
+ "{h} h {m} min": "saa {h} dakika {m}",
+ "La escritura de vivienda ya rige en esta cadena: tu piso, en el libro mayor.": "Hati ya makazi tayari inatumika kwenye mnyororo huu: nyumba yako, kwenye daftari kuu.",
+ "Volar al distrito": "Ruka hadi wilaya hii",
+ "Los encargos salen de la economía de Dubái, que aún no rige en esta cadena: las parcelas de la fase 0 no compran insumos ni importan nada.": "Maagizo yanatokana na uchumi wa Dubai, ambao bado haujaanza kutumika kwenye mnyororo huu: viwanja vya awamu ya 0 havinunui pembejeo wala kuagiza chochote.",
+ "Esta red no tiene fecha de activación de la escritura de vivienda (regtest sin --vivienda-desde).": "Mtandao huu hauna tarehe ya kuanzishwa kwa hati ya nyumba (regtest bila --vivienda-desde).",
+ "Tu vivienda no tiene planta en este edificio": "Makazi yako hayana ghorofa katika jengo hili"
 }

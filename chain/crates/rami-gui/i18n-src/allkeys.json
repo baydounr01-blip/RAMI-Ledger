@@ -841,5 +841,13 @@
  "Subir al piso",
  "Bajar al zaguán",
  "Restaurar muebles",
- "Coches expuestos"
+ "Coches expuestos",
+ "Metro de Dubái",
+ "{d} d {h} h {m} min",
+ "{h} h {m} min",
+ "La escritura de vivienda ya rige en esta cadena: tu piso, en el libro mayor.",
+ "Volar al distrito",
+ "Los encargos salen de la economía de Dubái, que aún no rige en esta cadena: las parcelas de la fase 0 no compran insumos ni importan nada.",
+ "Esta red no tiene fecha de activación de la escritura de vivienda (regtest sin --vivienda-desde).",
+ "Tu vivienda no tiene planta en este edificio"
 ]

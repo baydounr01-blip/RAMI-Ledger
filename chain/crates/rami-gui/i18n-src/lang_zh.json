@@ -749,7 +749,7 @@
  "Travelling lento": "缓慢移动镜头",
  "Volumen": "音量",
  "activada a mano": "已手动开启",
- "próxima en Dubái": "迪拜下一次",
+ "próxima en Dubái": "迪拜下一场",
  "la del calendario, hasta": "日程中的沙尘暴，持续到",
  "la del calendario, quitada en este equipo hasta": "日程中的沙尘暴，已在本设备上关闭，直到",
  "pulsa para quitarla": "点击即可关闭",
@@ -841,5 +841,13 @@
  "Subir al piso": "上楼到公寓",
  "Bajar al zaguán": "下楼到门厅",
  "Restaurar muebles": "恢复家具布置",
- "Coches expuestos": "展出车辆"
+ "Coches expuestos": "展出车辆",
+ "Metro de Dubái": "迪拜地铁",
+ "{d} d {h} h {m} min": "{d} 天 {h} 小时 {m} 分钟",
+ "{h} h {m} min": "{h} 小时 {m} 分钟",
+ "La escritura de vivienda ya rige en esta cadena: tu piso, en el libro mayor.": "住房契据已在这条链上生效：你的公寓记入总账。",
+ "Volar al distrito": "飞往该区",
+ "Los encargos salen de la economía de Dubái, que aún no rige en esta cadena: las parcelas de la fase 0 no compran insumos ni importan nada.": "订单来自迪拜经济，而迪拜规则在这条链上尚未生效：第 0 阶段的地块不购买投入品，也不进口任何东西。",
+ "Esta red no tiene fecha de activación de la escritura de vivienda (regtest sin --vivienda-desde).": "本网络没有住宅产权规则的启用日期（regtest 未设置 --vivienda-desde）。",
+ "Tu vivienda no tiene planta en este edificio": "你的住宅在这栋楼里没有楼层"
 }
