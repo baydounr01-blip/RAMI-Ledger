@@ -2473,7 +2473,7 @@
             color: own ? colors.accent : '#ffffff', size: 12, bold: true, pin: true, maxDist: S.L * 0.4, priority: 2 });
         }
         if (pc.sale) {
-          saleItems.push({ x: w.x, y: w.y + LIFT * 2 + clamp(CELL * 0.2, 20, 160), z: w.z, text: '💰 ' + (pc.sale / 1e8).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + ' RAMI', color: colors.sale, size: 12, bold: true, pin: true, maxDist: S.L * 0.6, priority: 4 });
+          saleItems.push({ x: w.x, y: w.y + LIFT * 2 + clamp(CELL * 0.2, 20, 160), z: w.z, text: '🏷️ ' + (pc.sale / 1e8).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + ' RAMI', color: colors.sale, size: 12, bold: true, pin: true, maxDist: S.L * 0.6, priority: 4 });
           cnt.sale++;
         }
       }
@@ -4163,7 +4163,7 @@
         txt = t(sectorName(clamp(p.kind | 0, 0, SECTOR_NAMES.length - 1))) + ' (' + x + ', ' + y + ')';
         if (p.name) txt += ' · ' + p.name;
         if (S.city && S.city.me && p.owner === S.city.me) txt += ' · ' + t('Mía');
-        if (p.sale) txt += ' · 💰 ' + (p.sale / 1e8).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + ' RAMI';
+        if (p.sale) txt += ' · 🏷️ ' + (p.sale / 1e8).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + ' RAMI';
       } else txt = t(S.cellSea[y * N + x] ? 'Parcela libre (mar)' : 'Parcela libre') + ' (' + x + ', ' + y + ')';
       if (d) txt += ' · ' + d.nombre;
       var w = cellWorld(x, y);

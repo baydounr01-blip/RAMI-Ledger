@@ -2310,7 +2310,7 @@
         "<span style='color:var(--muted)'>"+t("dueño ")+(mine?"<b style='color:var(--accent)'>"+t("tú")+"</b>":"")+(p.handle?(mine?" · ":"")+"<b>@"+esc(p.handle)+"</b>":"")+(mine?"":(p.handle?" · ":"")+esc(shortAddr(p.owner)))+
         t(" · desde bloque ")+fmtNum(p.since)+" · "+p.assets+t(" activo(s) · ")+p.harvests+t(" cosecha(s)")+
         (p.last_harvest? t(" · última: ")+ramFmt(p.last_harvest[1])+t(" RAMI en bloque ")+fmtNum(p.last_harvest[0]) : "")+"</span>"+cuentas+
-        (p.sale ? "<br>💰 <b>"+t("En venta por")+" "+ramShort(p.sale)+" RAMI</b>" : "");
+        (p.sale ? "<br>🏷️ <b>"+t("En venta por")+" "+ramShort(p.sale)+" RAMI</b>" : "");
       if(pendMints) h += '<div class="note" style="margin-top:6px">⏳ '+pendMints+t(" activo(s) pendiente(s)")+'</div>';
       if(p.pendingRename) h += '<div class="note" style="margin-top:6px">⏳ '+t("Pendiente de confirmar: se aplica al minarse el próximo bloque.")+'</div>';
       if(!mine && p.sale && dubai){
@@ -2349,7 +2349,7 @@
         var amine = me && a.owner===me, active = a.lease && a.lease.active, tenantMe = active && a.lease.tenant===me;
         var st = active ? (t("alquilada por ")+(tenantMe?"<b>"+t("ti")+"</b>":esc(shortAddr(a.lease.tenant)))+t(" hasta el bloque ")+fmtNum(a.lease.until))
                : (a.offer ? (t("en alquiler: ")+ramFmt(a.offer.price)+t(" RAMI por ")+fmtNum(a.offer.term)+t(" bloques")) : t("sin alquilar"));
-        if(a.sale) st += " · 💰 "+t("en venta por")+" "+ramShort(a.sale)+" RAMI";
+        if(a.sale) st += " · 🏷️ "+t("en venta por")+" "+ramShort(a.sale)+" RAMI";
         var row = '<div class="assetrow"><div>'+t(ASSET_NAMES[a.kind] || ASSET_NAMES[1])+' '+esc(a.meta||"")+' <span style="color:var(--muted)">'+t("· dueño ")+(amine?t("tú"):esc(shortAddr(a.owner)))+'</span></div>'+
                   '<div class="id">'+a.id+'</div><div style="color:var(--muted)">'+st+'</div>';
         if(amine && !active){
@@ -2438,7 +2438,7 @@
     units.forEach(function(u){
       var umine = !!(me && u.owner===me), congelada = !!(p.sale && u.owner===p.owner), k = p.x+","+p.y+","+u.n;
       var row = '<div style="border-top:1px solid var(--border);padding:5px 0;font-size:13px"><b>'+t("Vivienda")+' '+u.n+'</b> <span style="color:var(--muted)">· '+t("dueño ")+viviendaDueno(u, me)+'</span>'+
-        (u.sale ? ' · 💰 '+t("en venta por")+' <b>'+ramShort(u.sale)+' RAMI</b>' : '');
+        (u.sale ? ' · 🏷️ '+t("en venta por")+' <b>'+ramShort(u.sale)+' RAMI</b>' : '');
       if(!umine && u.sale && !congelada){
         row += ' <button class="btn small cyVivBuy" data-n="'+u.n+'" data-price="'+u.sale+'">'+t("Comprar por ")+ramShort(u.sale)+' RAMI</button>';
       }
