@@ -59,6 +59,25 @@ const T_BUY_PARCEL: u8 = 0x23;
 // Dubái RAMI (fase 2, v0.10.0): identidad del jugador en la cadena. Solo válida
 // desde la activación de Dubái (`FirmaCtx.dubai`).
 const T_SET_PROFILE: u8 = 0x30;
+// Escritura de vivienda (v0.11.0): la parcela dividida en viviendas. Solo
+// válidas desde su activación (`FirmaCtx::vivienda_rige`). Etiquetas nuevas
+// al final: ninguna codificación anterior cambia.
+const T_DIVIDE_PARCEL: u8 = 0x40;
+const T_TRANSFER_UNIT: u8 = 0x41;
+const T_SELL_UNIT: u8 = 0x42;
+const T_BUY_UNIT: u8 = 0x43;
+
+/// Escritura de vivienda: una parcela se divide como mucho en 64 viviendas.
+/// La torre de una parcela mide unos 220 m (v0.10.16), unas 62 plantas de
+/// 3,5 m: 64 es una vivienda por planta, redondeado a potencia de dos. Acota
+/// además el estado: 64 × 64 celdas × 64 = 262 144 viviendas como máximo en
+/// toda la ciudad (docs/VIVIENDA.md, §3).
+pub const MAX_UNIDADES_POR_PARCELA: u16 = 64;
+/// Escritura de vivienda: una cuenta no puede tener más de 16 viviendas en
+/// parcelas de OTROS (las de su propia parcela no cuentan). Hace falta un
+/// mínimo de 4 cuentas para quedarse con todas las viviendas ajenas de un
+/// edificio de 64 (docs/VIVIENDA.md, §3).
+pub const MAX_UNIDADES_POR_CUENTA: u16 = 16;
 
 /// Perfil (v0.10.0): nombre único de 3 a 20 bytes `a-z`, `0-9` y `_`.
 pub const MIN_HANDLE_BYTES: usize = 3;
@@ -175,6 +194,18 @@ pub enum Tx {
         #[serde(with = "crate::serdehex::b64")]
         sig: [u8; 64],
     },
+    // ---------- Escritura de vivienda (v0.11.0) ----------
+    /// Divide una parcela propia en `unidades` viviendas (1..=64), numeradas
+    /// de 1 a `unidades`, todas del dueño de la parcela. Una sola vez; no
+    /// sobre una parcela en venta. Solo cuesta la comisión.
+    DivideParcel { who: AccountId, x: u16, y: u16, unidades: u16, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
+    /// Transfiere la vivienda `n` de la parcela (x, y), que es de `from`, a `to`.
+    TransferUnit { from: AccountId, x: u16, y: u16, n: u16, to: AccountId, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
+    /// Pone la vivienda `n` propia en venta por `price` RAMI (0 = retira la venta).
+    SellUnit { who: AccountId, x: u16, y: u16, n: u16, price: Amount, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
+    /// Compra la vivienda `n` en venta: paga el precio a su dueño y la vivienda
+    /// cambia de manos en la misma transacción, como `BuyAsset`.
+    BuyUnit { who: AccountId, x: u16, y: u16, n: u16, max_price: Amount, fee: Amount, nonce: u64, #[serde(with = "crate::serdehex::b64")] sig: [u8; 64] },
 }
 
 fn put_u8(o: &mut Vec<u8>, x: u8) {
@@ -342,6 +373,47 @@ pub fn encode_body(tx: &Tx) -> Vec<u8> {
             put_u64(&mut o, *fee);
             put_u64(&mut o, *nonce);
         }
+        // Mismo convenio que el resto: coordenadas y números pequeños como
+        // u64 little-endian, direcciones de 32 bytes tal cual.
+        Tx::DivideParcel { who, x, y, unidades, fee, nonce, .. } => {
+            put_u8(&mut o, T_DIVIDE_PARCEL);
+            put_32(&mut o, who);
+            put_u64(&mut o, *x as u64);
+            put_u64(&mut o, *y as u64);
+            put_u64(&mut o, *unidades as u64);
+            put_u64(&mut o, *fee);
+            put_u64(&mut o, *nonce);
+        }
+        Tx::TransferUnit { from, x, y, n, to, fee, nonce, .. } => {
+            put_u8(&mut o, T_TRANSFER_UNIT);
+            put_32(&mut o, from);
+            put_u64(&mut o, *x as u64);
+            put_u64(&mut o, *y as u64);
+            put_u64(&mut o, *n as u64);
+            put_32(&mut o, to);
+            put_u64(&mut o, *fee);
+            put_u64(&mut o, *nonce);
+        }
+        Tx::SellUnit { who, x, y, n, price, fee, nonce, .. } => {
+            put_u8(&mut o, T_SELL_UNIT);
+            put_32(&mut o, who);
+            put_u64(&mut o, *x as u64);
+            put_u64(&mut o, *y as u64);
+            put_u64(&mut o, *n as u64);
+            put_u64(&mut o, *price);
+            put_u64(&mut o, *fee);
+            put_u64(&mut o, *nonce);
+        }
+        Tx::BuyUnit { who, x, y, n, max_price, fee, nonce, .. } => {
+            put_u8(&mut o, T_BUY_UNIT);
+            put_32(&mut o, who);
+            put_u64(&mut o, *x as u64);
+            put_u64(&mut o, *y as u64);
+            put_u64(&mut o, *n as u64);
+            put_u64(&mut o, *max_price);
+            put_u64(&mut o, *fee);
+            put_u64(&mut o, *nonce);
+        }
     }
     o
 }
@@ -364,7 +436,11 @@ fn sig_of(tx: &Tx) -> Option<&[u8; 64]> {
         | Tx::BuyAsset { sig, .. }
         | Tx::SellParcel { sig, .. }
         | Tx::BuyParcel { sig, .. }
-        | Tx::SetProfile { sig, .. } => Some(sig),
+        | Tx::SetProfile { sig, .. }
+        | Tx::DivideParcel { sig, .. }
+        | Tx::TransferUnit { sig, .. }
+        | Tx::SellUnit { sig, .. }
+        | Tx::BuyUnit { sig, .. } => Some(sig),
     }
 }
 
@@ -384,8 +460,38 @@ pub fn signer_of(tx: &Tx) -> Option<&AccountId> {
         | Tx::BuyAsset { who, .. }
         | Tx::SellParcel { who, .. }
         | Tx::BuyParcel { who, .. }
-        | Tx::SetProfile { who, .. } => Some(who),
-        Tx::TransferAsset { from, .. } => Some(from),
+        | Tx::SetProfile { who, .. }
+        | Tx::DivideParcel { who, .. }
+        | Tx::SellUnit { who, .. }
+        | Tx::BuyUnit { who, .. } => Some(who),
+        Tx::TransferAsset { from, .. } | Tx::TransferUnit { from, .. } => Some(from),
+    }
+}
+
+/// Nonce de una tx firmada (`None` para la coinbase).
+pub fn nonce_of_tx(tx: &Tx) -> Option<u64> {
+    match tx {
+        Tx::Coinbase { .. } => None,
+        Tx::Transfer { nonce, .. }
+        | Tx::Stake { nonce, .. }
+        | Tx::Unstake { nonce, .. }
+        | Tx::Commit { nonce, .. }
+        | Tx::Reveal { nonce, .. }
+        | Tx::ClaimParcel { nonce, .. }
+        | Tx::MintAsset { nonce, .. }
+        | Tx::TransferAsset { nonce, .. }
+        | Tx::ListLease { nonce, .. }
+        | Tx::Rent { nonce, .. }
+        | Tx::Harvest { nonce, .. }
+        | Tx::SellAsset { nonce, .. }
+        | Tx::BuyAsset { nonce, .. }
+        | Tx::SellParcel { nonce, .. }
+        | Tx::BuyParcel { nonce, .. }
+        | Tx::SetProfile { nonce, .. }
+        | Tx::DivideParcel { nonce, .. }
+        | Tx::TransferUnit { nonce, .. }
+        | Tx::SellUnit { nonce, .. }
+        | Tx::BuyUnit { nonce, .. } => Some(*nonce),
     }
 }
 
@@ -408,13 +514,23 @@ pub fn fee_of(tx: &Tx) -> Amount {
         | Tx::BuyAsset { fee, .. }
         | Tx::SellParcel { fee, .. }
         | Tx::BuyParcel { fee, .. }
-        | Tx::SetProfile { fee, .. } => *fee,
+        | Tx::SetProfile { fee, .. }
+        | Tx::DivideParcel { fee, .. }
+        | Tx::TransferUnit { fee, .. }
+        | Tx::SellUnit { fee, .. }
+        | Tx::BuyUnit { fee, .. } => *fee,
     }
 }
 
 /// ¿Es una transacción de la fase Dubái (solo válida desde la activación)?
 pub fn es_tx_dubai(tx: &Tx) -> bool {
     matches!(tx, Tx::SellAsset { .. } | Tx::BuyAsset { .. } | Tx::SellParcel { .. } | Tx::BuyParcel { .. } | Tx::SetProfile { .. })
+}
+
+/// ¿Es una transacción de la escritura de vivienda (solo válida desde su
+/// activación, que exige además Dubái)?
+pub fn es_tx_vivienda(tx: &Tx) -> bool {
+    matches!(tx, Tx::DivideParcel { .. } | Tx::TransferUnit { .. } | Tx::SellUnit { .. } | Tx::BuyUnit { .. })
 }
 
 /// Mensaje firmado (regla v1) = DS_TAG || cuerpo(sin firma).
@@ -459,8 +575,8 @@ pub fn regla_para(v2_desde: Option<u64>, timestamp: u64) -> Regla {
     }
 }
 
-/// Contexto de las reglas que rigen: la regla de firma, la red y si rigen ya
-/// las reglas de **Dubái** (`crate::ciudad`). Se pasa a `verify_tx_con`, a la
+/// Contexto de las reglas que rigen: la regla de firma, la red, si rigen ya
+/// las reglas de **Dubái** (`crate::ciudad`) y la escritura de vivienda. Se pasa a `verify_tx_con`, a la
 /// transición de estado y a las carteras para que produzcan/acepten
 /// exactamente lo que rige. (Conserva el nombre de la v0.8.0 para que nada de
 /// esa versión cambie de significado.)
@@ -472,30 +588,51 @@ pub struct FirmaCtx {
     /// ciudad, mercado). Lo decide el árbol por la fecha del bloque y no
     /// retrocede dentro de una rama, igual que la regla v2.
     pub dubai: bool,
+    /// Rige la escritura de vivienda (v0.11.0). Misma disciplina: lo decide el
+    /// árbol por la fecha del bloque y no retrocede dentro de una rama. Solo
+    /// tiene efecto con `dubai` (ver `vivienda_rige`).
+    pub vivienda: bool,
 }
 
 impl FirmaCtx {
     /// Regla v1 pura (la red no interviene en el mensaje), sin Dubái.
     pub fn v1() -> Self {
-        FirmaCtx { regla: Regla::V1, net: [0u8; 32], dubai: false }
+        FirmaCtx { regla: Regla::V1, net: [0u8; 32], dubai: false, vivienda: false }
     }
     /// Regla v2 sobre la red `net`, sin Dubái.
     pub fn v2(net: [u8; 32]) -> Self {
-        FirmaCtx { regla: Regla::V2, net, dubai: false }
+        FirmaCtx { regla: Regla::V2, net, dubai: false, vivienda: false }
     }
     /// Contexto para un instante dado, según la activación de los parámetros
     /// (firma v2 y Dubái, cada una con su fecha).
     pub fn para(v2_desde: Option<u64>, timestamp: u64, net: [u8; 32]) -> Self {
-        FirmaCtx { regla: regla_para(v2_desde, timestamp), net, dubai: false }
+        FirmaCtx { regla: regla_para(v2_desde, timestamp), net, dubai: false, vivienda: false }
     }
     /// El mismo contexto con las reglas de Dubái activadas o no.
     pub fn con_dubai(mut self, dubai: bool) -> Self {
         self.dubai = dubai;
         self
     }
+    /// El mismo contexto con la escritura de vivienda activada o no (solo
+    /// tiene efecto si rige Dubái: `vivienda_rige`).
+    pub fn con_vivienda(mut self, vivienda: bool) -> Self {
+        self.vivienda = vivienda;
+        self
+    }
     /// ¿Rigen las reglas de Dubái en `timestamp` dada su fecha de activación?
     pub fn dubai_para(dubai_desde: Option<u64>, timestamp: u64) -> bool {
         matches!(dubai_desde, Some(desde) if timestamp >= desde)
+    }
+    /// ¿Ha llegado en `timestamp` la fecha de la escritura de vivienda? (La
+    /// regla rige además solo donde rige Dubái; eso lo compone el árbol.)
+    pub fn vivienda_para(vivienda_desde: Option<u64>, timestamp: u64) -> bool {
+        matches!(vivienda_desde, Some(desde) if timestamp >= desde)
+    }
+    /// ¿Rige la escritura de vivienda? Implica Dubái: una red que active la
+    /// vivienda antes que Dubái (o sin Dubái) no la tiene hasta que llegue
+    /// Dubái. Todas las comprobaciones de consenso preguntan aquí, no al bit.
+    pub fn vivienda_rige(&self) -> bool {
+        self.dubai && self.vivienda
     }
     /// Lado de la cuadrícula que rige en este contexto.
     pub fn city_size(&self) -> u16 {
@@ -516,13 +653,17 @@ impl FirmaCtx {
             Regla::V2 => signing_message_v2(tx, &self.net),
         }
     }
-    /// Número de regla tal y como se anuncia por la red (`Status.rule`):
-    /// 1 firma v1, 2 firma v2, 3 firma v2 con las reglas de Dubái.
+    /// Número de la regla que rige (`ConsensoInfo.regla_vigente`): 1 firma
+    /// v1, 2 firma v2, 3 las reglas de Dubái (con los perfiles de la v0.10.0,
+    /// que llegaron con la misma fecha), 4 Dubái con la escritura de vivienda.
+    /// No es la escala de `Status.rule`, que anuncia la regla más alta que
+    /// ENTIENDE un binario (`rami_node::REGLA_SOPORTADA`).
     pub fn numero(&self) -> u32 {
-        match (self.regla, self.dubai) {
-            (Regla::V1, false) => 1,
-            (Regla::V2, false) => 2,
-            (_, true) => 3,
+        match (self.regla, self.dubai, self.vivienda_rige()) {
+            (_, _, true) => 4,
+            (_, true, false) => 3,
+            (Regla::V1, false, _) => 1,
+            (Regla::V2, false, _) => 2,
         }
     }
 }
@@ -665,6 +806,31 @@ pub fn verify_tx_con(tx: &Tx, ctx: &FirmaCtx) -> Result<(), String> {
         }
         Tx::BuyAsset { max_price, .. } if *max_price == 0 => {
             return Err("el precio máximo de compra debe ser mayor que cero".into());
+        }
+        // Escritura de vivienda: antes de su activación (o sin Dubái), ninguna
+        // de las cuatro vale. Después, la forma: parcela dentro de la ciudad,
+        // número de viviendas y de vivienda dentro del tope, precio máximo > 0.
+        Tx::DivideParcel { .. } | Tx::TransferUnit { .. } | Tx::SellUnit { .. } | Tx::BuyUnit { .. } if !ctx.vivienda_rige() => {
+            return Err("transacción de vivienda antes de su activación".into());
+        }
+        Tx::DivideParcel { x, y, unidades, .. } => {
+            if *x >= size || *y >= size {
+                return Err("parcela fuera de la ciudad".into());
+            }
+            if *unidades == 0 || *unidades > MAX_UNIDADES_POR_PARCELA {
+                return Err(format!("número de viviendas fuera de rango (de 1 a {MAX_UNIDADES_POR_PARCELA})"));
+            }
+        }
+        Tx::TransferUnit { x, y, n, .. } | Tx::SellUnit { x, y, n, .. } | Tx::BuyUnit { x, y, n, .. } => {
+            if *x >= size || *y >= size {
+                return Err("parcela fuera de la ciudad".into());
+            }
+            if *n == 0 || *n > MAX_UNIDADES_POR_PARCELA {
+                return Err(format!("número de vivienda fuera de rango (de 1 a {MAX_UNIDADES_POR_PARCELA})"));
+            }
+            if let Tx::BuyUnit { max_price: 0, .. } = tx {
+                return Err("el precio máximo de compra debe ser mayor que cero".into());
+            }
         }
         _ => {}
     }
@@ -822,6 +988,215 @@ mod tests {
         assert!(verify_tx_con(&claim2, &sin).is_err());
         // El mensaje firmado no depende del bit Dubái: la firma es la misma.
         assert_eq!(sin.mensaje(&venta), con.mensaje(&venta));
+    }
+
+    /// Una transacción de cada tipo que existía antes de la escritura de
+    /// vivienda (v0.11.0), con campos fijos y firmada con una clave fija
+    /// (Ed25519 es determinista): la misma lista en cualquier máquina.
+    fn una_de_cada_tipo_anterior() -> Vec<(&'static str, Tx)> {
+        let kp = KeyPair::from_secret(&[77u8; 32]);
+        let yo = kp.public_bytes();
+        let firma = |tx: Tx| -> Tx {
+            let sig = kp.sign(&signing_message(&tx));
+            let mut tx = tx;
+            match &mut tx {
+                Tx::Transfer { sig: s, .. }
+                | Tx::Stake { sig: s, .. }
+                | Tx::Unstake { sig: s, .. }
+                | Tx::Commit { sig: s, .. }
+                | Tx::Reveal { sig: s, .. }
+                | Tx::ClaimParcel { sig: s, .. }
+                | Tx::MintAsset { sig: s, .. }
+                | Tx::TransferAsset { sig: s, .. }
+                | Tx::ListLease { sig: s, .. }
+                | Tx::Rent { sig: s, .. }
+                | Tx::Harvest { sig: s, .. }
+                | Tx::SellAsset { sig: s, .. }
+                | Tx::BuyAsset { sig: s, .. }
+                | Tx::SellParcel { sig: s, .. }
+                | Tx::BuyParcel { sig: s, .. }
+                | Tx::SetProfile { sig: s, .. } => *s = sig,
+                _ => {}
+            }
+            tx
+        };
+        let otro = [0x5Au8; 32];
+        let activo = [0xA5u8; 32];
+        vec![
+            ("coinbase", Tx::Coinbase { height: 7, to: yo, reward: 40 * 100_000_000, memo: b"RAMI".to_vec() }),
+            ("transfer", firma(Tx::Transfer { from: yo, to: otro, amount: 3, fee: 1, nonce: 2, sig: [0u8; 64] })),
+            ("stake", firma(Tx::Stake { who: yo, amount: 5, fee: 1, nonce: 3, sig: [0u8; 64] })),
+            ("unstake", firma(Tx::Unstake { who: yo, amount: 4, fee: 1, nonce: 4, sig: [0u8; 64] })),
+            ("commit", firma(Tx::Commit { by: yo, commitment: [0x11u8; 32], fee: 1, nonce: 5, sig: [0u8; 64] })),
+            ("reveal", firma(Tx::Reveal { by: yo, commit_txid: [0x22u8; 32], payload: b"{\"a\":1}".to_vec(), secret: vec![9, 8, 7], fee: 1, nonce: 6, sig: [0u8; 64] })),
+            ("claim_parcel", firma(Tx::ClaimParcel { who: yo, x: 21, y: 45, name: b"Casa".to_vec(), kind: 7, fee: 1, nonce: 7, sig: [0u8; 64] })),
+            ("mint_asset", firma(Tx::MintAsset { who: yo, x: 21, y: 45, kind: 3, meta: b"Local".to_vec(), fee: 1, nonce: 8, sig: [0u8; 64] })),
+            ("transfer_asset", firma(Tx::TransferAsset { from: yo, asset: activo, to: otro, fee: 1, nonce: 9, sig: [0u8; 64] })),
+            ("list_lease", firma(Tx::ListLease { who: yo, asset: activo, price: 2, term: 100, fee: 1, nonce: 10, sig: [0u8; 64] })),
+            ("rent", firma(Tx::Rent { who: yo, asset: activo, fee: 1, nonce: 11, sig: [0u8; 64] })),
+            ("harvest", firma(Tx::Harvest { who: yo, x: 5, y: 7, total: 9, fee: 1, nonce: 12, sig: [0u8; 64] })),
+            ("sell_asset", firma(Tx::SellAsset { who: yo, asset: activo, price: 6, fee: 1, nonce: 13, sig: [0u8; 64] })),
+            ("buy_asset", firma(Tx::BuyAsset { who: yo, asset: activo, max_price: 6, fee: 1, nonce: 14, sig: [0u8; 64] })),
+            ("sell_parcel", firma(Tx::SellParcel { who: yo, x: 21, y: 45, price: 30, fee: 1, nonce: 15, sig: [0u8; 64] })),
+            ("buy_parcel", firma(Tx::BuyParcel { who: yo, x: 21, y: 45, max_price: 30, fee: 1, nonce: 16, sig: [0u8; 64] })),
+            (
+                "set_profile",
+                firma(Tx::SetProfile {
+                    who: yo, handle: b"rami".to_vec(), display: b"Rami".to_vec(), bio: b"hola".to_vec(), avatar: 3, color: 5,
+                    node_pk: [0u8; 32], node_sig: [0u8; 64], fee: 1, nonce: 17, sig: [0u8; 64],
+                }),
+            ),
+        ]
+    }
+
+    /// Huellas de la v0.10.16 (commit 44754ec), sacadas con este mismo código
+    /// ANTES de añadir las transacciones de vivienda: txid y SHA-256 del JSON
+    /// de cada tipo anterior. Si una codificación binaria o serde de un tipo
+    /// existente cambiara, el txid (o el JSON de `chain.jsonl`) de todas las
+    /// transacciones de ese tipo ya minadas cambiaría con ella.
+    const HUELLAS_V0_10_16: &[(&str, &str, &str)] = &[
+        ("coinbase", "4d5357c873daff7ddb3525f73cf8097aac239001728726e4f8f6bc4e084a10f7", "26a442c11f0c3512953f5ee49ef750ba995eca60ad0a47dd3996c584716bd0e9"),
+        ("transfer", "5e909d4efb1df40bb57574d1f5ecce10b3bced441d10385c0f8f811d6c53dbb2", "391f864a6f6697570f9bdd6b53a130a61b20d9a855ba8949843e0621e84391a4"),
+        ("stake", "8d7994cdda547ef2a01cb38547f981d8979879cb53ca7354118630506c128689", "6284e920ceb043ab89b691a674942d59c8598ef0a734c6694582bb99c7e7499b"),
+        ("unstake", "76d3d85588920d717d1c179b55b4ea84adeaf9c76e89f5c069ee85fd7288f861", "fa322006ae8959242101691dd32ca8bb4b8613b2293574c9091cb9d7f062afd7"),
+        ("commit", "5b12d3face98533dedc3ee487216f56ea8c5dd7fc16b78b7b7f663cac58a704c", "e1ec068672390570d0314aff31f86b80519809d97d4b9eba060abe9eefd2261c"),
+        ("reveal", "d2b83a65d80618abfa8f8197e0bd07d1a493d4d2078f46fbf35b414f41d099d0", "e4dc15524bc19efc1f55153bae4ad6688fb044932e9f08a98bccc833a94de495"),
+        ("claim_parcel", "a106ece66567cefa885de1bd1990b9ddc2e0b31a38ff1b421cf5bb081fc28442", "4ba3bfad934d7022ab9580251f212da9556c2fb98b4c9e87dcfad0a037124614"),
+        ("mint_asset", "b72735be071cec9adfa6cb4e496918a82fca11271cff1205308d1b7a817f4fc5", "88e8bcfae321bf9b99fb250241f8ef777bdccfd50e34b909079c46405243afaa"),
+        ("transfer_asset", "e94d0b120828a651e2598848ffb9190b8f5871f75ccb5ed4b804db54d74aba8c", "f8bca6e1aaa4e29f137a1d735a1674f7aaa5fe9a0692fd2e65ac1101b3cb4cf4"),
+        ("list_lease", "415e49adca9032af09c915d0974eecf158cc8c7ce03d6603a55c60598cf28c85", "be9a593b086b4076f2f95ee6ae108d101744daf30a9bd63c7ab876236beb1a70"),
+        ("rent", "bef4385a9a0d634dfffe24c5dc07fec72faa71da7d85e832ad2e2a7590177467", "29c0e3c9169e80d8e12b0b2c2bea133ec4977742190f8e3680835c0a8bb9599b"),
+        ("harvest", "f315fd9bb4e2f979dc2bda8a643c55a4aaff69a79a1cdb00a832d786dc5dc882", "545ddc73d4690e13d331e89b91ce2975afa63c262e6699acbdf1b4c426436715"),
+        ("sell_asset", "d00438302bc19a9857a529ffc2e34bbec146948096edd39e8458d4b2bb938474", "1e20da92a1788461967ba5edf871ae2632434b5f9d533b24ca963a98511a541e"),
+        ("buy_asset", "b407079678e996c8081da9d0ce67e3404e5069244f211ae473a2605c1545ca97", "dc53c049e1e8a1ca0e4d7b6a3aacf48129a07f5e94e8987e436d4f13e7093ef2"),
+        ("sell_parcel", "3e1d6224e10e6099ab4c852175a496b810c9b288dd33aa4d88450c91b3ac8c03", "f2456fcabe39b9091cd27fd3ae81850a3e1cc4171c852ca3598fec227546ede1"),
+        ("buy_parcel", "bc66ed93f4010c2160cb50296955dc5f24087a955f7ca9b3b579184dd04e1638", "6ae270f41d6e0a9f2c28c90336fc2068eeffc56a35619e164d692f6699b9e6a7"),
+        ("set_profile", "daff3a3e3fc093a459933c025b4c35d8e63d95eaac7f79948d4874595f0623b2", "bc93e06b3391cb97e9cc6de17ceae3d192802aeb741cb550e9f8dd4b2a1e6f77"),
+    ];
+
+    #[test]
+    fn ninguna_codificacion_ni_txid_anterior_cambia() {
+        let lista = una_de_cada_tipo_anterior();
+        let mut calculadas = Vec::new();
+        for (nombre, tx) in &lista {
+            let id = hex::encode(txid(tx));
+            let json = serde_json::to_string(tx).unwrap();
+            let j = hex::encode(Sha256::digest(json.as_bytes()));
+            calculadas.push((*nombre, id, j));
+        }
+        assert_eq!(calculadas.len(), HUELLAS_V0_10_16.len(), "un tipo por huella");
+        for ((n, id, j), (n0, id0, j0)) in calculadas.iter().zip(HUELLAS_V0_10_16) {
+            assert_eq!(n, n0);
+            assert_eq!(id, id0, "el txid de «{n}» cambió");
+            assert_eq!(j, j0, "el JSON de «{n}» cambió");
+        }
+    }
+
+    fn firmada(kp: &KeyPair, ctx: &FirmaCtx, mut tx: Tx) -> Tx {
+        let sig = kp.sign(&ctx.mensaje(&tx));
+        match &mut tx {
+            Tx::DivideParcel { sig: s, .. } | Tx::TransferUnit { sig: s, .. } | Tx::SellUnit { sig: s, .. } | Tx::BuyUnit { sig: s, .. } => *s = sig,
+            _ => panic!("solo transacciones de vivienda"),
+        }
+        tx
+    }
+
+    fn las_cuatro_de_vivienda(kp: &KeyPair) -> Vec<Tx> {
+        let yo = kp.public_bytes();
+        vec![
+            Tx::DivideParcel { who: yo, x: 21, y: 45, unidades: 8, fee: 1, nonce: 0, sig: [0u8; 64] },
+            Tx::TransferUnit { from: yo, x: 21, y: 45, n: 3, to: [0x5Au8; 32], fee: 1, nonce: 1, sig: [0u8; 64] },
+            Tx::SellUnit { who: yo, x: 21, y: 45, n: 4, price: 7, fee: 1, nonce: 2, sig: [0u8; 64] },
+            Tx::BuyUnit { who: yo, x: 21, y: 45, n: 5, max_price: 7, fee: 1, nonce: 3, sig: [0u8; 64] },
+        ]
+    }
+
+    /// La escritura de vivienda solo vale con su regla Y con Dubái; el número
+    /// de regla vigente pasa a 4; la firma no cambia con el bit.
+    #[test]
+    fn las_tx_de_vivienda_solo_valen_con_su_regla_y_con_dubai() {
+        let kp = KeyPair::from_secret(&[23u8; 32]);
+        let net = [4u8; 32];
+        let dubai = FirmaCtx::v2(net).con_dubai(true);
+        let sin_dubai = FirmaCtx::v2(net).con_vivienda(true);
+        let con = FirmaCtx::v2(net).con_dubai(true).con_vivienda(true);
+        assert!(!sin_dubai.vivienda_rige(), "vivienda implica Dubái");
+        assert!(con.vivienda_rige());
+        assert_eq!((dubai.numero(), sin_dubai.numero(), con.numero()), (3, 2, 4));
+        assert_eq!(FirmaCtx::v1().con_vivienda(true).numero(), 1);
+        assert!(FirmaCtx::vivienda_para(Some(100), 100) && !FirmaCtx::vivienda_para(Some(100), 99) && !FirmaCtx::vivienda_para(None, u64::MAX));
+        for tx in las_cuatro_de_vivienda(&kp) {
+            let tx = firmada(&kp, &con, tx);
+            assert!(es_tx_vivienda(&tx) && !es_tx_dubai(&tx));
+            assert!(verify_tx_con(&tx, &con).is_ok(), "{tx:?}");
+            for ctx in [dubai, sin_dubai, FirmaCtx::v2(net), FirmaCtx::v1()] {
+                let err = verify_tx_con(&tx, &ctx).unwrap_err();
+                assert!(err.contains("vivienda antes de su activación"), "motivo: {err}");
+            }
+            // El mensaje firmado no depende de los bits de Dubái ni de vivienda.
+            assert_eq!(dubai.mensaje(&tx), con.mensaje(&tx));
+            assert_eq!(signer_of(&tx), Some(&kp.public_bytes()));
+            assert_eq!(fee_of(&tx), 1);
+        }
+        // Forma: fuera de la ciudad, número de vivienda 0 o 65, precio máximo 0.
+        let yo = kp.public_bytes();
+        let malas = [
+            (Tx::DivideParcel { who: yo, x: 64, y: 1, unidades: 2, fee: 1, nonce: 0, sig: [0u8; 64] }, "fuera de la ciudad"),
+            (Tx::TransferUnit { from: yo, x: 1, y: 1, n: 0, to: [1u8; 32], fee: 1, nonce: 0, sig: [0u8; 64] }, "fuera de rango"),
+            (Tx::SellUnit { who: yo, x: 1, y: 1, n: 65, price: 1, fee: 1, nonce: 0, sig: [0u8; 64] }, "fuera de rango"),
+            (Tx::BuyUnit { who: yo, x: 1, y: 1, n: 1, max_price: 0, fee: 1, nonce: 0, sig: [0u8; 64] }, "mayor que cero"),
+        ];
+        for (tx, motivo) in malas {
+            let err = verify_tx_con(&firmada(&kp, &con, tx), &con).unwrap_err();
+            assert!(err.contains(motivo), "motivo: {err}");
+        }
+        // Una firma manipulada no pasa.
+        let mut tx = firmada(&kp, &con, las_cuatro_de_vivienda(&kp).remove(2));
+        if let Tx::SellUnit { price, .. } = &mut tx {
+            *price = 8;
+        }
+        assert!(verify_tx_con(&tx, &con).is_err());
+    }
+
+    /// Codificación de ida y vuelta: etiqueta nueva y propia en el primer byte,
+    /// longitud fija, JSON que vuelve idéntico, txid distinto por tipo, y el
+    /// cuerpo cambia si cambia cualquier campo.
+    #[test]
+    fn codificacion_de_vivienda_de_ida_y_vuelta() {
+        let kp = KeyPair::from_secret(&[24u8; 32]);
+        let con = FirmaCtx::v2([4u8; 32]).con_dubai(true).con_vivienda(true);
+        let txs: Vec<Tx> = las_cuatro_de_vivienda(&kp).into_iter().map(|t| firmada(&kp, &con, t)).collect();
+        // Etiqueta + campos: 1 + 32 + 8·(x, y, n|unidades) + [32 destino | 8 precio] + 8·(fee, nonce).
+        let esperadas = [(0x40u8, 1 + 32 + 24 + 16), (0x41, 1 + 32 + 24 + 32 + 16), (0x42, 1 + 32 + 24 + 8 + 16), (0x43, 1 + 32 + 24 + 8 + 16)];
+        let mut ids = std::collections::HashSet::new();
+        for (tx, (tag, len)) in txs.iter().zip(esperadas) {
+            let body = encode_body(tx);
+            assert_eq!(body[0], tag);
+            assert_eq!(body.len(), len, "{tx:?}");
+            assert_eq!(tx_size(tx), len + 64);
+            let json = serde_json::to_string(tx).unwrap();
+            let vuelta: Tx = serde_json::from_str(&json).unwrap();
+            assert_eq!(&vuelta, tx);
+            assert_eq!(encode_body(&vuelta), body);
+            assert!(ids.insert(txid(tx)));
+        }
+        // Ninguna etiqueta nueva coincide con una anterior.
+        for (_, tx) in una_de_cada_tipo_anterior() {
+            assert!(encode_body(&tx)[0] < 0x40);
+        }
+        // Cada campo entra en el cuerpo (no hay dos transacciones distintas con el mismo txid sin firma).
+        let base = Tx::TransferUnit { from: kp.public_bytes(), x: 21, y: 45, n: 3, to: [0x5Au8; 32], fee: 1, nonce: 1, sig: [0u8; 64] };
+        let variantes = [
+            Tx::TransferUnit { from: kp.public_bytes(), x: 22, y: 45, n: 3, to: [0x5Au8; 32], fee: 1, nonce: 1, sig: [0u8; 64] },
+            Tx::TransferUnit { from: kp.public_bytes(), x: 21, y: 46, n: 3, to: [0x5Au8; 32], fee: 1, nonce: 1, sig: [0u8; 64] },
+            Tx::TransferUnit { from: kp.public_bytes(), x: 21, y: 45, n: 4, to: [0x5Au8; 32], fee: 1, nonce: 1, sig: [0u8; 64] },
+            Tx::TransferUnit { from: kp.public_bytes(), x: 21, y: 45, n: 3, to: [0x5Bu8; 32], fee: 1, nonce: 1, sig: [0u8; 64] },
+            Tx::TransferUnit { from: kp.public_bytes(), x: 21, y: 45, n: 3, to: [0x5Au8; 32], fee: 2, nonce: 1, sig: [0u8; 64] },
+            Tx::TransferUnit { from: kp.public_bytes(), x: 21, y: 45, n: 3, to: [0x5Au8; 32], fee: 1, nonce: 2, sig: [0u8; 64] },
+        ];
+        for v in variantes {
+            assert_ne!(encode_body(&v), encode_body(&base));
+        }
     }
 
     #[test]

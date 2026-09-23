@@ -29,10 +29,10 @@ use rami_core::tx::{txid, FirmaCtx, Tx};
 use rami_node::{spawn, NodeConfig, NodeHandle};
 use rami_wallet::calibracion;
 use rami_wallet::{
-    build_buy_asset, build_buy_parcel, build_claim_parcel, build_commit, build_harvest, build_list_lease,
-    build_mint_asset, build_rent, build_reveal, build_sell_asset, build_sell_parcel, build_set_profile, build_stake,
-    build_transfer, build_transfer_asset, default_keystore_path, fmt_ram, load_reveal, parse_pubkey, parse_ram, save_reveal,
-    Keystore,
+    build_buy_asset, build_buy_parcel, build_buy_unit, build_claim_parcel, build_commit, build_divide_parcel, build_harvest,
+    build_list_lease, build_mint_asset, build_rent, build_reveal, build_sell_asset, build_sell_parcel, build_sell_unit,
+    build_set_profile, build_stake, build_transfer, build_transfer_asset, build_transfer_unit, default_keystore_path, fmt_ram,
+    load_reveal, parse_pubkey, parse_ram, save_reveal, Keystore,
 };
 
 use http::{Request, Response};
@@ -45,6 +45,13 @@ const I18N_JS: &str = include_str!("i18n.js");
 /// binario: el panel no necesita internet para renderizar, ni para las gafas VR).
 const THREE_JS: &[u8] = include_bytes!("vendor/three.min.js");
 const CITY3D_JS: &str = include_str!("city3d.js");
+/// Módulos del cliente 3D (v0.11.0): cada uno se registra con
+/// `RamiCity3D.extend` antes de montar el visor (docs/EXTENSIONES-3D.md).
+const CITY_UMBRAL_JS: &str = include_str!("city/umbral.js");
+const CITY_VIDA_JS: &str = include_str!("city/vida.js");
+const CITY_ESPEJISMO_JS: &str = include_str!("city/espejismo.js");
+const CITY_EXTRAS_JS: &str = include_str!("city/extras.js");
+const CITY_MEMORIA_JS: &str = include_str!("city/memoria.js");
 /// Terreno de Dubái (datos abiertos: Mapzen/AWS Terrain Tiles + islas
 /// artificiales dibujadas a mano; ver tools/geo/README.md). Mapa de alturas
 /// PNG de 16 bits + metadatos (hitos, barrios, carreteras, cuadrícula).
@@ -281,10 +288,26 @@ fn query_u16(req: &Request, key: &str) -> Result<u16, String> {
     Ok(v as u16)
 }
 
+/// Número de vivienda (1..=64) o de viviendas en que se divide. La cota
+/// exacta (cuántas tiene la parcela) la pone el nodo al admitir la tx; aquí
+/// solo se acota la forma.
+fn unidad_num(b: &Value, key: &str) -> Result<u16, String> {
+    let v = b.get(key).and_then(|v| v.as_u64()).ok_or_else(|| format!("falta {key}"))?;
+    if v == 0 || v > rami_core::tx::MAX_UNIDADES_POR_PARCELA as u64 {
+        return Err(format!("{key} fuera de rango (de 1 a {})", rami_core::tx::MAX_UNIDADES_POR_PARCELA));
+    }
+    Ok(v as u16)
+}
+
 fn asset_id(b: &Value) -> Result<[u8; 32], String> {
     let s = b.get("asset").and_then(|v| v.as_str()).unwrap_or("").trim();
     let v = hex::decode(s).map_err(|_| "id de activo no es hex".to_string())?;
     v.try_into().map_err(|_| "id de activo inválido".to_string())
+}
+
+/// Un módulo JavaScript empotrado en el binario.
+fn js_response(body: &str) -> Response {
+    Response { status: 200, content_type: "application/javascript; charset=utf-8".into(), body: body.as_bytes().to_vec() }
 }
 
 fn str_field<'a>(b: &'a Value, key: &str) -> &'a str {
@@ -334,6 +357,11 @@ fn route(g: &Gui, req: Request) -> Response {
             content_type: "application/javascript; charset=utf-8".into(),
             body: CITY3D_JS.as_bytes().to_vec(),
         },
+        ("GET", "/city/umbral.js") => js_response(CITY_UMBRAL_JS),
+        ("GET", "/city/vida.js") => js_response(CITY_VIDA_JS),
+        ("GET", "/city/espejismo.js") => js_response(CITY_ESPEJISMO_JS),
+        ("GET", "/city/extras.js") => js_response(CITY_EXTRAS_JS),
+        ("GET", "/city/memoria.js") => js_response(CITY_MEMORIA_JS),
         ("GET", "/geo/dubai.hgt.png") => Response { status: 200, content_type: "image/png".into(), body: GEO_HGT.to_vec() },
         ("GET", "/tex/asfalto.png") => Response { status: 200, content_type: "image/png".into(), body: TEX_ASFALTO.to_vec() },
         ("GET", "/tex/hormigon.png") => Response { status: 200, content_type: "image/png".into(), body: TEX_HORMIGON.to_vec() },
@@ -820,6 +848,40 @@ fn route(g: &Gui, req: Request) -> Response {
             let max_price = match parse_ram(str_field(&b, "max_price")) { Ok(a) => a, Err(e) => return err(e) };
             let fee = fee_of(&b);
             signed_submit(g, move |firma, kp, nonce| build_buy_asset(firma, kp, asset, max_price, fee, nonce))
+        }
+        // Escritura de vivienda (v0.11.0): mismas defensas y mismo camino que
+        // /api/city/sell y /api/city/buy_asset (host, origen, JSON, token,
+        // forma aquí; las reglas, en el nodo al admitir la tx).
+        ("POST", "/api/city/divide") => {
+            let b = body_json(&req);
+            let (x, y) = match (coord(&b, "x"), coord(&b, "y")) { (Ok(x), Ok(y)) => (x, y), (Err(e), _) | (_, Err(e)) => return err(e) };
+            let unidades = match unidad_num(&b, "unidades") { Ok(n) => n, Err(e) => return err(e) };
+            let fee = fee_of(&b);
+            signed_submit(g, move |firma, kp, nonce| build_divide_parcel(firma, kp, x, y, unidades, fee, nonce))
+        }
+        ("POST", "/api/city/unit_transfer") => {
+            let b = body_json(&req);
+            let (x, y) = match (coord(&b, "x"), coord(&b, "y")) { (Ok(x), Ok(y)) => (x, y), (Err(e), _) | (_, Err(e)) => return err(e) };
+            let n = match unidad_num(&b, "n") { Ok(n) => n, Err(e) => return err(e) };
+            let to = match parse_pubkey(str_field(&b, "to")) { Ok(a) => a, Err(e) => return err(e) };
+            let fee = fee_of(&b);
+            signed_submit(g, move |firma, kp, nonce| build_transfer_unit(firma, kp, x, y, n, to, fee, nonce))
+        }
+        ("POST", "/api/city/unit_sell") => {
+            let b = body_json(&req);
+            let (x, y) = match (coord(&b, "x"), coord(&b, "y")) { (Ok(x), Ok(y)) => (x, y), (Err(e), _) | (_, Err(e)) => return err(e) };
+            let n = match unidad_num(&b, "n") { Ok(n) => n, Err(e) => return err(e) };
+            let price = match parse_ram(str_field(&b, "price")) { Ok(a) => a, Err(e) => return err(e) };
+            let fee = fee_of(&b);
+            signed_submit(g, move |firma, kp, nonce| build_sell_unit(firma, kp, x, y, n, price, fee, nonce))
+        }
+        ("POST", "/api/city/unit_buy") => {
+            let b = body_json(&req);
+            let (x, y) = match (coord(&b, "x"), coord(&b, "y")) { (Ok(x), Ok(y)) => (x, y), (Err(e), _) | (_, Err(e)) => return err(e) };
+            let n = match unidad_num(&b, "n") { Ok(n) => n, Err(e) => return err(e) };
+            let max_price = match parse_ram(str_field(&b, "max_price")) { Ok(a) => a, Err(e) => return err(e) };
+            let fee = fee_of(&b);
+            signed_submit(g, move |firma, kp, nonce| build_buy_unit(firma, kp, x, y, n, max_price, fee, nonce))
         }
         ("POST", "/api/city/claim") => {
             let b = body_json(&req);
@@ -1450,10 +1512,12 @@ fn real_main(args: Vec<String>) -> ExitCode {
     let params = if is_testnet {
         Params::testnet()
     } else {
-        // Regtest: activación de la regla de firma v2 y de Dubái solo si se fuerza (pruebas).
+        // Regtest: activación de la regla de firma v2, de Dubái y de la escritura
+        // de vivienda solo si se fuerza (pruebas).
         Params::regtest()
             .con_firma_v2_desde(arg(&args, "--firma-v2-desde").and_then(|s| s.parse::<u64>().ok()))
             .con_dubai_desde(arg(&args, "--dubai-desde").and_then(|s| s.parse::<u64>().ok()))
+            .con_vivienda_desde(arg(&args, "--vivienda-desde").and_then(|s| s.parse::<u64>().ok()))
     };
     let net_name = if is_testnet { "testnet" } else { "regtest" };
 

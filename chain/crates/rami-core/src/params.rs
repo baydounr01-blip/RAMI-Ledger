@@ -1,5 +1,6 @@
 //! Parámetros de red. Fijan la dificultad de génesis, el suelo de dificultad y
-//! la FECHA de activación de la regla de firma v2 (firma ligada a la red).
+//! las FECHAS de activación de los cambios de consenso: la regla de firma v2
+//! (firma ligada a la red), Dubái y la escritura de vivienda.
 //! `testnet()` usa la calibración real (≈1 CPU a 1e6 H/s => 60 s/bloque). `regtest()`
 //! usa dificultad 1 (todo hash pasa) para pruebas deterministas e instantáneas.
 
@@ -22,6 +23,15 @@ pub const FIRMA_V2_DESDE_TESTNET: u64 = 1_792_454_400;
 /// aplique (ver docs/DUBAI.md).
 pub const DUBAI_DESDE_TESTNET: u64 = 1_796_083_200;
 
+/// Activación de la **escritura de vivienda** (v0.11.0) en la testnet:
+/// 2027-03-01 00:00:00 UTC. Desde esa fecha (y sin vuelta atrás dentro de una
+/// rama) una parcela se puede dividir en viviendas que se transfieren, se
+/// venden y se compran sueltas, y el dueño de una vivienda acuña activos en
+/// su parcela. Solo rige donde rige Dubái. Tercer cambio de consenso: los
+/// nodos que no actualicen se quedan en el primer bloque con una transacción
+/// de vivienda (ver docs/VIVIENDA.md).
+pub const VIVIENDA_DESDE_TESTNET: u64 = 1_803_859_200;
+
 #[derive(Clone, Copy, Debug)]
 pub struct Params {
     pub genesis_bits: u32,
@@ -32,6 +42,9 @@ pub struct Params {
     /// Fecha (Unix) desde la que rigen las reglas de Dubái (`crate::ciudad`);
     /// `None` = nunca (regtest por defecto).
     pub dubai_desde: Option<u64>,
+    /// Fecha (Unix) desde la que rige la escritura de vivienda; `None` =
+    /// nunca (regtest por defecto). Solo tiene efecto donde rige Dubái.
+    pub vivienda_desde: Option<u64>,
 }
 
 impl Params {
@@ -45,6 +58,7 @@ impl Params {
             min_difficulty: TESTNET_MIN_DIFFICULTY,
             firma_v2_desde: Some(FIRMA_V2_DESDE_TESTNET),
             dubai_desde: Some(DUBAI_DESDE_TESTNET),
+            vivienda_desde: Some(VIVIENDA_DESDE_TESTNET),
         }
     }
 
@@ -54,7 +68,7 @@ impl Params {
     /// valiendo tal cual.
     pub fn regtest() -> Self {
         let bits = bits_from_target(&target_from_difficulty(1));
-        Params { genesis_bits: bits, min_difficulty: 1, firma_v2_desde: None, dubai_desde: None }
+        Params { genesis_bits: bits, min_difficulty: 1, firma_v2_desde: None, dubai_desde: None, vivienda_desde: None }
     }
 
     /// Mismos parámetros con otra fecha de activación (pruebas y regtest).
@@ -67,5 +81,37 @@ impl Params {
     pub fn con_dubai_desde(mut self, desde: Option<u64>) -> Self {
         self.dubai_desde = desde;
         self
+    }
+
+    /// Mismos parámetros con otra fecha de activación de la escritura de
+    /// vivienda (pruebas y regtest). Sin Dubái no tiene efecto.
+    pub fn con_vivienda_desde(mut self, desde: Option<u64>) -> Self {
+        self.vivienda_desde = desde;
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Las tres fechas de la testnet, fijadas contra su calendario: un error
+    /// de un día aquí adelanta o retrasa un cambio de consenso entero.
+    #[test]
+    fn fechas_de_activacion_de_la_testnet() {
+        // 2026-10-20, 2026-12-01 y 2027-03-01 a las 00:00:00 UTC.
+        assert_eq!(FIRMA_V2_DESDE_TESTNET, 1_792_454_400);
+        assert_eq!(DUBAI_DESDE_TESTNET, 1_796_083_200);
+        assert_eq!(VIVIENDA_DESDE_TESTNET, 1_803_859_200);
+        // Del 1 de diciembre de 2026 al 1 de marzo de 2027 hay 31 + 31 + 28
+        // días (2027 no es bisiesto).
+        assert_eq!(VIVIENDA_DESDE_TESTNET - DUBAI_DESDE_TESTNET, (31 + 31 + 28) * 86_400);
+        assert_eq!(VIVIENDA_DESDE_TESTNET % 86_400, 0, "a medianoche UTC");
+        let t = Params::testnet();
+        assert_eq!(t.vivienda_desde, Some(VIVIENDA_DESDE_TESTNET));
+        assert!(t.vivienda_desde > t.dubai_desde, "la vivienda llega después de Dubái");
+        let r = Params::regtest();
+        assert_eq!(r.vivienda_desde, None, "regtest: nunca, salvo que se pida");
+        assert_eq!(r.con_vivienda_desde(Some(5)).vivienda_desde, Some(5));
     }
 }

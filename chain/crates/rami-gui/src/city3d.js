@@ -1855,6 +1855,23 @@
     this.items[i].x = x; this.items[i].y = y; this.items[i].z = z;
   };
 
+  // ---- Extensiones (v0.11.0) -----------------------------------------------------
+  // El cliente creció hasta ser un solo fichero de casi cinco mil líneas. Desde la
+  // v0.11.0 las piezas nuevas del metaverso —el umbral y los interiores, la vida
+  // de la calle, el acabado de imagen, el sonido y los extras— van en módulos
+  // aparte (`/city/*.js`) que se registran aquí ANTES de montar el visor. Cada
+  // módulo es una fábrica `function (ctx) { return { gancho: fn, … } }`: recibe
+  // el contexto del visor (escena, cámara, estado, ayudantes del genotipo…) y
+  // devuelve los ganchos que quiere oír. El contrato está en
+  // docs/EXTENSIONES-3D.md. Un módulo que falla no tumba el visor: su gancho se
+  // salta y el error se anota una vez en la consola.
+  var EXTENSIONES = [];
+  function extend(nombre, fabrica) {
+    if (typeof nombre !== 'string' || !nombre || typeof fabrica !== 'function') throw new Error('RamiCity3D.extend(nombre, fabrica)');
+    for (var i = 0; i < EXTENSIONES.length; i++) if (EXTENSIONES[i].nombre === nombre) { EXTENSIONES[i].fabrica = fabrica; return; }
+    EXTENSIONES.push({ nombre: nombre, fabrica: fabrica });
+  }
+
   // ---------------------------------------------------------------------
   // 4. MONTAJE: mundo, cámaras, VR, bucle y API pública
   // ---------------------------------------------------------------------
@@ -2338,6 +2355,7 @@
       C.ownerLabels.set(signItems.slice(0, 300));
       S.counts = cnt;
       refreshSelection();
+      emitir('ciudad', d);
     }
 
     // --- Catastro de sólidos ------------------------------------------------------
@@ -2841,6 +2859,10 @@
         pos.x += ax * (rr - ad); pos.z += az * (rr - ad);
         tocado = 'avatar';
       }
+      // Lo que se mueve y no es coche ni avatar (los peatones de la v0.11.0) lo
+      // empuja su módulo.
+      var otro = emitirValor('empujar', pos, r);
+      if (otro) tocado = otro;
       return tocado;
     }
     /** Por vía y sentido, cuánto hueco lleva cada coche hasta el de delante (metros por la vía). */
@@ -3186,7 +3208,7 @@
       if (pointers[e.pointerId]) { delete pointers[e.pointerId]; nPointers--; }
       if (drag && nPointers === 0) {
         var isClick = drag.moved < 6 && (performance.now() - drag.t0) < 400 && drag.button === 0 && drag.mode !== 'pinch';
-        if (isClick) { var c = pick(e.clientX, e.clientY); doSelect(c, true); }
+        if (isClick) { var c = pick(e.clientX, e.clientY); if (!emitirHasta('clic', infoClic(e.clientX, e.clientY, c))) doSelect(c, true); }
         drag = null; canvas.style.cursor = S.hover ? 'pointer' : (S.mode === 'walk' ? 'crosshair' : 'grab');
       } else if (drag && drag.mode === 'pinch' && nPointers === 1) {
         var l = pointerList(); drag = { mode: 'rotate', x0: l[0].x, y0: l[0].y, t0: 0, moved: 99, button: -1 };
@@ -3209,6 +3231,7 @@
     L.keydown = function (e) {
       if (typeof e.key !== 'string') return;
       var k = e.key.toLowerCase();
+      if (emitirHasta('tecla', k, e, true)) { e.preventDefault(); return; }
       if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd', 'q', 'e', 'shift', '+', '-', 'escape'].indexOf(k) < 0) return;
       if (k === 'escape') { doSelect(null, true); return; }
       if (k === '+') { if (S.mode === 'orbit') zoomBy(0.8); else walk.speed = Math.min(40, walk.speed * 1.5); }
@@ -3216,7 +3239,7 @@
       else keys[k] = true;
       cancelFlight(); e.preventDefault();
     };
-    L.keyup = function (e) { if (typeof e.key === 'string') delete keys[e.key.toLowerCase()]; };
+    L.keyup = function (e) { if (typeof e.key === 'string') { var ku = e.key.toLowerCase(); delete keys[ku]; emitir('tecla', ku, e, false); } };
     L.blur = function () { keys = {}; };
     L.visibility = function () { S.docHidden = !!document.hidden; syncLoop(); };
     L.resize = function () { resize(); };
@@ -3348,6 +3371,7 @@
         dropUniform.value = 0;
         S.mode = 'orbit'; canvas.style.cursor = 'grab';
       }
+      emitir('modo', S.mode);
       onMode(S.mode);
     }
     /** Pose del visitante en coordenadas locales de la cuadrícula (m enteros; z = altura en dm; yaw en grados desde el norte local, horario). */
@@ -3418,6 +3442,7 @@
       scene.fog.color.copy(fogC); scene.background = fogC;
       // Reflejos: el cielo actual al mapa cúbico (solo el cielo; 6 caras de 128 px).
       envCam.update(renderer, skyScene);
+      emitir('sol', { dir: sunDir, luz: lightDir, noche: night, ocaso: dusk, hora: h, colorSol: sunC, cielo: hemiSky, niebla: fogC });
     }
     function setTimeOfDay(h) { S.hour = (h === null || h === undefined || isNaN(h)) ? null : clamp(Number(h), 0, 24); updateSun(); }
 
@@ -3431,6 +3456,7 @@
       if (S.ready) { buildTraffic(Q.traffic); buildPalms(); buildClusters(); }
       scene.traverse(function (o) { if (o.material && o.material.needsUpdate !== undefined) o.material.needsUpdate = true; });
       buildMat.needsUpdate = true; plainMat.needsUpdate = true; terrainMat.needsUpdate = true;
+      emitir('calidad', name, Q);
       resize();
       return true;
     }
@@ -3501,6 +3527,7 @@
       if (S.ghosts && S.ghosts.length) setGhosts(S.ghosts);
       refreshSelection();
       rebuildAvatarLabels();
+      emitir('listo');
       resize();
       if (pendingFlight) { var pf = pendingFlight; pendingFlight = null; pf.fn.apply(null, pf.args); }
     }
@@ -4304,6 +4331,10 @@
       camera.updateMatrixWorld();
     }
     function updateWalk(dt) {
+      // Un módulo que lleva al jugador (dentro de un edificio, en un ascensor)
+      // mueve walk.pos —incluida la altura de los pies, walk.pos.y— con su propia
+      // colisión, y el visor solo coloca la cámara.
+      if (emitirHasta('andar', dt)) return colocaCamaraAPie();
       var sp = 6 * walk.speed * (keys.shift ? 5 : 1) * dt, mx = 0, mz = 0;
       if (keys.w || keys.arrowup) mz -= 1; if (keys.s || keys.arrowdown) mz += 1;
       if (keys.a || keys.arrowleft) mx -= 1; if (keys.d || keys.arrowright) mx += 1;
@@ -4325,6 +4356,9 @@
       if (walk.fly < 2) { walk.choqueMovil = empujarDeMoviles(walk.pos, 0.42); if (walk.choqueMovil) empujarFuera(walk.pos, 0.42); }
       else walk.choqueMovil = null;
       walk.pos.y = groundH(walk.pos.x, walk.pos.z);
+      colocaCamaraAPie();
+    }
+    function colocaCamaraAPie() {
       // La capa de parcelas baja hasta rozar el suelo mientras se anda (si no,
       // flotaría a la altura de los ojos y taparía la calle).
       dropUniform.value = walk.fly < 20 ? LIFT - 0.12 : 0;
@@ -4345,6 +4379,7 @@
       S.towns.cull(camera, _cp, W, H, labelRects);
       C.saleLabels.cull(camera, _cp, W, H, labelRects);
       C.ownerLabels.cull(camera, _cp, W, H, labelRects);
+      for (var ie = 0; ie < extEtiquetas.length; ie++) extEtiquetas[ie].cull(camera, _cp, W, H, labelRects);
     }
     var lastSun = 0;
     function updateShadowFrame() {
@@ -4376,10 +4411,15 @@
         S.lod = far ? 1 : 0; lodUniform.value = S.lod;
         S.fine.mesh.visible = !far; S.coarse.mesh.visible = far;
         updateTraffic(dt); updateAvatars(dt); updateShadowFrame();
+        emitir('cuadro', dt, now);
         cullLabels();
         if (pointerDirty) { pointerDirty = false; setHover(pointerPos && !drag ? pick(pointerPos.x, pointerPos.y) : null); }
       }
-      renderer.render(scene, camera);
+      // Un módulo puede dibujar el cuadro él mismo (el acabado de imagen pinta la
+      // escena en un destino intermedio y la compone); si ninguno lo hace, se
+      // dibuja como siempre.
+      if (!(S.ready && emitirHasta('pintar', now))) renderer.render(scene, camera);
+      if (S.ready) emitir('trasPintar', now);
       S.frame++;
       if (S.bench) benchFrame(now);
       syncLoop();
@@ -4480,6 +4520,7 @@
       renderer.setSize(w, h, false);
       camera.aspect = w / h; camera.updateProjectionMatrix();
       viewportUniform.value.set(w, h);
+      emitir('tamano', w, h);
     }
     resize();
     syncLoop();
@@ -4511,6 +4552,7 @@
       if (xr.saved) { camera.near = xr.saved.near; camera.far = xr.saved.far; camera.updateProjectionMatrix(); xr.saved = null; }
       S.xr = false;
       if (S.mode !== 'walk') { S.mode = 'walk'; onMode('walk'); }
+      emitir('vr', false);
       syncLoop();
     }
     var _hq = new THREE.Quaternion(), _hv = new THREE.Vector3(), _co = new THREE.Vector3(), _cd = new THREE.Vector3(), _teleHit = new THREE.Vector3();
@@ -4555,6 +4597,7 @@
       _cp.setFromMatrixPosition(camera.matrixWorld);
       S.sky.position.copy(_cp); S.stars.position.copy(_cp);
       updateTraffic(dt); updateAvatars(dt); updateShadowFrame();
+      emitir('cuadro', dt, now);
       if (now - lastSun > 2000) { lastSun = now; updateSun(); }
       renderer.render(scene, camera); S.frame++;
     }
@@ -4583,7 +4626,7 @@
             var line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -6)]), new THREE.LineBasicMaterial({ color: 0x7ef0c0, transparent: true, opacity: 0.6 }));
             c.add(line); rig.add(c); xr.ctrl.push(c);
           }
-          S.xr = true; xr.entering = false; syncLoop();
+          S.xr = true; xr.entering = false; syncLoop(); emitir('vr', true);
           session.addEventListener('end', restoreDesktop);
           xrLast = performance.now();
           renderer.setAnimationLoop(xrFrame);
@@ -4596,6 +4639,94 @@
       }, function (err) { xr.entering = false; throw err; });
     }
 
+    // --- Extensiones (v0.11.0): contexto, ganchos y arranque ------------------------------
+    var ext = [], extFallos = {}, extEtiquetas = [], extPublico = {};
+    function extLlama(e, gancho, args) {
+      var f = e.ganchos[gancho];
+      if (typeof f !== 'function') return undefined;
+      try { return f.apply(e.ganchos, args); } catch (err) {
+        var k = e.nombre + '.' + gancho;
+        if (!extFallos[k]) { extFallos[k] = String((err && err.stack) || err); if (global.console) console.error('[city3d] ' + k + ': ' + extFallos[k]); }
+        return undefined;
+      }
+    }
+    /** Llama a `gancho` en todos los módulos. */
+    function emitir(gancho) {
+      if (!ext || !ext.length) return;
+      var args = Array.prototype.slice.call(arguments, 1);
+      for (var i = 0; i < ext.length; i++) extLlama(ext[i], gancho, args);
+    }
+    /** Llama a `gancho` hasta que un módulo devuelve algo verdadero (y lo devuelve). */
+    function emitirHasta(gancho) {
+      if (!ext || !ext.length) return false;
+      var args = Array.prototype.slice.call(arguments, 1);
+      for (var i = 0; i < ext.length; i++) { var r = extLlama(ext[i], gancho, args); if (r) return r; }
+      return false;
+    }
+    /** Llama a `gancho` en todos y devuelve el último valor verdadero. */
+    function emitirValor(gancho) {
+      if (!ext || !ext.length) return null;
+      var args = Array.prototype.slice.call(arguments, 1), out = null;
+      for (var i = 0; i < ext.length; i++) { var r = extLlama(ext[i], gancho, args); if (r) out = r; }
+      return out;
+    }
+    function rayoPantalla(clientX, clientY) {
+      var r = canvas.getBoundingClientRect();
+      ndc.set(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
+      raycaster.setFromCamera(ndc, camera);
+      return { origen: raycaster.ray.origin.clone(), dir: raycaster.ray.direction.clone() };
+    }
+    function infoClic(clientX, clientY, celda) {
+      var ry = rayoPantalla(clientX, clientY);
+      return { clientX: clientX, clientY: clientY, origen: ry.origen, dir: ry.dir, celda: celda, modo: S.mode };
+    }
+    var ctx = {
+      THREE: THREE, scene: scene, camera: camera, rig: rig, renderer: renderer, canvas: canvas, container: container,
+      S: S, C: C, cam: cam, walk: walk, EYE: EYE, t: t, colors: colors, opts: opts,
+      Q: function () { return Q; }, calidad: function () { return qualityName; },
+      N: function () { return N; }, CELL: function () { return CELL; }, LIFT: function () { return LIFT; }, rotR: function () { return rotR; },
+      keys: function () { return keys; }, puntero: function () { return pointerPos; },
+      shared: shared, buildMat: buildMat, plainMat: plainMat, terrainMat: terrainMat, mats: mats, noiseTex: noiseTex, envRT: envRT,
+      makeBuildingMaterial: makeBuildingMaterial, sun: sun, hemi: hemi, sunDir: sunDir, lightDir: lightDir,
+      uniformes: { viewport: viewportUniform, lod: lodUniform, drop: dropUniform, noche: nightUniform, fantasma: ghostTime },
+      util: { fnv1a: fnv1a, hash2: hash2, semillaMorfologia: semillaMorfologia, semillaRopaje: semillaRopaje, real01: real01, lcg: lcg,
+        clamp: clamp, lerp: lerp, smoothstep: smoothstep, strSeed: strSeed, lin1: lin1, lin3: lin3 },
+      geom: { prim: prim, newAcc: newAcc, pushPart: pushPart, pushParts: pushParts, accGeometry: accGeometry, piezas: piezas,
+        cuerpoTorre: cuerpoTorre, cuerpoBloque: cuerpoBloque, cuerpoNave: cuerpoNave, cuerpoVilla: cuerpoVilla, parcelaPartes: parcelaPartes,
+        edificioPartes: edificioPartes, carGeometry: carGeometry, avatarBodyGeometry: avatarBodyGeometry, avatarLimbGeometry: avatarLimbGeometry,
+        palmGeometry: palmGeometry, inst: inst, place: place, finish: finish, ensureCap: ensureCap,
+        colores: { GLASS: GLASS, GLASS2: GLASS2, STEEL: STEEL, WHITE: WHITE, SAND: SAND, GOLD: GOLD, DARK: DARK, GREEN: GREEN, PINK: PINK, RED: RED, ASPHALT: ASPHALT, WATER: WATER } },
+      mundo: { surfaceH: surfaceH, coarseH: coarseH, groundH: groundH, insideMap: insideMap, cellWorld: cellWorld, cellLocal: cellLocal,
+        worldToCell: worldToCell, localToWorld: localToWorld, worldToLocal: worldToLocal, latLonToCell: latLonToCell, cellLatLon: cellLatLon,
+        rotOff: rotOff, gridYaw: gridYaw, districtOf: districtOf, dubaiHour: dubaiHour, parcelInfo: parcelInfo, sectorName: sectorName,
+        SECTOR_ARCH: SECTOR_ARCH, SECTOR_COLORS: SECTOR_COLORS, SECTOR_NAMES: SECTOR_NAMES, ARCH_KEYS: ARCH_KEYS,
+        TESELA_VIA: TESELA_VIA, TIPOS_BARRIO: TIPOS_BARRIO, fachadaBarrio: fachadaBarrio, fachadaParcela: fachadaParcela,
+        FACHADA: { RETICULA: FACHADA_RETICULA, LISA: FACHADA_LISA, CORTINA: FACHADA_CORTINA, CINTA: FACHADA_CINTA } },
+      catastro: { alta: function (so) { catastroAlta(S.catastro, so); }, quita: function (pred) { catastroQuita(S.catastro, pred); },
+        bajo: solidoBajo, rayo: rayoSolido, empujarFuera: empujarFuera, huellaLibre: function (x, z, r) { return huellaLibre(S.catastro, x, z, r); }, aLocal: aLocal },
+      pick: pick, rayoPantalla: rayoPantalla, setMode: setMode,
+      rehacerBarrios: function () { buildClusters(); },
+      reaplicarCiudad: function () { if (S.city) applyCity(S.city); },
+      /** Registra un LabelSet del módulo para que se recorte con los demás (el módulo lo añade a la escena). */
+      etiquetas: function (ls) { if (extEtiquetas.indexOf(ls) < 0) extEtiquetas.push(ls); },
+      LabelSet: LabelSet,
+      /** Servicios que un módulo ofrece a los demás (p. ej. `servicios.sonido`). */
+      servicios: {},
+      /** Fallos de los módulos (nombre.gancho → traza), para las pruebas. */
+      fallos: function () { return extFallos; },
+      handle: null
+    };
+    for (var ix = 0; ix < EXTENSIONES.length; ix++) {
+      var reg = EXTENSIONES[ix], ganchos = null;
+      try { ganchos = reg.fabrica(ctx) || {}; } catch (errF) {
+        extFallos[reg.nombre + '.fabrica'] = String((errF && errF.stack) || errF);
+        if (global.console) console.error('[city3d] ' + reg.nombre + '.fabrica: ' + extFallos[reg.nombre + '.fabrica']);
+        continue;
+      }
+      ext.push({ nombre: reg.nombre, ganchos: ganchos });
+      extPublico[reg.nombre] = ganchos.publico || {};
+    }
+
     // --- API pública ---------------------------------------------------------------------
     var handle = {
       ready: ready,
@@ -4604,7 +4735,9 @@
         var h = fnv1a(JSON.stringify(data));
         if (h === S.cityHash) return;
         S.cityHash = h;
-        S.city = { parcels: data.parcels || [], assets: data.assets || [], me: data.me || null, size: data.size, sectors: data.sectors || null, districts: data.districts || null };
+        // `datos` es la vista entera tal como llega (altura, fondo, huecos, fechas de
+        // activación…): los módulos leen de ahí lo que el núcleo no necesita.
+        S.city = { parcels: data.parcels || [], assets: data.assets || [], me: data.me || null, size: data.size, sectors: data.sectors || null, districts: data.districts || null, height: data.height | 0, datos: data };
         if (data.districts && data.districts.length) S.districts = data.districts;
         if (S.ready) applyCity(S.city); else pending = S.city;
       },
@@ -4632,7 +4765,9 @@
       stats: function () {
         var env = null;
         try { var px = new Uint8Array(4 * 4 * 4); renderer.readRenderTargetPixels(envRT, 0, 0, 4, 4, px, 2); var sum = 0; for (var i = 0; i < 64; i++) sum += px[i]; env = Math.round(sum / 64); } catch (e) { env = -1; }
-        return { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame, landmarks: S.landmarks.length, skyline: S.clusterTotal, solidos: S.catastro ? S.catastro.items.length : 0, trozosBarrio: S.trozosBarrio, trozosParcela: S.trozosParcela, ocultos: S.ocultos, trozosFantasma: S.trozosFantasma, avatars: S.avatarOrder.length, quality: qualityName, mode: S.xr ? 'vr' : S.mode, env: env };
+        var o = { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame, landmarks: S.landmarks.length, skyline: S.clusterTotal, solidos: S.catastro ? S.catastro.items.length : 0, trozosBarrio: S.trozosBarrio, trozosParcela: S.trozosParcela, ocultos: S.ocultos, trozosFantasma: S.trozosFantasma, avatars: S.avatarOrder.length, quality: qualityName, mode: S.xr ? 'vr' : S.mode, env: env, ext: {} };
+        emitir('estadisticas', o.ext);
+        return o;
       },
       bench: bench, gpu: gpuName,
       latLonToCell: latLonToCell,
@@ -4654,6 +4789,7 @@
       heightAt: function (lat, lon) { if (!S.ready) return null; var w = S.geo.toWorld(lat, lon); return S.field.atWorld(w.x, w.z); },
       dispose: function () {
         if (S.disposed) return;
+        emitir('soltar');
         S.disposed = true; syncLoop();
         if (S.bench) { S.bench.reject(new Error('cliente cerrado')); S.bench = null; }
         if (xr.session) { try { xr.session.end(); } catch (e) {} }
@@ -4690,10 +4826,17 @@
       },
       _debug: { scene: scene, camera: camera, renderer: renderer, state: S, meshes: C, cam: cam, walk: walk, vrPlacement: function () { return vrPlacement(new THREE.Vector3()); }, keysDown: function () { return Object.keys(keys); }, pick: pick, rayoSolido: rayoSolido, empujarFuera: empujarFuera, empujarDeMoviles: empujarDeMoviles,
         // Un paso de simulación sin dibujar, para probar la colisión sin depender del reloj.
-        paso: function (dt) { if (!S.ready) return; updateCamera(dt); updateTraffic(dt); updateAvatars(dt); } }
+        paso: function (dt) { if (!S.ready) return; updateCamera(dt); updateTraffic(dt); updateAvatars(dt); emitir('cuadro', dt, performance.now()); },
+        ctx: ctx, extFallos: function () { return extFallos; } }
     };
+    // Lo que cada módulo publica (`publico`) cuelga de handle.ext[nombre].
+    handle.ext = extPublico;
+    ctx.handle = handle;
+    // Si el mundo ya estuviera construido (no pasa hoy: se carga asíncrono), el
+    // módulo recibe su «listo» igual.
+    if (S.ready) emitir('listo');
     return handle;
   }
 
-  global.RamiCity3D = { mount: mount, version: '2.0.0', sectorNames: SECTOR_NAMES, sectorColors: SECTOR_COLORS, shapes: Object.keys(SHAPES), _internals: { inflate: inflate, inflateStream: inflateStream, decodePngGray: decodePngGray, decodePngGrayAsync: decodePngGrayAsync, fnv1a: fnv1a, lcg: lcg } };
+  global.RamiCity3D = { mount: mount, extend: extend, extensiones: function () { return EXTENSIONES.map(function (e) { return e.nombre; }); }, version: '2.1.0', sectorNames: SECTOR_NAMES, sectorColors: SECTOR_COLORS, shapes: Object.keys(SHAPES), _internals: { inflate: inflate, inflateStream: inflateStream, decodePngGray: decodePngGray, decodePngGrayAsync: decodePngGrayAsync, fnv1a: fnv1a, lcg: lcg } };
 })(typeof window !== 'undefined' ? window : this);

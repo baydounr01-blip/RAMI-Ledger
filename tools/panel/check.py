@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Comprobaciones del panel del monedero (dashboard.html + i18n.js).
+"""Comprobaciones del panel del monedero (dashboard.html + i18n.js) y del
+visor 3D (city3d.js y sus módulos de city/, desde la v0.11.0).
 
 Por qué existe: el panel es un archivo HTML con JavaScript dentro que ningún
 test de Rust mira. Un paréntesis de más o un `getElementById` a un id que ya no
@@ -8,9 +9,11 @@ existe no rompen la compilación, pero dejan el monedero MUDO en el navegador �
 que es exactamente el fallo que se vivió al pasar de la v0.7.1 a la v0.7.2. Esto
 lo comprueba en cada push:
 
-  1) sintaxis de todo el JavaScript (los bloques <script> y el diccionario);
+  1) sintaxis de todo el JavaScript (los bloques <script>, el diccionario, el
+     visor 3D y cada módulo de city/);
   2) todo `getElementById("x")` apunta a un `id="x"` que existe de verdad;
-  3) informe (no bloqueante) de textos visibles sin traducir en en/ru/sw/zh.
+  3) informe (no bloqueante) de textos visibles sin traducir en en/ru/sw/zh,
+     incluidos los `t('…')` del visor y de sus módulos.
 
 Uso: python3 tools/panel/check.py [--strict-i18n]
 """
@@ -25,6 +28,8 @@ import tempfile
 RAIZ = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PANEL = os.path.join(RAIZ, "chain", "crates", "rami-gui", "src", "dashboard.html")
 I18N = os.path.join(RAIZ, "chain", "crates", "rami-gui", "src", "i18n.js")
+VISOR = os.path.join(RAIZ, "chain", "crates", "rami-gui", "src", "city3d.js")
+MODULOS = os.path.join(RAIZ, "chain", "crates", "rami-gui", "src", "city")
 
 fallos = []
 
@@ -61,6 +66,15 @@ def main():
     for i, b in enumerate(bloques):
         node_check("dashboard.html <script> #%d" % (i + 1), b)
     node_check("i18n.js", i18n_js)
+    # El visor y sus módulos (v0.11.0): un error de sintaxis en uno de ellos no
+    # rompe el panel, pero se lleva por delante esa parte de la ciudad.
+    visor = [("city3d.js", leer(VISOR))]
+    if os.path.isdir(MODULOS):
+        for n in sorted(os.listdir(MODULOS)):
+            if n.endswith(".js"):
+                visor.append(("city/" + n, leer(os.path.join(MODULOS, n))))
+    for nombre, codigo in visor:
+        node_check(nombre, codigo)
 
     # 2) Cada getElementById apunta a un id real.
     ids = set(re.findall(r'\bid="([^"]+)"', html))
@@ -97,6 +111,14 @@ def main():
             # espacios al final («Error: »); se admiten las dos formas.
             literales[t] = crudo
             textos.add(t)
+
+    # Los textos del visor y de sus módulos: t('…') o ctx.t('…') con comillas simples.
+    for nombre, codigo in visor:
+        for lit in re.findall(r"(?<![A-Za-z0-9_$])t\(\s*'((?:[^'\\]|\\.)*)'", codigo):
+            t = re.sub(r"\s+", " ", lit.replace("\\'", "'")).strip()
+            if len(t) >= 4 and re.search(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]{3}", t) and not ruido.match(t):
+                literales[t] = t
+                textos.add(t)
 
     def sin_traducir(t, d):
         return t not in d and literales.get(t, t) not in d

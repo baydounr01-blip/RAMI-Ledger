@@ -29,6 +29,9 @@ pub struct BlockNode {
     /// Las reglas de Dubái (`crate::ciudad`) rigen en este bloque; misma
     /// disciplina: por su timestamp o porque ya regían en su padre.
     pub dubai: bool,
+    /// La escritura de vivienda (v0.11.0) rige en este bloque: rige Dubái en
+    /// él y, además, su timestamp alcanza la fecha o ya regía en su padre.
+    pub vivienda: bool,
 }
 
 /// Prefijo inequívoco del error de `insert` cuando falta el padre (huérfano).
@@ -82,11 +85,12 @@ impl BlockTree {
         let mut state = State::default();
         let firma_v2 = regla_para(params.firma_v2_desde, genesis.header.timestamp) == Regla::V2;
         let dubai = FirmaCtx::dubai_para(params.dubai_desde, genesis.header.timestamp);
-        apply_block_con(&mut state, &genesis, 0, &Self::ctx_de(firma_v2, dubai, h))?;
+        let vivienda = dubai && FirmaCtx::vivienda_para(params.vivienda_desde, genesis.header.timestamp);
+        apply_block_con(&mut state, &genesis, 0, &Self::ctx_de(firma_v2, dubai, vivienda, h))?;
         let cum_work = difficulty_from_bits(genesis.header.bits);
 
         let mut nodes = HashMap::new();
-        nodes.insert(h, BlockNode { block: genesis, cum_work, firma_v2, dubai });
+        nodes.insert(h, BlockNode { block: genesis, cum_work, firma_v2, dubai, vivienda });
         let mut tip_state = HashMap::new();
         tip_state.insert(h, state);
         Ok(BlockTree { nodes, children: HashMap::new(), tip_state, genesis: h, params })
@@ -148,8 +152,8 @@ impl BlockTree {
         lwma_next_bits(&self.lwma_window(parent), self.params.min_difficulty)
     }
 
-    fn ctx_de(firma_v2: bool, dubai: bool, net: Hash) -> FirmaCtx {
-        FirmaCtx { regla: if firma_v2 { Regla::V2 } else { Regla::V1 }, net, dubai }
+    fn ctx_de(firma_v2: bool, dubai: bool, vivienda: bool, net: Hash) -> FirmaCtx {
+        FirmaCtx { regla: if firma_v2 { Regla::V2 } else { Regla::V1 }, net, dubai, vivienda: dubai && vivienda }
     }
 
     /// ¿Rige la regla v2 para un bloque hijo de `parent` con ese timestamp?
@@ -169,9 +173,22 @@ impl BlockTree {
         padre || FirmaCtx::dubai_para(self.params.dubai_desde, timestamp)
     }
 
+    /// ¿Rige la escritura de vivienda para un hijo de `parent` con ese
+    /// timestamp? Solo si rige Dubái en ese hijo y, además, por la fecha o
+    /// porque ya regía en el padre. Tampoco retrocede dentro de una rama.
+    pub fn vivienda_sobre(&self, parent: &Hash, timestamp: u64) -> bool {
+        let padre = self.nodes.get(parent).map(|n| n.vivienda).unwrap_or(false);
+        self.dubai_sobre(parent, timestamp) && (padre || FirmaCtx::vivienda_para(self.params.vivienda_desde, timestamp))
+    }
+
     /// Contexto de reglas para un bloque hijo de `parent` con ese timestamp.
     pub fn firma_ctx_sobre(&self, parent: &Hash, timestamp: u64) -> FirmaCtx {
-        Self::ctx_de(self.firma_v2_sobre(parent, timestamp), self.dubai_sobre(parent, timestamp), self.genesis)
+        Self::ctx_de(
+            self.firma_v2_sobre(parent, timestamp),
+            self.dubai_sobre(parent, timestamp),
+            self.vivienda_sobre(parent, timestamp),
+            self.genesis,
+        )
     }
 
     /// Contexto de firma que rige para lo que se construya AHORA sobre la
@@ -191,7 +208,7 @@ impl BlockTree {
         let mut state = State::default();
         for (i, bh) in self.chain_to(h).iter().enumerate() {
             let node = self.nodes.get(bh).ok_or("bloque ausente al reproducir")?;
-            apply_block_con(&mut state, &node.block, i as u64, &Self::ctx_de(node.firma_v2, node.dubai, self.genesis))?;
+            apply_block_con(&mut state, &node.block, i as u64, &Self::ctx_de(node.firma_v2, node.dubai, node.vivienda, self.genesis))?;
         }
         Ok(state)
     }
@@ -232,12 +249,13 @@ impl BlockTree {
         };
         let firma_v2 = parent_node.firma_v2 || regla_para(self.params.firma_v2_desde, block.header.timestamp) == Regla::V2;
         let dubai = parent_node.dubai || FirmaCtx::dubai_para(self.params.dubai_desde, block.header.timestamp);
-        apply_block_con(&mut parent_state, &block, block.header.height, &Self::ctx_de(firma_v2, dubai, self.genesis))?;
+        let vivienda = dubai && (parent_node.vivienda || FirmaCtx::vivienda_para(self.params.vivienda_desde, block.header.timestamp));
+        apply_block_con(&mut parent_state, &block, block.header.height, &Self::ctx_de(firma_v2, dubai, vivienda, self.genesis))?;
 
         let cum_work = parent_node.cum_work + difficulty_from_bits(block.header.bits);
 
         // Insertar.
-        self.nodes.insert(h, BlockNode { block, cum_work, firma_v2, dubai });
+        self.nodes.insert(h, BlockNode { block, cum_work, firma_v2, dubai, vivienda });
         self.children.entry(parent).or_default().push(h);
         // El padre deja de ser hoja; el hijo pasa a ser hoja.
         self.tip_state.remove(&parent);
@@ -682,6 +700,94 @@ mod tests {
         let wrong_h = mined_block(9, *long.last().unwrap(), bits, [1u8; 32], 1_700_200_000, *b"badh");
         let err = tree.insert(wrong_h).unwrap_err();
         assert!(!is_orphan_err(&err), "altura incorrecta no es huérfano: {err}");
+    }
+
+    /// Bloque con coinbase de Dubái (40 RAMI) y las transacciones dadas.
+    fn bloque_dubai(tree: &BlockTree, prev: Hash, ts: u64, miner: [u8; 32], extra: Vec<Tx>, tag: [u8; 4]) -> Block {
+        let height = tree.get(&prev).unwrap().block.header.height + 1;
+        let bits = tree.expected_bits(&prev);
+        let mut txs = vec![Tx::Coinbase { height, to: miner, reward: 40 * crate::state::COIN, memo: vec![] }];
+        txs.extend(extra);
+        let ids: Vec<TxId> = txs.iter().map(txid).collect();
+        let header = mine(BlockHeader {
+            version: 1, prev_hash: prev, height, timestamp: ts,
+            merkle_root: merkle_root_txids(&ids), bits, nonce: 0, branch_tag: tag,
+        });
+        Block { header, txs }
+    }
+
+    /// Escritura de vivienda (v0.11.0): rige por la fecha del bloque, solo
+    /// donde rige Dubái, y una vez activada en una rama no retrocede aunque un
+    /// bloque hijo lleve un timestamp anterior; una rama hermana anterior a la
+    /// fecha sigue sin ella.
+    #[test]
+    fn vivienda_se_activa_por_fecha_solo_con_dubai_y_no_retrocede_en_la_rama() {
+        use crate::crypto::KeyPair;
+        use crate::state::COIN;
+        let kp = KeyPair::from_secret(&[33u8; 32]);
+        let yo = kp.public_bytes();
+        let t0 = 1_700_000_000u64;
+        let desde = t0 + 600;
+        let p = Params::regtest().con_dubai_desde(Some(0)).con_vivienda_desde(Some(desde));
+        let g = mined_block(0, ZERO_HASH, p.genesis_bits, yo, t0, *b"gen0");
+        let mut tree = BlockTree::new(g.clone(), p).unwrap();
+        assert!(tree.get(&g.hash()).unwrap().dubai);
+        assert!(!tree.get(&g.hash()).unwrap().vivienda);
+        // Firma v1 (esta red no activa la v2): el mensaje no depende de la red.
+        let firma = |mut tx: Tx| -> Tx {
+            let s = kp.sign(&crate::tx::signing_message(&tx));
+            match &mut tx {
+                Tx::ClaimParcel { sig, .. } | Tx::DivideParcel { sig, .. } | Tx::SellUnit { sig, .. } => *sig = s,
+                _ => unreachable!(),
+            }
+            tx
+        };
+        let claim = firma(Tx::ClaimParcel { who: yo, x: 21, y: 45, name: b"Casa".to_vec(), kind: 7, fee: 1, nonce: 0, sig: [0u8; 64] });
+        let b1 = bloque_dubai(&tree, g.hash(), desde - 60, yo, vec![claim], *b"viv1");
+        let h1 = tree.insert(b1).unwrap();
+        let divide = firma(Tx::DivideParcel { who: yo, x: 21, y: 45, unidades: 4, fee: 1, nonce: 1, sig: [0u8; 64] });
+        // Un segundo antes de la fecha: no rige y el bloque es inválido.
+        assert!(!tree.vivienda_sobre(&h1, desde - 1));
+        assert!(!tree.firma_ctx_sobre(&h1, desde - 1).vivienda_rige());
+        let temprano = bloque_dubai(&tree, h1, desde - 1, yo, vec![divide.clone()], *b"viv2");
+        let err = tree.insert(temprano).unwrap_err();
+        assert!(err.contains("antes de su activación"), "motivo: {err}");
+        // En la fecha exacta (inclusive), rige.
+        assert!(tree.vivienda_sobre(&h1, desde));
+        assert_eq!(tree.firma_ctx_sobre(&h1, desde).numero(), 4);
+        let b2 = bloque_dubai(&tree, h1, desde, yo, vec![divide.clone()], *b"viv3");
+        let h2 = tree.insert(b2).unwrap();
+        assert!(tree.get(&h2).unwrap().vivienda);
+        assert_eq!(tree.head_state().unwrap().parcels[&(21, 45)].unidades, 4);
+        // No retrocede: un hijo de h2 con timestamp una hora ANTERIOR a la
+        // fecha sigue rigiéndose por la vivienda (una venta de vivienda entra).
+        assert!(tree.vivienda_sobre(&h2, desde - 3600));
+        let vende = firma(Tx::SellUnit { who: yo, x: 21, y: 45, n: 2, price: COIN, fee: 1, nonce: 2, sig: [0u8; 64] });
+        let b3 = bloque_dubai(&tree, h2, desde - 3600, yo, vec![vende], *b"viv4");
+        let h3 = tree.insert(b3).unwrap();
+        assert!(tree.get(&h3).unwrap().vivienda);
+        assert_eq!(tree.head_state().unwrap().parcels[&(21, 45)].units[1].sale, Some(COIN));
+        // Una rama hermana desde h1 con fecha anterior NO hereda la activación
+        // de la otra rama: la división sigue siendo inválida allí.
+        let hermana = bloque_dubai(&tree, h1, desde - 2, yo, vec![divide.clone()], *b"herm");
+        assert!(tree.insert(hermana).unwrap_err().contains("antes de su activación"));
+        // Reproducir la rama desde el génesis (replay) llega al mismo estado.
+        let gemelo = {
+            let mut t = BlockTree::new(g.clone(), p).unwrap();
+            for h in tree.chain_to(&h3).iter().skip(1) {
+                t.insert(tree.get(h).unwrap().block.clone()).unwrap();
+            }
+            t
+        };
+        assert_eq!(gemelo.head(), h3);
+        assert_eq!(gemelo.head_state().unwrap().parcels, tree.head_state().unwrap().parcels);
+
+        // Sin Dubái, la fecha de vivienda no hace nada (vivienda implica Dubái).
+        let sin_dubai = Params::regtest().con_vivienda_desde(Some(0));
+        let g2 = mined_block(0, ZERO_HASH, sin_dubai.genesis_bits, yo, t0, *b"gen0");
+        let t2 = BlockTree::new(g2.clone(), sin_dubai).unwrap();
+        assert!(!t2.vivienda_sobre(&g2.hash(), desde + 10));
+        assert!(!t2.firma_ctx(desde + 10).vivienda_rige());
     }
 
     #[test]
