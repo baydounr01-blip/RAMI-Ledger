@@ -193,7 +193,7 @@ Lo que cambia con la cuadrícula o la calidad se lee con una función.
   texto corto. Un conjunto registrado y oculto (`mesh.visible = false`) sigue
   pasando por el recorte, pero como va el último no le quita sitio a nadie.
 
-### Dibujar a un destino intermedio (el gancho `pintar`)
+## Dibujar a un destino intermedio (el gancho `pintar`)
 
 Quien dibuja la escena en un `WebGLRenderTarget` en vez de en el lienzo tiene
 que saber cinco cosas de three r150 y de los materiales del visor. Con las
