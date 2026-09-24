@@ -972,6 +972,9 @@
       // distinguen medio millón de triángulos de ciento noventa mil.
       case 'ball': g = new THREE.IcosahedronGeometry(0.5, 1); break;
       case 'hemi': g = new THREE.SphereGeometry(0.5, 24, 10, 0, Math.PI * 2, 0, Math.PI / 2); break;
+      // Media esfera de lejos (v0.11.0): 70 triángulos en vez de 456, para los
+      // cientos de peatones que se dibujan a la vez.
+      case 'hemiL': g = new THREE.SphereGeometry(0.5, 10, 4, 0, Math.PI * 2, 0, Math.PI / 2); break;
       case 'torus': g = new THREE.TorusGeometry(0.5, a || 0.05, 10, 48); break;
       case 'halfcyl': g = new THREE.CylinderGeometry(0.5, 0.5, 1, 20, 1, false, 0, Math.PI); g.translate(0, 0.5, 0); break;
       case 'shell': g = new THREE.CylinderGeometry(0.5, 0.5, 1, 24, 1, true, 0, Math.PI); g.translate(0, 0.5, 0); break;
@@ -1028,18 +1031,20 @@
     // oficina (huecos de 4,5 por 3,6 m), 1 = lisa, sin ventanas (villas, naves,
     // granjas, depósitos), 2 = muro cortina (paños de 1,5 m con montantes finos),
     // 3 = ventana corrida (una cinta de fachada a fachada por planta). Las mallas
-    // sin el atributo leen 0.
+    // sin el atributo leen 0. Desde la v0.11.0 lleva además la identidad del
+    // edificio: aflags = fachada + 4·(1 + id), con id de 0 a 1023 (flagsEdificio);
+    // el tipo es aflags módulo 4 y un 0 en la parte alta quiere decir «sin id».
     'attribute float aflags;',
-    'varying vec3 vNormalW; varying vec3 vWorld; varying float vLocalY; varying float vFlags;',
+    'varying vec3 vNormalW; varying vec3 vWorld; varying float vLocalY; varying float vFlags; varying float vBase;',
     'void main(){',
-    '  vFlags = aflags;',
+    '  vFlags = aflags; vBase = abase;',
     '  #include <color_vertex>',
     '  vec3 on = normal;',
     '  #ifdef USE_INSTANCING', '  on = mat3(instanceMatrix) * on;', '  #endif',
     '  vec3 transformedNormal = normalMatrix * on;',
     '  vNormalW = normalize(mat3(modelMatrix) * on);',
     '  vec4 wp = vec4(position, 1.0); float lh = position.y - abase;',
-    '  #ifdef USE_INSTANCING', '  wp = instanceMatrix * wp; lh = wp.y - instanceMatrix[3].y;', '  #endif',
+    '  #ifdef USE_INSTANCING', '  wp = instanceMatrix * wp; lh = wp.y - instanceMatrix[3].y; vBase = instanceMatrix[3].y;', '  #endif',
     '  vec4 worldPosition = modelMatrix * wp; vWorld = worldPosition.xyz; vLocalY = lh;',
     '  vec4 mvPosition = viewMatrix * worldPosition;',
     '  gl_Position = projectionMatrix * mvPosition;',
@@ -1056,12 +1061,55 @@
     '#include <lights_pars_begin>',
     '#include <shadowmap_pars_fragment>',
     '#include <shadowmask_pars_fragment>',
-    'uniform vec3 uSun, uSunColor, uSkyColor, uGroundColor; uniform float uNight, uDusk, uWindows; uniform samplerCube uEnv;',
-    'varying vec3 vNormalW; varying vec3 vWorld; varying float vLocalY; varying float vFlags;',
+    'uniform vec3 uSun, uSunColor, uSkyColor, uGroundColor; uniform float uNight, uDusk, uWindows, uInterior; uniform samplerCube uEnv;',
+    'varying vec3 vNormalW; varying vec3 vWorld; varying float vLocalY; varying float vFlags; varying float vBase;',
     'float hash21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }',
+    // Interiores por paralaje (v0.11.0, entrega 7). Detrás de cada hueco de
+    // vidrio hay una habitación que no existe como geometría: el rayo de la
+    // cámara se lleva al marco de la sala —4,5 m a lo largo de la fachada (la
+    // celda del sorteo de luces, así que la sala encendida es la que se ve
+    // encendida), 3,6 m de planta a planta y 5,6 m de fondo— y se corta con su
+    // caja: fondo, paredes, suelo o techo, lo primero que toque. Encima, un
+    // mueble (un plano a media profundidad, de pie en el suelo) y, en una de
+    // cada tres salas, una persiana bajada. Todo sale de dos sorteos: `hb`, el
+    // del edificio (oficina fría o vivienda cálida), y `hs`, el de la sala. El
+    // edificio se reconoce por su id en `aflags` (flagsEdificio), que es el mismo
+    // en toda su malla; solo lo que no lo lleva (los hitos modelados a mano, las
+    // mallas de los módulos) cae en el sorteo por tesela de 500 m y cota del pie.
+    // Devuelve el albedo de lo que se ve en .rgb, en .a cuánta luz de día le
+    // llega (cae con el fondo), y en `lamp` cuánto la ilumina la lámpara de noche.
+    'vec4 interiorSala(vec2 q, vec3 v, vec3 nh, float hb, float hs, out float lamp){',
+    '  vec3 T = vec3(nh.z, 0.0, -nh.x);',
+    '  vec3 rd = vec3(dot(-v, T), -v.y, max(dot(v, nh), 0.05)) / vec3(4.5, 3.6, 5.6);',
+    '  vec3 ro = vec3(fract(q), 0.0);',
+    '  vec3 rs = step(0.0, rd);',
+    '  vec3 tb = (rs - ro) / (rd + (rs * 2.0 - 1.0) * 1e-5);',
+    '  float t = min(min(tb.x, tb.y), tb.z);',
+    '  vec3 hp = ro + rd * t;',
+    '  float fz = step(tb.z, min(tb.x, tb.y));',
+    '  float fy = (1.0 - fz) * step(tb.y, tb.x);',
+    '  float techo = fy * rs.y, suelo = fy * (1.0 - rs.y), lado = (1.0 - fz) * (1.0 - fy);',
+    '  float h2 = fract(hs * 7.31), h3 = fract(hs * 13.7), h4 = fract(hs * 29.3);',
+    '  vec3 pared = mix(vec3(0.66, 0.60, 0.52), vec3(0.54, 0.59, 0.62), hb) * mix(0.75, 1.1, hs);',
+    '  vec3 fondo = mix(pared, mix(vec3(0.55, 0.30, 0.22), vec3(0.26, 0.40, 0.46), h3), step(0.7, h2));',
+    '  vec3 piso = mix(vec3(0.34, 0.24, 0.16), vec3(0.36, 0.36, 0.35), step(0.5, h4));',
+    '  vec3 alb = pared * lado * 0.85 + fondo * fz + piso * suelo + vec3(0.82) * techo;',
+    '  float dia = mix(1.0, 0.35, hp.z) * mix(1.0, 0.75, techo);',
+    '  lamp = (fz + 0.8 * lado + 0.75 * suelo + 1.25 * techo) * (0.8 + 0.35 * hp.y) * mix(1.05, 0.85, hp.z);',
+    '  float zf = 0.35 + 0.35 * h2, x0 = 0.1 + 0.5 * h3, an = 0.25 + 0.3 * h4, alto = 0.22 + 0.2 * fract(hs * 5.7);',
+    '  float tf = zf / rd.z; vec3 pf = ro + rd * tf;',
+    '  float mueble = step(tf, t) * step(x0, pf.x) * step(pf.x, x0 + an) * step(pf.y, alto) * step(0.0, pf.y);',
+    '  alb = mix(alb, mix(vec3(0.10, 0.09, 0.08), vec3(0.30, 0.22, 0.15), h3), mueble);',
+    '  dia = mix(dia, 0.5 * mix(1.0, 0.35, zf), mueble); lamp = mix(lamp, 0.3, mueble);',
+    '  float persiana = step(0.66, fract(hs * 3.77)) * step(0.8 - 0.5 * h4, ro.y);',
+    '  alb = mix(alb, vec3(0.78, 0.74, 0.66), persiana);',
+    '  dia = mix(dia, 0.9, persiana); lamp = mix(lamp, 0.9, persiana);',
+    '  return vec4(alb, dia);',
+    '}',
     'void main(){',
     '  #include <logdepthbuf_fragment>',
-    '  float tipo = floor(vFlags + 0.5);',
+    '  float af = floor(vFlags + 0.5);',
+    '  float tipo = mod(af, 4.0), idE = floor(af * 0.25);',
     '  float lisa = step(0.5, tipo) * step(tipo, 1.5), cortina = step(1.5, tipo) * step(tipo, 2.5), cinta = step(2.5, tipo);',
     '  float uWin = uWindows * (1.0 - lisa);',
     '  vec3 base = vec3(0.8);',
@@ -1090,6 +1138,21 @@
     '  albedo *= 1.0 - slab * 0.4;',
     '  albedo *= mix(1.0, 0.82, step(0.9, n.y) * uWin);',
     '  vec3 col = albedo * (amb * 0.85 + uSunColor * ndl * 1.15);',
+    // La sala (desde la calidad media) sustituye al vidrio oscuro: de día la
+    // alumbra la luz de cielo que entra por la ventana, teñida por el vidrio, y
+    // encima va el reflejo con su Fresnel de siempre, que es lo que manda; de
+    // noche la enciende su lámpara (abajo). Solo en fragmentos de vidrio.
+    '  float hayS = 0.0, lampS = 1.0; vec3 salaAlb = vec3(0.0);',
+    '  if (uInterior > 0.5 && glass > 0.01) {',
+    '    vec3 nh = normalize(vec3(n.x, 0.0, n.z) + vec3(1e-5, 0.0, 0.0));',
+    '    vec2 eid = idE > 0.5 ? vec2(idE * 0.618034, 7.31) : floor(vWorld.xz * 0.002) + vBase * 0.731;',
+    '    float hb = hash21(eid);',
+    '    float hs = hash21(cell * vec2(0.93, 1.07) + eid + 17.0);',
+    '    vec4 si = interiorSala(uvw / vec2(4.5, 3.6), v, nh, hb, hs, lampS);',
+    '    salaAlb = si.rgb; hayS = 1.0;',
+    '    vec3 dentro = salaAlb * (amb * 0.30 + uSunColor * 0.04 * max(uSun.y, 0.0)) * si.a;',
+    '    col = mix(col, dentro * vec3(0.80, 0.88, 0.92), glass);',
+    '  }',
     '  vec3 r = reflect(-v, n);',
     '  float mirror = max(glass, glassy * 0.6);',
     '  vec3 env = textureCube(uEnv, r, mix(3.5, 0.0, mirror)).rgb;',
@@ -1101,16 +1164,55 @@
     '  col += uSunColor * spec * mix(0.06, 0.55, mirror) * (1.0 - uNight) * max(uSun.y, 0.0);',
     '  float on = lit * max(uNight, uDusk * 0.45);',
     '  col = mix(col, col * 0.28 + vec3(0.008, 0.010, 0.018), uNight);',
-    '  col += vec3(1.0, 0.63, 0.32) * glass * on * (0.20 + 0.95 * rnd * rnd);',
+    '  vec3 calida = vec3(1.0, 0.63, 0.32) * (0.20 + 0.95 * rnd * rnd);',
+    '  calida = mix(calida, calida * salaAlb * 1.6 * lampS, hayS);',
+    '  col += calida * glass * on;',
     '  gl_FragColor = vec4(col, 1.0);',
     '  #include <tonemapping_fragment>',
     '  #include <encodings_fragment>',
     '  #include <fog_fragment>',
     '}'].join('\n');
+  /**
+   * El valor de `aflags` de un edificio (v0.11.0): su fachada (0–3) más
+   * 4·(1 + id), con el id de 0 a 1023 sacado de la semilla entera de su posición
+   * redondeada al metro (canal 21 de la morfología: el mismo número en toda
+   * máquina). Los interiores por paralaje sortean con él la paleta de salas del
+   * edificio entero; antes la sacaban de la tesela de 500 m, y una fachada que
+   * cruzaba x o z = 500·k cambiaba de paleta a media altura. Un float guarda
+   * exactos los enteros hasta 2²⁴: aquí el mayor es 4.099.
+   */
+  function flagsEdificio(fachada, x, z) {
+    return (fachada | 0) + 4 * (1 + (semillaMorfologia(Math.round(x), Math.round(z), 21) & 1023));
+  }
+  /**
+   * Cascadas de sombra para un material de three (Lambert, Phong, Standard)
+   * (v0.11.0). En r150, lights_fragment_begin aplica la sombra de cada luz
+   * direccional solo a la luz de SU luz, y las cascadas tienen intensidad 0: sin
+   * esto, el material solo ve el mapa del sol, que en alta y ultra es la caja
+   * cercana (150 m a pie). Se cambia esa línea por la máscara entera
+   * (getShadowMask, el producto de todos los mapas, lo mismo que leen los
+   * materiales propios del visor) para cada luz direccional con sombra: las
+   * cascadas no tienen color, así que solo cuenta en la del sol. Con una sola luz
+   * con sombra (media) el resultado es el de siempre. Si three cambia el trozo y
+   * la línea no aparece, el material se queda como estaba.
+   */
+  var SOMBRA_DIR_R150 = 'directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;';
+  function sombraEnCascadas(material) {
+    material.onBeforeCompile = function (sh) {
+      var trozo = THREE.ShaderChunk.lights_fragment_begin;
+      if (trozo.indexOf(SOMBRA_DIR_R150) < 0 || sh.fragmentShader.indexOf('#include <lights_fragment_begin>') < 0) return;
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <shadowmap_pars_fragment>', '#include <shadowmap_pars_fragment>\n#include <shadowmask_pars_fragment>')
+        .replace('#include <lights_fragment_begin>', 'float sombraCascadas = getShadowMask();\n' +
+          trozo.replace(SOMBRA_DIR_R150, 'directLight.color *= directLight.visible ? sombraCascadas : 1.0;'));
+    };
+    return material;
+  }
   function makeBuildingMaterial(shared, windows) {
     var u = THREE.UniformsUtils.merge([THREE.UniformsLib.lights, THREE.UniformsLib.fog]);
     u.uSun = shared.uSun; u.uSunColor = shared.uSunColor; u.uSkyColor = shared.uSkyColor; u.uGroundColor = shared.uGroundColor; u.uNight = shared.uNight; u.uDusk = shared.uDusk; u.uEnv = shared.uEnv;
     u.uWindows = { value: windows ? 1 : 0 };
+    u.uInterior = shared.uInterior || { value: 0 };
     return new THREE.ShaderMaterial({ uniforms: u, vertexShader: BUILD_VS, fragmentShader: BUILD_FS, vertexColors: true, fog: true, lights: true });
   }
 
@@ -1746,9 +1848,27 @@
     return { p: p, top: top, hw: hw, hd: hd, suelo: suelo };
   }
 
-  /** Coche sencillo (metros reales): carrocería + cabina, color por instancia. */
-  function carGeometry() {
+  /**
+   * Coche sencillo (metros reales): carrocería + cabina, color por instancia.
+   * `ligero` (v0.11.0, el tráfico): ruedas de ocho caras y sin tapacubos, 260
+   * triángulos en vez de 484; a la distancia a la que se ve un coche que pasa,
+   * la rueda de doce caras y el tapacubos no se distinguen.
+   */
+  function carGeometry(ligero) {
     var out = newAcc(), W = [0.2, 0.24, 0.3], K = [0.06, 0.06, 0.07], H = [0.75, 0.75, 0.78];
+    if (ligero) {
+      pushParts(out, [
+        { sx: 4.5, sy: 0.55, sz: 1.9, y: 0.42, c: [1, 1, 1] }, { sx: 4.2, sy: 0.22, sz: 1.94, y: 0.97, c: [1, 1, 1] },
+        { sx: 2.3, sy: 0.62, sz: 1.72, x: -0.15, y: 1.19, c: [1, 1, 1] },
+        { g: 'slab', sx: 0.9, sy: 0.5, sz: 1.6, x: 1.05, y: 1.45, rz: 0.55, c: W }, { g: 'slab', sx: 0.7, sy: 0.5, sz: 1.6, x: -1.35, y: 1.45, rz: -0.6, c: W },
+        { g: 'slab', sx: 1.7, sy: 0.4, sz: 0.06, x: -0.15, y: 1.42, z: 0.86, c: W }, { g: 'slab', sx: 1.7, sy: 0.4, sz: 0.06, x: -0.15, y: 1.42, z: -0.86, c: W },
+        { sx: 0.25, sy: 0.16, sz: 0.5, x: 2.2, y: 0.72, z: 0.6, c: H }, { sx: 0.25, sy: 0.16, sz: 0.5, x: 2.2, y: 0.72, z: -0.6, c: H },
+        { sx: 0.2, sy: 0.14, sz: 0.45, x: -2.2, y: 0.72, z: 0.6, c: [0.6, 0.06, 0.05] }, { sx: 0.2, sy: 0.14, sz: 0.45, x: -2.2, y: 0.72, z: -0.6, c: [0.6, 0.06, 0.05] },
+        { g: 'cyl', a: 8, sx: 0.66, sy: 0.32, sz: 0.66, x: 1.45, y: 0.33, z: 0.98, rx: Math.PI / 2, c: K }, { g: 'cyl', a: 8, sx: 0.66, sy: 0.32, sz: 0.66, x: -1.45, y: 0.33, z: 0.98, rx: Math.PI / 2, c: K },
+        { g: 'cyl', a: 8, sx: 0.66, sy: 0.32, sz: 0.66, x: 1.45, y: 0.33, z: -0.98, rx: Math.PI / 2, c: K }, { g: 'cyl', a: 8, sx: 0.66, sy: 0.32, sz: 0.66, x: -1.45, y: 0.33, z: -0.98, rx: Math.PI / 2, c: K }
+      ]);
+      return accGeometry(out);
+    }
     pushParts(out, [
       { sx: 4.5, sy: 0.55, sz: 1.9, y: 0.42, c: [1, 1, 1] },                                   // bajos (color de la carrocería)
       { sx: 4.2, sy: 0.22, sz: 1.94, y: 0.97, c: [1, 1, 1] },                                  // cintura
@@ -1772,29 +1892,35 @@
    * (blanco), 2 abaya (negra), 3 traje. El color de la instancia tiñe la ropa.
    */
   var SKIN = [0.87, 0.68, 0.55], SKIN2 = [0.62, 0.42, 0.28], HAIR = [0.12, 0.09, 0.07];
-  function avatarBodyGeometry(style) {
-    var out = newAcc(), skin = style % 2 ? SKIN2 : SKIN, parts = [];
-    var head = [{ g: 'sphere', sx: 0.27, sy: 0.3, sz: 0.27, y: 1.56, c: skin }, { g: 'cyl', a: 8, sx: 0.09, sy: 0.08, sz: 0.09, y: 1.4, c: skin }];
+  /**
+   * `ligero` (v0.11.0, los peatones): la cabeza icosaédrica de 80 triángulos y
+   * la media esfera de 70 en vez de las de 440 y 456. Un cuerpo pasa de unos mil
+   * triángulos a unos doscientos; el avatar del jugador sigue con los de siempre.
+   */
+  function avatarBodyGeometry(style, ligero) {
+    var out = newAcc(), skin = style % 2 ? SKIN2 : SKIN, parts = [], ESF = ligero ? 'ball' : 'sphere', HEM = ligero ? 'hemiL' : 'hemi';
+    var head = [{ g: ESF, sx: 0.27, sy: 0.3, sz: 0.27, y: 1.56, c: skin }, { g: 'cyl', a: 8, sx: 0.09, sy: 0.08, sz: 0.09, y: 1.4, c: skin }];
     if (style === 1) { // kandura + gutra
-      parts = [{ g: 'tcyl', a: 12, sx: 0.55, sy: 1.42, sz: 0.4, y: 0.02, c: [1, 1, 1] }, { g: 'hemi', sx: 0.34, sy: 0.22, sz: 0.34, y: 1.62, c: [1, 1, 1] },
+      parts = [{ g: 'tcyl', a: 12, sx: 0.55, sy: 1.42, sz: 0.4, y: 0.02, c: [1, 1, 1] }, { g: HEM, sx: 0.34, sy: 0.22, sz: 0.34, y: 1.62, c: [1, 1, 1] },
         { g: 'slab', sx: 0.34, sy: 0.02, sz: 0.36, y: 1.7, c: [0.1, 0.1, 0.1] }, { g: 'slab', sx: 0.36, sy: 0.55, sz: 0.06, y: 1.42, z: 0.14, c: [1, 1, 1] }];
     } else if (style === 2) { // abaya
-      parts = [{ g: 'tcyl', a: 12, sx: 0.58, sy: 1.42, sz: 0.42, y: 0.02, c: [0.06, 0.06, 0.07] }, { g: 'hemi', sx: 0.33, sy: 0.24, sz: 0.33, y: 1.6, c: [0.06, 0.06, 0.07] },
+      parts = [{ g: 'tcyl', a: 12, sx: 0.58, sy: 1.42, sz: 0.42, y: 0.02, c: [0.06, 0.06, 0.07] }, { g: HEM, sx: 0.33, sy: 0.24, sz: 0.33, y: 1.6, c: [0.06, 0.06, 0.07] },
         { g: 'slab', sx: 0.34, sy: 0.5, sz: 0.06, y: 1.45, z: 0.14, c: [0.06, 0.06, 0.07] }];
     } else {
       parts = [{ sx: 0.4, sy: 0.14, sz: 0.24, y: 0.72, c: style === 3 ? [0.12, 0.13, 0.18] : [0.2, 0.22, 0.3] }, // cadera / pantalón
         { sx: 0.44, sy: 0.56, sz: 0.26, y: 0.86, c: [1, 1, 1] },                                                    // camisa (color de instancia)
-        { g: 'hemi', sx: 0.3, sy: 0.12, sz: 0.3, y: 1.62, c: style === 3 ? HAIR : [0.85, 0.2, 0.15] }];               // pelo o gorra
+        { g: HEM, sx: 0.3, sy: 0.12, sz: 0.3, y: 1.62, c: style === 3 ? HAIR : [0.85, 0.2, 0.15] }];               // pelo o gorra
       if (style === 0) parts.push({ g: 'slab', sx: 0.3, sy: 0.03, sz: 0.16, y: 1.63, z: -0.2, c: [0.85, 0.2, 0.15] });
       if (style === 3) parts.push({ g: 'slab', sx: 0.06, sy: 0.4, sz: 0.02, y: 1.16, z: -0.14, c: [0.5, 0.08, 0.1] });
     }
     pushParts(out, parts.concat(head));
     return accGeometry(out);
   }
-  function avatarLimbGeometry(kind, style) {
-    var out = newAcc();
-    if (kind === 'arm') pushParts(out, [{ g: 'cyl', a: 8, sx: 0.11, sy: 0.58, sz: 0.11, y: -0.58, c: [1, 1, 1] }, { g: 'sphere', sx: 0.1, sy: 0.1, sz: 0.1, y: -0.62, c: style % 2 ? SKIN2 : SKIN }]);
-    else pushParts(out, [{ g: 'cyl', a: 8, sx: 0.14, sy: 0.72, sz: 0.14, y: -0.72, c: [0.2, 0.22, 0.3] }, { sx: 0.16, sy: 0.08, sz: 0.28, y: -0.76, z: -0.04, c: [0.1, 0.1, 0.1] }]);
+  /** `ligero` (v0.11.0): brazo y pierna de seis caras y mano de caja, 36 triángulos en vez de 472 el brazo. */
+  function avatarLimbGeometry(kind, style, ligero) {
+    var out = newAcc(), a = ligero ? 6 : 8;
+    if (kind === 'arm') pushParts(out, [{ g: 'cyl', a: a, sx: 0.11, sy: 0.58, sz: 0.11, y: -0.58, c: [1, 1, 1] }, ligero ? { sx: 0.09, sy: 0.1, sz: 0.07, y: -0.68, c: style % 2 ? SKIN2 : SKIN } : { g: 'sphere', sx: 0.1, sy: 0.1, sz: 0.1, y: -0.62, c: style % 2 ? SKIN2 : SKIN }]);
+    else pushParts(out, [{ g: 'cyl', a: a, sx: 0.14, sy: 0.72, sz: 0.14, y: -0.72, c: [0.2, 0.22, 0.3] }, { sx: 0.16, sy: 0.08, sz: 0.28, y: -0.76, z: -0.04, c: [0.1, 0.1, 0.1] }]);
     return accGeometry(out);
   }
   /**
@@ -1881,11 +2007,28 @@
     sky: '#cfe3f3', fog: '#e2d9c8', plant: '#3fa34d', crate: '#a8783f', road: '#4a4440',
     labelCity: '#ffffff', labelTown: '#ffe9b0', labelLandmark: '#ffd166', labelAirport: '#bfe6ff', labelBeach: '#ffd9a8', labelPort: '#c9f0ff', labelIsland: '#bfeaff', cityLabel: '#7ef0c0'
   };
+  // El acabado de imagen (v0.11.0, entrega 7) por nivel:
+  //   interiores — la habitación dentro de cada hueco de vidrio (BUILD_FS);
+  //   post       — lo que dibuja el módulo «espejismo» con su gancho `pintar`:
+  //                curva de color, niveles de resplandor, muestras de oclusión
+  //                ambiental (0 = sin ella) y su escala respecto al lienzo, y el
+  //                multimuestreo del destino intermedio; null = se dibuja directo;
+  //   cascadas   — lado del mapa de sombra de cada cascada (cercana, media,
+  //                lejana); null = una sola luz con sombra, como hasta la v0.10.16.
+  // Baja no gana nada: es la calidad de las máquinas que no pueden más.
   var QUALITY = {
-    baja: { pr: 0.75, vr: 1.0, shadows: false, shadowMap: 1024, traffic: 0, clusters: 0.4, far: 0.6, palms: 0 },
-    media: { pr: 1.0, vr: 1.2, shadows: true, shadowMap: 1536, traffic: 120, clusters: 1, far: 1, palms: 900 },
-    alta: { pr: 2, vr: 1.5, shadows: true, shadowMap: 2048, traffic: 240, clusters: 1, far: 1, palms: 2200 },
-    ultra: { pr: 3, vr: 2.0, shadows: true, shadowMap: 4096, traffic: 400, clusters: 1, far: 1, palms: 4000 }
+    // traffic (v0.11.0): los coches ya no se reparten por las 21 vías de la
+    // ciudad entera sino por las calles que rodean la cámara (ver «La vida de la
+    // calle»), y con una carrocería de 260 triángulos en vez de 484: el doble de
+    // coches cuesta lo mismo que antes.
+    baja: { pr: 0.75, vr: 1.0, shadows: false, shadowMap: 1024, traffic: 0, clusters: 0.4, far: 0.6, palms: 0,
+      interiores: false, post: null, cascadas: null },
+    media: { pr: 1.0, vr: 1.2, shadows: true, shadowMap: 1536, traffic: 240, clusters: 1, far: 1, palms: 900,
+      interiores: true, post: { curva: 1, resplandor: 3, ssao: 0, escalaAO: 0.5, msaa: 4 }, cascadas: null },
+    alta: { pr: 2, vr: 1.5, shadows: true, shadowMap: 2048, traffic: 480, clusters: 1, far: 1, palms: 2200,
+      interiores: true, post: { curva: 1, resplandor: 4, ssao: 12, escalaAO: 0.5, msaa: 4 }, cascadas: [2048, 2048, 1024] },
+    ultra: { pr: 3, vr: 2.0, shadows: true, shadowMap: 4096, traffic: 800, clusters: 1, far: 1, palms: 4000,
+      interiores: true, post: { curva: 1, resplandor: 4, ssao: 16, escalaAO: 1, msaa: 4 }, cascadas: [4096, 2048, 2048] }
   };
 
   function mount(container, opts) {
@@ -1917,6 +2060,17 @@
 
     // --- Comprobación de WebGL ANTES de tocar el DOM ------------------------
     var canvas = document.createElement('canvas'), gl = null;
+    // `antialias` se queda encendido aunque el posproceso (city/espejismo.js)
+    // dibuje la escena en su propio destino con multimuestreo y al lienzo solo
+    // llegue un triángulo de pantalla. Tres motivos: en r150 la capa de las gafas
+    // (XRWebGLLayer) hereda el `antialias` de ESTE contexto, y en VR se dibuja
+    // directo; la calidad baja no lleva posproceso y se cambia en caliente, pero
+    // los atributos del contexto no; y si el módulo falla, el núcleo dibuja al
+    // lienzo. Lo que cuesta, calculado (no medido: aquí no hay tarjeta): las
+    // cuatro muestras de color y profundidad del lienzo son 32 bytes por píxel
+    // del búfer de dibujo que, con posproceso, no se usan: 66 MB a 1920×1080,
+    // 118 MB a 2560×1440 y 265 MB a 3840×2160. El destino del posproceso suma
+    // 40 bytes por píxel (sus muestras y sus texturas resueltas).
     var glAttrs = { antialias: true, alpha: false, powerPreference: 'high-performance', preserveDrawingBuffer: false };
     try {
       gl = canvas.getContext('webgl2', glAttrs) || canvas.getContext('webgl', glAttrs) || canvas.getContext('experimental-webgl', glAttrs);
@@ -1924,7 +2078,17 @@
     if (!gl) throw new Error(t('WebGL no disponible en este navegador/webview; se usará la vista 2D.'));
 
     // --- Renderer, escena, cámara, luces ---------------------------------------
-    var renderer = new THREE.WebGLRenderer({ canvas: canvas, context: gl, antialias: true, alpha: false, logarithmicDepthBuffer: true });
+    // El experimento de la profundidad (v0.11.0; pendiente de la entrega 2 del
+    // plan). El búfer logarítmico obliga a todos los sombreadores a escribir
+    // gl_FragDepth, y eso anula el descarte temprano de fragmentos en la escena
+    // entera. Con `localStorage['rami.profundidad'] = 'lineal'` (o
+    // `opts.profundidad`) el visor monta con profundidad lineal y planos cercano
+    // y lejano que se ajustan cada cuadro (planosProfundidad). Se lee al montar:
+    // cambiarlo pide volver a abrir el visor. Lo que va por defecto sigue siendo
+    // el logarítmico hasta que alguien mida los dos en una tarjeta gráfica real.
+    var profundidad = opts.profundidad === 'lineal' ? 'lineal' : 'log';
+    try { if (!opts.profundidad && global.localStorage && global.localStorage.getItem('rami.profundidad') === 'lineal') profundidad = 'lineal'; } catch (eP) {}
+    var renderer = new THREE.WebGLRenderer({ canvas: canvas, context: gl, antialias: true, alpha: false, logarithmicDepthBuffer: profundidad !== 'lineal' });
     renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.72;
     renderer.setPixelRatio(Math.min(dpr, Q.pr));
@@ -1947,6 +2111,39 @@
     sun.castShadow = !!Q.shadows; sun.shadow.mapSize.set(Q.shadowMap, Q.shadowMap);
     sun.shadow.camera.near = 50; sun.shadow.camera.far = 6000; sun.shadow.bias = -0.0004; sun.shadow.normalBias = 1.5;
     sun.shadow.camera.left = -1400; sun.shadow.camera.right = 1400; sun.shadow.camera.top = 1400; sun.shadow.camera.bottom = -1400;
+    // Cascadas de sombra (v0.11.0, entrega 7). Una sola caja de sombra no puede
+    // ser nítida a pie y cubrir a la vez la calle entera: en alta y ultra van tres
+    // —el sol y dos luces direccionales de intensidad cero que solo proyectan
+    // sombra—, con cámaras de ~150 m, ~800 m y ~3,5 km alrededor del objetivo
+    // (updateShadowFrame). getShadowMask() de three ya multiplica todas las luces
+    // con sombra, así que los cuatro materiales propios (edificios, calzada,
+    // terreno, mar) las leen sin tocar su código; y como cada mapa devuelve 1
+    // fuera de su caja, la cercana solo cuenta donde llega. Los materiales de
+    // three (Lambert: plantas, cajas, lecho marino) NO: aplican a cada luz solo su
+    // mapa, y el del sol es aquí el de la caja cercana; por eso llevan
+    // sombraEnCascadas, que les pone la misma máscara. Añadir o quitar una
+    // luz cambia NUM_DIR_LIGHTS y recompila todos los materiales de la escena:
+    // por eso el número se fija al montar y al cambiar de calidad, nunca por cuadro.
+    var cascadas = [];
+    function montaCascadas() {
+      var tam = (Q.shadows && Q.cascadas && Q.cascadas.length > 1) ? Q.cascadas : null, i;
+      for (i = 0; i < cascadas.length; i++) {
+        scene.remove(cascadas[i]); scene.remove(cascadas[i].target);
+        if (cascadas[i].shadow.map) { cascadas[i].shadow.map.dispose(); cascadas[i].shadow.map = null; }
+      }
+      cascadas = [];
+      sun.shadow.bias = -0.0004; sun.shadow.normalBias = 1.5; sun.shadow.camera.right = 0;   // la caja de una luz sola se rehace en updateShadowFrame
+      var lado = tam ? tam[0] : Q.shadowMap;
+      sun.shadow.mapSize.set(lado, lado); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+      if (!tam) return;
+      for (i = 1; i < tam.length; i++) {
+        var l = new THREE.DirectionalLight(0xffffff, 0);
+        l.name = 'cascada' + i; l.castShadow = true; l.shadow.mapSize.set(tam[i], tam[i]);
+        l.shadow.bias = sun.shadow.bias; l.shadow.normalBias = sun.shadow.normalBias;
+        scene.add(l); scene.add(l.target); cascadas.push(l);
+      }
+    }
+    montaCascadas();
     var viewportUniform = { value: new THREE.Vector2(1, 1) };
     var lodUniform = { value: 0 };
     // Entorno: el cielo se renderiza a un mapa cúbico cada vez que cambia el sol
@@ -1966,7 +2163,9 @@
     var shared = {
       uSun: { value: sunDir.clone() }, uSunColor: { value: new THREE.Color(0xfff1d6) },
       uSkyColor: { value: new THREE.Color(0xdcecff) }, uGroundColor: { value: new THREE.Color(0x9a7f60) }, uNight: { value: 0 }, uDusk: { value: 0 },
-      uEnv: { value: envRT.texture }
+      uEnv: { value: envRT.texture },
+      // Interiores por paralaje (v0.11.0): 1 desde la calidad media.
+      uInterior: { value: Q.interiores ? 1 : 0 }
     };
     var buildMat = makeBuildingMaterial(shared, true), plainMat = makeBuildingMaterial(shared, false);
     var terrainMat = makeTerrainMaterial(shared, noiseTex, mats.arena);
@@ -2178,8 +2377,8 @@
       var crate = new THREE.BoxGeometry(a * 0.7, a * 0.7, a * 0.7); crate.translate(0, a * 0.35, 0);
       var local = new THREE.BoxGeometry(a * 1.2, a * 0.9, a * 0.8); local.translate(0, a * 0.45, 0);
       var ring = new THREE.TorusGeometry(a * 0.8, a * 0.06, 6, 20); ring.rotateX(Math.PI / 2); ring.translate(0, a * 0.08, 0);
-      C.plants = inst(cone, new THREE.MeshLambertMaterial({ color: 0xffffff }), 256, 'plants');
-      C.crates = inst(crate, new THREE.MeshLambertMaterial({ color: 0xffffff }), 256, 'crates');
+      C.plants = inst(cone, sombraEnCascadas(new THREE.MeshLambertMaterial({ color: 0xffffff })), 256, 'plants');
+      C.crates = inst(crate, sombraEnCascadas(new THREE.MeshLambertMaterial({ color: 0xffffff })), 256, 'crates');
       C.locals = inst(local, plainMat, 256, 'locals');
       C.cars = inst(carGeometry(), plainMat, 256, 'cars');
       C.rings = inst(ring, new THREE.MeshBasicMaterial({ color: new THREE.Color(colors.lease), transparent: true, opacity: 0.85 }), 256, 'rings');
@@ -2251,12 +2450,17 @@
         // esbeltez y su color del sector con el ropaje. Se escribe en metros en
         // la malla de su tesela, con el portal hacia el frente de la parcela
         // (+y de la cuadrícula, donde arranca el paseo a pie).
-        var sr = SECTOR_SRGB[kind], ed = parcelaPartes(arch, CELL, { v: real01(semillaMorfologia(x, y, 13)), v2: real01(semillaMorfologia(x, y, 14)), sy: sy, T: [Math.min(1, sr[0] * v), Math.min(1, sr[1] * v), Math.min(1, sr[2] * v)] });
+        // La pátina (v0.11.0, módulo «memoria»): el tono se templa y se apaga con
+        // los bloques transcurridos desde `since`; la curva vive en el módulo
+        // (`servicios.patina`) y sin él el color es el de siempre.
+        var sr = SECTOR_SRGB[kind], TP0 = [Math.min(1, sr[0] * v), Math.min(1, sr[1] * v), Math.min(1, sr[2] * v)];
+        if (!pend && ctx && typeof ctx.servicios.patina === 'function') TP0 = ctx.servicios.patina(d.height | 0, pc.since | 0, TP0) || TP0;
+        var ed = parcelaPartes(arch, CELL, { v: real01(semillaMorfologia(x, y, 13)), v2: real01(semillaMorfologia(x, y, 14)), sy: sy, T: TP0 });
         var y0 = S.cellH[ci] + 0.5 - ed.suelo, clave = Math.floor(w.x / TESELA_VIA) + ':' + Math.floor(w.z / TESELA_VIA);
         var TT = teselas[clave] || (teselas[clave] = { acc: newAcc(), abase: [], aflags: [] });
         _m4b.compose(_pv.set(w.x, y0, w.z), _q.setFromEuler(_e.set(0, rotR, 0)), _sv.set(1, 1, 1));
         pushParts(TT.acc, ed.p, _m4b);
-        var fachada = fachadaParcela(arch, real01(semillaMorfologia(x, y, 15)));
+        var fachada = flagsEdificio(fachadaParcela(arch, real01(semillaMorfologia(x, y, 15))), w.x, w.z);
         while (TT.abase.length * 3 < TT.acc.pos.length) { TT.abase.push(y0 + ed.suelo - 1); TT.aflags.push(fachada); }
         parcelasSolidas.push({ x: w.x, z: w.z, hw: ed.hw, hd: ed.hd, yaw: rotR, y0: y0, h: ed.top, tipo: 'parcela', id: 'parcela:' + x + ':' + y, nombre: pc.name || '', celda: ci });
         cnt.arch[arch]++;
@@ -2269,7 +2473,7 @@
             color: own ? colors.accent : '#ffffff', size: 12, bold: true, pin: true, maxDist: S.L * 0.4, priority: 2 });
         }
         if (pc.sale) {
-          saleItems.push({ x: w.x, y: w.y + LIFT * 2 + clamp(CELL * 0.2, 20, 160), z: w.z, text: '💰 ' + (pc.sale / 1e8).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + ' RAMI', color: colors.sale, size: 12, bold: true, pin: true, maxDist: S.L * 0.6, priority: 4 });
+          saleItems.push({ x: w.x, y: w.y + LIFT * 2 + clamp(CELL * 0.2, 20, 160), z: w.z, text: '🏷️ ' + (pc.sale / 1e8).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + ' RAMI', color: colors.sale, size: 12, bold: true, pin: true, maxDist: S.L * 0.6, priority: 4 });
           cnt.sale++;
         }
       }
@@ -2423,9 +2627,16 @@
       }
       return true;
     }
-    /** Punto (wx,wz) en el marco local de la huella: girar por -yaw. */
+    /**
+     * Punto (wx,wz) en el marco local de la huella, con el giro de three.js
+     * (rotation.y = yaw lleva el +x local a (cos, −sen) y el +z local a (sen,
+     * cos)), que es con el que se dibuja cada edificio. Hasta la v0.10.16 se
+     * giraba al revés: la caja de choque de un edificio girado era la de su
+     * reflejo, y en 200 edificios alargados y girados el 80 % de sus esquinas
+     * dibujadas caían fuera de ella (v0.11.0; lo destapó el grafo de las aceras).
+     */
     function aLocal(so, wx, wz, out) {
-      var dx = wx - so.x, dz = wz - so.z, c = Math.cos(-so.yaw), sn = Math.sin(-so.yaw);
+      var dx = wx - so.x, dz = wz - so.z, c = Math.cos(so.yaw), sn = Math.sin(so.yaw);
       out.x = dx * c - dz * sn; out.z = dx * sn + dz * c;
       return out;
     }
@@ -2457,8 +2668,8 @@
               if (px < pz) { ex = _loc.x >= 0 ? 1 : -1; ez = 0; d = -px; } else { ex = 0; ez = _loc.z >= 0 ? 1 : -1; d = -pz; }
             }
             var empuje = r - d;
-            var c = Math.cos(so.yaw), sn = Math.sin(so.yaw);   // volver al mundo
-            nx2 = ex * c - ez * sn; nz2 = ex * sn + ez * c;
+            var c = Math.cos(so.yaw), sn = Math.sin(so.yaw);   // volver al mundo (la inversa de aLocal)
+            nx2 = ex * c + ez * sn; nz2 = -ex * sn + ez * c;
             pos.x += nx2 * empuje; pos.z += nz2 * empuje;
             movido = true; choque = so;
           }
@@ -2505,7 +2716,7 @@
     }
     /** Rayo contra caja orientada: se gira el rayo al marco local y se hace el test de láminas. */
     function cortaCaja(so, o, dir, maxT) {
-      var c = Math.cos(-so.yaw), sn = Math.sin(-so.yaw);
+      var c = Math.cos(so.yaw), sn = Math.sin(so.yaw);   // el mismo giro que aLocal
       var ox = o.x - so.x, oz = o.z - so.z;
       var lx = ox * c - oz * sn, lz = ox * sn + oz * c;
       var dx = dir.x * c - dir.z * sn, dz = dir.x * sn + dir.z * c;
@@ -2524,7 +2735,7 @@
 
     // --- Hitos y skylines --------------------------------------------------------
     function buildLandmarks(meta) {
-      var list = meta.landmarks || [], acc = newAcc(), labels = [], i, parent = new THREE.Matrix4();
+      var list = meta.landmarks || [], acc = newAcc(), labels = [], i, parent = new THREE.Matrix4(), flags = [];
       S.landmarks = []; S.lmIndex = {};
       for (i = 0; i < list.length; i++) {
         var l = list[i], fn = SHAPES[l.shape] || SHAPES.tower;
@@ -2534,6 +2745,9 @@
         var dims = { h: l.h || 50, w: l.w || 60, d: l.d || 60 };
         parent.compose(new THREE.Vector3(w.x, hy - 1, w.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -(l.rot || 0) * Math.PI / 180, 0)), new THREE.Vector3(1, 1, 1));
         pushParts(acc, fn(dims, lcg(strSeed(l.id || l.name || ('lm' + i)))), parent);
+        // Retícula (0), como leían sin el atributo, y su id para los interiores.
+        var flH = flagsEdificio(0, w.x, w.z);
+        while (flags.length * 3 < acc.pos.length) flags.push(flH);
         var entry = { id: l.id, name: l.name, x: w.x, y: hy, z: w.z, h: dims.h, w: dims.w, d: dims.d,
           rot: (l.rot || 0) * Math.PI / 180, lat: l.lat, lon: l.lon, shape: l.shape };
         S.landmarks.push(entry); S.lmIndex[l.id] = entry;
@@ -2545,7 +2759,8 @@
         labels.push({ x: w.x, y: hy + dims.h + 12, z: w.z, text: l.name, color: colors.labelLandmark, size: 12, maxDist: S.L * 0.55, bold: false, pin: true, priority: 3 });
       }
       if (acc.pos.length) {
-        C.landmarks = new THREE.Mesh(accGeometry(acc), buildMat);
+        var gl0 = accGeometry(acc); gl0.setAttribute('aflags', new THREE.Float32BufferAttribute(flags, 1));
+        C.landmarks = new THREE.Mesh(gl0, buildMat);
         C.landmarks.castShadow = true; C.landmarks.receiveShadow = true; C.landmarks.frustumCulled = false;
         scene.add(C.landmarks);
       }
@@ -2598,6 +2813,41 @@
       return p;
     }
     /**
+     * Las franjas de las vías del mapa (v0.11.0), para que el plano de los
+     * barrios no plante un edificio en la calzada. enCalle solo conocía la trama
+     * deducida: 100 de los 3.052 edificios de barrio pisaban una de las 21 vías
+     * del mapa —60 con el centro dentro de la calzada, 35 en la Sheikh Zayed
+     * Road— y los coches y el metro elevado de city/extras.js los atravesaban.
+     * Cada vía se trocea cada 20 m con su medio ancho total (calzada, bordillo y
+     * acera, el de buildRoads) en una rejilla de 256 m.
+     */
+    function franjasDelMapa(meta) {
+      var ejes = ejesDelMapa(meta), F = { celdas: {}, R: 256 }, r, k;
+      for (r = 0; r < ejes.length; r++) {
+        var m0 = remuestrea(ejes[r].pts, S.geo, VIA_PASO), largo = 0;
+        for (k = 0; k + 1 < m0.length; k++) largo += Math.sqrt(Math.pow(m0[k + 1].x - m0[k].x, 2) + Math.pow(m0[k + 1].z - m0[k].z, 2));
+        var medio = anchoTotal(ejes[r].calzada ? ejes[r] : anchoVia(largo / 1000)), m = remuestrea(ejes[r].pts, S.geo, 20);
+        for (k = 0; k + 1 < m.length; k++) {
+          var clave = Math.floor((m[k].x + m[k + 1].x) * 0.5 / F.R) + ':' + Math.floor((m[k].z + m[k + 1].z) * 0.5 / F.R);
+          (F.celdas[clave] || (F.celdas[clave] = [])).push({ a: m[k], b: m[k + 1], medio: medio });
+        }
+      }
+      return F;
+    }
+    /** ¿Se monta un círculo de radio `margen` en (wx, wz) sobre una vía del mapa? */
+    function enViaDelMapa(F, wx, wz, margen) {
+      var ci = Math.floor(wx / F.R), cj = Math.floor(wz / F.R), i, j, n;
+      for (j = cj - 1; j <= cj + 1; j++) for (i = ci - 1; i <= ci + 1; i++) {
+        var lista = F.celdas[i + ':' + j]; if (!lista) continue;
+        for (n = 0; n < lista.length; n++) {
+          var s = lista[n], dx = s.b.x - s.a.x, dz = s.b.z - s.a.z, L2 = dx * dx + dz * dz || 1;
+          var u = clamp(((wx - s.a.x) * dx + (wz - s.a.z) * dz) / L2, 0, 1), ex = s.a.x + dx * u - wx, ez = s.a.z + dz * u - wz;
+          if (ex * ex + ez * ez < (s.medio + margen) * (s.medio + margen)) return true;
+        }
+      }
+      return false;
+    }
+    /**
      * El plano de los barrios: dónde va cada edificio, cuánto mide y cómo se
      * orienta. Se calcula una vez; las mallas se levantan aparte (buildClusters)
      * porque la calidad cambia cuántos se dibujan, no cuáles hay. Cada edificio
@@ -2605,12 +2855,12 @@
      * se plante encima de él ni de un hito.
      */
     function planificarBarrios(meta) {
-      var cl = meta.clusters || [], i, j;
-      S.edificios = []; S.rechazadosPorHuella = 0;
+      var cl = meta.clusters || [], i, j, franjas = franjasDelMapa(meta), fantasmas = catastroNuevo();
+      S.edificios = []; S.rechazadosPorHuella = 0; S.rechazadosPorVia = 0;
       for (i = 0; i < cl.length; i++) {
         var c = cl[i], rnd = lcg(c.seed || (i + 1) * 7919), cw = S.geo.toWorld(c.lat, c.lon);
-        var kind = TIPOS_BARRIO.indexOf(c.kind) >= 0 ? c.kind : 'blocks', lista = [], tries = 0;
-        for (j = 0; j < c.count && tries < c.count * 4; tries++) {
+        var kind = TIPOS_BARRIO.indexOf(c.kind) >= 0 ? c.kind : 'blocks', lista = [], tries = 0, sv = 0;
+        for (j = 0; j + sv < c.count && tries < c.count * 4; tries++) {
           var ang = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * c.radius_m;
           var x = cw.x + Math.cos(ang) * rr, z = cw.z + Math.sin(ang) * rr;
           if (!insideMap(x, z)) continue;
@@ -2624,20 +2874,35 @@
           // se queda donde queda sitio, que es exactamente como crece una ciudad.
           if (enCalle(x, z, Math.max(fw, fd) * 0.5)) continue;
           var yawLibre = rnd() * Math.PI, tono = rnd();
+          // Ni sobre una vía del mapa (v0.11.0). Va DESPUÉS de sacar yawLibre y
+          // tono, igual que huellaLibre: el intento rechazado consume de la serie
+          // del barrio lo mismo que antes, y los demás edificios no se mueven.
+          // El que pisa la vía y sin esta regla habría entrado (huella libre) se
+          // queda como FANTASMA: no se dibuja ni choca, pero ocupa su sitio para
+          // los intentos siguientes, cuenta para el total del barrio y conserva
+          // su número (`sv`; el edificio es el j + sv). Así el plano es el de
+          // antes de la regla menos los que pisaban una vía, y los demás
+          // conservan sitio, id y matiz.
+          var rh = Math.sqrt(fw * fw + fd * fd) * 0.5, libre = huellaLibre(S.catastro, x, z, rh) && huellaLibre(fantasmas, x, z, rh);
+          if (enViaDelMapa(franjas, x, z, Math.max(fw, fd) * 0.5)) {
+            S.rechazadosPorVia++;
+            if (libre) { sv++; catastroAlta(fantasmas, { x: x, z: z, hw: fw * 0.5, hd: fd * 0.5, yaw: 0 }); }
+            continue;
+          }
           // Ni sobre otro edificio ni sobre un hito (v0.10.15).
-          if (!huellaLibre(S.catastro, x, z, Math.sqrt(fw * fw + fd * fd) * 0.5)) { S.rechazadosPorHuella++; continue; }
+          if (!libre) { S.rechazadosPorHuella++; continue; }
           var ori = orientaEnTrama(x, z, yawLibre);
           // La planta y sus detalles salen de la POSICIÓN, no de la serie del
           // barrio: canal 11 de la morfología, el mismo número en toda máquina.
           var r2 = lcg(semillaMorfologia(Math.round(x), Math.round(z), 11)), v1 = r2(), v2 = r2(), v3 = r2();
-          var tl = TONOS_BARRIO[kind][Math.floor(tono * TONOS_BARRIO[kind].length)], m = 0.9 + 0.2 * hash2(j, i);
+          var tl = TONOS_BARRIO[kind][Math.floor(tono * TONOS_BARRIO[kind].length)], m = 0.9 + 0.2 * hash2(j + sv, i);
           // La celda de la cuadrícula en la que cae (o −1): si una parcela comprada
           // le pone su edificio encima, este se oculta (v0.10.16, applyCity).
           var cel = worldToCell(x, z);
           var it = { x: x, y: hg - 1, z: z, h: h + 1, w: fw, d: fd, yaw: ori.yaw, alineado: ori.alineado, kind: kind,
                      tono: [tl[0] * m, tl[1] * m, tl[2] * m], barrio: c.name || '', v: v1, v2: v2, fachada: fachadaBarrio(kind, v3),
                      celda: cel ? cel.y * N + cel.x : -1, oculto: false };
-          it.solido = { x: x, z: z, hw: fw * 0.5, hd: fd * 0.5, yaw: ori.yaw, y0: it.y, h: it.h, tipo: kind, id: kind + ':' + i + ':' + j, nombre: it.barrio };
+          it.solido = { x: x, z: z, hw: fw * 0.5, hd: fd * 0.5, yaw: ori.yaw, y0: it.y, h: it.h, tipo: kind, id: kind + ':' + i + ':' + (j + sv), nombre: it.barrio };
           catastroAlta(S.catastro, it.solido);
           lista.push(it);
           j++;
@@ -2667,7 +2932,8 @@
           var T = teselas[clave] || (teselas[clave] = { acc: newAcc(), abase: [], aflags: [] });
           _m4b.compose(_pv.set(e.x, e.y, e.z), _q.setFromEuler(_e.set(0, e.yaw, 0)), _sv.set(1, 1, 1));
           pushParts(T.acc, edificioPartes(e), _m4b);
-          while (T.abase.length * 3 < T.acc.pos.length) { T.abase.push(e.y); T.aflags.push(e.fachada); }
+          var fl = flagsEdificio(e.fachada, e.x, e.z);
+          while (T.abase.length * 3 < T.acc.pos.length) { T.abase.push(e.y); T.aflags.push(fl); }
           dibujados.push(e.solido);
           total++;
         }
@@ -2755,49 +3021,478 @@
         S.palmeras.add(m); S.trozosPalma++; S.nPalmeras += lista.length;
       }
     }
-    function buildTrafficPaths(meta) {
-      var roads = ejesDelMapa(meta), paths = [], r, i;
-      for (r = 0; r < roads.length; r++) {
-        var line = roads[r].pts; if (!line || line.length < 2) continue;
-        var pts = [], cum = [0], len = 0, prev = null;
-        for (i = 0; i < line.length; i++) {
-          var w = S.geo.toWorld(line[i][1], line[i][0]);
-          if (!insideMap(w.x, w.z)) { prev = null; continue; }
-          var p = new THREE.Vector3(w.x, groundH(w.x, w.z) + 0.6, w.z);
-          if (prev) { len += prev.distanceTo(p); cum.push(len); }
-          pts.push(p); prev = p;
-        }
-        if (pts.length < 2 || len <= 2000) continue;
-        // El ancho de la vía, medido igual que al levantarla (por su longitud
-        // remuestreada), da el sitio que tiene un coche para desviarse: del
-        // carril hacia el eje hasta quedarse a 1,2 m de él y hacia fuera hasta
-        // quedarse a 1,2 m del bordillo.
-        var m0 = remuestrea(line, S.geo, VIA_PASO), largo = 0, k;
-        for (k = 0; k + 1 < m0.length; k++) largo += Math.sqrt(Math.pow(m0[k + 1].x - m0[k].x, 2) + Math.pow(m0[k + 1].z - m0[k].z, 2));
-        var an = roads[r].calzada ? roads[r] : anchoVia(largo / 1000);
-        paths.push({ pts: pts, cum: cum, len: len, id: paths.length, desvMin: 1.2 - COCHE_CARRIL, desvMax: an.calzada * 0.5 - 1.2 - COCHE_CARRIL });
+    // --- La vida de la calle: tráfico por carriles con cesión de paso (v0.11.0) --------
+    // Hasta la v0.10.16 los coches iban por las 21 vías del mapa, todos a 4,5 m del
+    // eje, sin mirar los cruces, y al llegar al final de la vía reaparecían en el
+    // principio. Ahora:
+    //
+    //   RUTAS: cada tramo vivo de cada calle —las del mapa y las de la trama de los
+    //     barrios— es una ruta. La cinta se corta en el agua y fuera del mapa, y la
+    //     ruta se corta igual (Ras Al Khor, la costa); al final de una ruta el coche
+    //     frena y da la vuelta.
+    //   CARRILES: los pintados. El sombreador de la calzada pinta el eje doble a
+    //     0,42 m y una línea cada 3,5 m; cada hueco de 2,9 m o más es un carril. Una
+    //     troncal de 42 m lleva seis por sentido, una arteria de 26 tres, una
+    //     secundaria de 15 dos y una calle de 10 m uno. El carril de cada coche sale
+    //     de su serie y no cambia; solo se aparta de él para esquivar al jugador.
+    //   CESIÓN: resuelveCruces ya decide quién manda en cada cruce. Sobre cada ruta
+    //     quedan apuntados los cruces con otra ruta, cuál de las dos cede y dónde
+    //     está su línea de detención. El que cede se para en la línea si por la
+    //     preferente llega alguien que alcanzaría el cruce antes de que él lo haya
+    //     dejado libre (la ventana sale de su aceleración desde parado) o si hay
+    //     alguien dentro; y no entra si el de delante está parado al otro lado del
+    //     cruce, para no quedarse dentro. En la glorieta cede al que va por el
+    //     anillo, que se recorre de verdad, con la isla a la izquierda.
+    //   PEATONES: los coches se paran ante un paso de peatones que el módulo de
+    //     los peatones marca como ocupado (S.cebraOcupada), si les da para parar.
+    //   CERCANÍA: los coches viven alrededor de la cámara. El que queda a más de
+    //     1,3·R_VIVO se vuelve a poner en una calle a menos de R_VIVO; con 240
+    //     coches en calidad media hay decenas a la vista en un barrio, en vez de
+    //     uno cada cinco kilómetros repartidos por toda la ciudad. La densidad es
+    //     la misma en todas las calidades: con más coches, R_VIVO crece (1.000 m
+    //     con 240, 1.414 con 480, 1.826 con 800) y se ve tráfico más lejos, no más
+    //     apretado. No son deterministas —ni lo eran—: cada máquina ve su tráfico.
+    var RUTA_MIN = 120;                          // un tramo más corto no es una ruta
+    var R_VIVO = 1000, COCHES_DIBUJO = 1400;     // dónde viven y hasta dónde se dibujan (se reajustan en buildTraffic)
+    var RUTA_CELDA = 400;                        // rejilla para encontrar calles cerca de la cámara
+    var TANGENTE_MIRA = 45;                      // la misma tangente suavizada que la cinta
+    var ANILLO_V = 8, VUELTA_V = 4;              // velocidad en el anillo y tope al dar la vuelta
+    var VUELTA_TRAMO_MIN = 40;                   // metros entre los dos centros de vuelta para retrasarlos
+    // Un cruce más oblicuo que esto (seno 0,2: 11,5°) se trata como si fuera de
+    // 11,5°: el carril ajeno se estiraría sin fin por el propio.
+    var CRUCE_SENO_MIN = 0.2;
+    var CRUCE_HOLGURA = 0.6;                     // metros de aire entre dos carrocerías que se cruzan
+    // Un coche recolocado aparece a más de POP_MIN·R_VIVO de la cámara (ronda 1)
+    // y, desde la ronda 2, además fuera de la vista: fuera del campo de la cámara
+    // o más allá de donde se dibuja. Con solo la distancia, la revisión contó 136
+    // apariciones a 500–900 m dentro de lo dibujado (calidad media). Sin la
+    // distancia (probado: solo fuera del campo y a más de 120 m), los recolocados
+    // caían detrás de la cámara, junto al foco, y el tráfico se apretaba alrededor
+    // de quien mira: en diez minutos de ultra en el barrio de torres, con todo lo
+    // demás igual, 5 coches pasaron de un minuto parados y se abrieron 331
+    // válvulas; con la distancia, ninguno y 238.
+    var POP_MIN = 0.5;
+    // Un salto del foco de más de SALTO·R_VIVO entre dos pasos (ir a pie a otro
+    // barrio, un vuelo con cuadros de segundos) recoloca a todos alrededor del
+    // foco nuevo de una vez, sin la regla de no aparecer a la vista: no hay nada
+    // visto que conservar. Antes, al llegar, el primer minuto no había ningún
+    // coche a menos de un kilómetro.
+    var SALTO = 0.5;
+    // Un coche se dibuja si está a menos de COCHES_DIBUJO de la cámara o si su
+    // largo ocupa al menos DIBUJO_PX píxeles (ronda 2: en las vistas de la
+    // ciudad y del centro, con la cámara a kilómetros, no se dibujaba ninguno).
+    var DIBUJO_PX = 1.5;
+    // Simulación por cercanía (ronda 2): con cuadros cortos (dt ≤ LOD_DT), el
+    // coche a más de LOD_R metros de la cámara se actualiza uno de cada LOD_CADA
+    // cuadros con el tiempo acumulado, o sea, con pasos de 0,05–0,1 s como los
+    // de las pruebas de choques. En ultra, a pie o en órbita cercana, nueve de
+    // cada diez coches están a más de 400 m. A 400 m, 20 posiciones por segundo
+    // no se distinguen de 60.
+    var LOD_R = 400, LOD_CADA = 3, LOD_DT = 1 / 30;
+    var ATASCO_S = 40;                           // segundos parado en un ciclo de esperas antes del desatasco
+    var _cajas = [];                             // los cruces por delante de un coche: [d0, d1, …] en metros de marcha
+    var _frus = new THREE.Frustum(), _frusM = new THREE.Matrix4(), _frusI = new THREE.Matrix4(), _frusEsf = new THREE.Sphere(new THREE.Vector3(), 3), _frusOk = false;
+    // La válvula, 30 s: en diez minutos de hora punta con 800 coches, sin ella
+    // 163 coches pasaban de un minuto parados esperando un hueco en la preferente
+    // (ninguno en un ciclo de esperas: siempre había un coche en marcha al final
+    // de la cadena); con 45 s, 2; con 30 s, ninguno.
+    var CEDE_MARGEN = 0.8, CEDE_PACIENCIA = 30;  // segundos de margen en la ventana, y la válvula
+    var CORTESIA_ANTES = 10;                     // la preferente empieza a dejar hueco 10 s antes de la válvula
+    var COCHE_GEO = null;
+    /** Los carriles de un sentido: el centro de cada hueco entre las líneas pintadas. */
+    function carrilesDe(calzada) {
+      var half = calzada * 0.5, out = [], a = 0.42, b;
+      for (b = 3.5; a < half - 0.01; b += 3.5) {
+        var fin = Math.min(b, half);
+        if (fin - a >= 2.9) out.push((a + fin) * 0.5);
+        a = fin;
       }
-      return paths;
+      if (!out.length) out.push(half * 0.5);
+      return out;
+    }
+    /** La velocidad de crucero de una calle, en m/s, por su ancho. */
+    function vmaxDe(calzada) { return calzada >= 40 ? 30 : (calzada >= 24 ? 21 : (calzada >= 15 ? 15 : 11)); }
+    /**
+     * Lo que ocupa un cruce a lo largo de la ruta, en metros desde su centro: la
+     * calzada ajena vista desde cualquier carril propio y con el coche entero (en
+     * un cruce oblicuo, mucho más que la calzada por el eje), o la línea de
+     * detención si queda más lejos. En la glorieta, la cuerda y dos metros.
+     */
+    function alcanceConf(R, cf) {
+      if (cf.tipo === 'gl') return cf.d + 2;
+      var as = Math.abs(cf.sab), co = Math.abs(cf.cos);
+      return Math.max(cf.lin || 0, (cf.otra.semi + (R.semi + COCHE_HW) * co) / as + COCHE_HL);
+    }
+    /**
+     * Dónde da la vuelta el coche al final de la ruta (ronda 1). Hasta ahora el
+     * coche frenaba en el extremo y se iba de lado al carril simétrico cruzando en
+     * diagonal todos los carriles de los dos sentidos, sin mirar a nadie: en diez
+     * minutos, 44 solapes entre coches de la misma ruta. Ahora la vuelta es un
+     * semicírculo alrededor de un centro común en el eje (`tc1` al final, `tc0` al
+     * principio): el coche del carril k gira con radio igual a la distancia de su
+     * carril al eje y acaba en el carril k del otro sentido. Los semicírculos de
+     * los distintos carriles son concéntricos y están a 3,5 m unos de otros, así
+     * que todos los carriles pueden dar la vuelta a la vez sin tocarse; dentro de
+     * un carril se sigue la fila (ordenaColas). La zona de la vuelta —el centro, el
+     * medio coche de detrás y el semicírculo exterior con la carrocería— no puede
+     * pisar un cruce ni un paso de peatones: el centro se retrasa hasta que quede
+     * libre. Sin sitio (una ruta corta llena de cruces), la vuelta va en los
+     * extremos igual que antes del ajuste (`vueltaLibre` = false).
+     */
+    function centrosVuelta(R) {
+      var rmax = R.carriles[R.carriles.length - 1], need = Math.sqrt((rmax + COCHE_HW) * (rmax + COCHE_HW) + COCHE_HL * COCHE_HL) + 1;
+      var z = [], i, tc1 = R.len - need, tc0 = need, cambio = true, it = 0;
+      R.alcMax = 0;
+      for (i = 0; i < R.conf.length; i++) { var e = R.conf[i].alc = alcanceConf(R, R.conf[i]); R.alcMax = Math.max(R.alcMax, e); z.push([R.conf[i].t - e, R.conf[i].t + e]); }
+      for (i = 0; i < R.cebras.length; i++) z.push([R.cebras[i].t - R.cebras[i].med - 1, R.cebras[i].t + R.cebras[i].med + 1]);
+      // Ni sobre el agua (ronda 2): donde la costa corta la cinta en oblicuo, el
+      // semicírculo exterior de la vuelta pasaba por encima del agua aunque el eje
+      // no (la revisión, ruta 138). Se retrasa de 5 en 5 m hasta que quede en tierra.
+      var agua = 0;
+      while (cambio && it++ < 60) {
+        cambio = false;
+        for (i = 0; i < z.length; i++) if (z[i][1] > tc1 - COCHE_HL - 2 && z[i][0] < tc1 + need) { tc1 = z[i][0] - need - 0.01; cambio = true; }
+        if (!cambio && tc1 - 5 > need + VUELTA_TRAMO_MIN && vueltaEnAgua(R, tc1, 1, rmax)) { tc1 -= 5; cambio = true; agua++; }
+      }
+      cambio = true; it = 0;
+      while (cambio && it++ < 60) {
+        cambio = false;
+        for (i = 0; i < z.length; i++) if (z[i][0] < tc0 + COCHE_HL + 2 && z[i][1] > tc0 - need) { tc0 = z[i][1] + need + 0.01; cambio = true; }
+        if (!cambio && tc0 + 5 < R.len - need - VUELTA_TRAMO_MIN && vueltaEnAgua(R, tc0, -1, rmax)) { tc0 += 5; cambio = true; agua++; }
+      }
+      R.vueltaLibre = tc1 - tc0 >= VUELTA_TRAMO_MIN;
+      if (!R.vueltaLibre) { tc0 = need; tc1 = R.len - need; }
+      R.tc0 = tc0; R.tc1 = tc1; R.vueltaAgua = agua;
+    }
+    /** ¿Pisa el agua el semicírculo exterior (carril exterior más medio coche) de la vuelta en `tc` hacia `e`? */
+    function vueltaEnAgua(R, tc, e, rmax) {
+      var k, rho = rmax + COCHE_HW;
+      for (k = 0; k <= 12; k++) {
+        var ph = Math.PI * k / 12;
+        puntoCarril(R, clamp(tc + e * rho * Math.sin(ph), 0, R.len), e * rho * Math.cos(ph), _cq);
+        if (surfaceH(_cq.x, _cq.z) <= 0.6) return true;
+      }
+      return false;
+    }
+    /**
+     * Los tramos de cada vía que van montados sobre otra casi paralela (ronda 1).
+     * La trama de un barrio a veces cae a lo largo de una vía del mapa: la calle
+     * 203 del barrio 7 corre 900 m junto a la troncal de 42 m con los ejes a
+     * entre 1,5 y 19 m (menos de 15° entre ellas, así que resuelveCruces no ve
+     * cruce). Con tráfico por las dos, los coches se atravesaban (38 solapes en
+     * diez minutos junto a la glorieta 0). Un punto de una vía está «tapado» si
+     * a menos de lo que ocupan los carriles de las dos (el carril exterior de
+     * cada una, el medio ancho de dos coches y medio metro) hay un tramo de otra
+     * vía de más rango (a igualdad, de índice menor) que va a menos de 30° de
+     * ella. Por los tramos tapados no circula nadie; el dibujo no cambia.
+     * Devuelve, por vía, los intervalos [s0, s1] tapados (con 5 m de margen).
+     */
+    function tapadosDe(vias) {
+      var CEL = 64, idx = {}, v, j, cx, cz, out = [];
+      for (v = 0; v < vias.length; v++) {
+        var m = vias[v].muestras;
+        for (j = 0; j + 1 < m.length; j++) {
+          var x0 = Math.min(m[j].x, m[j + 1].x), x1 = Math.max(m[j].x, m[j + 1].x), z0 = Math.min(m[j].z, m[j + 1].z), z1 = Math.max(m[j].z, m[j + 1].z);
+          for (cx = Math.floor(x0 / CEL); cx <= Math.floor(x1 / CEL); cx++) for (cz = Math.floor(z0 / CEL); cz <= Math.floor(z1 / CEL); cz++) {
+            var key = cx + ':' + cz; (idx[key] || (idx[key] = [])).push(v, j);
+          }
+        }
+      }
+      function prio(a, b) { return vias[a].rango > vias[b].rango || (vias[a].rango === vias[b].rango && a < b); }
+      for (v = 0; v < vias.length; v++) {
+        var V = vias[v], tot = V.arco[V.arco.length - 1], lista = [], abierto = null, cV = carrilesDe(V.calzada), offV = cV[cV.length - 1], sp;
+        for (sp = 0; sp <= tot; sp += 5) {
+          var p = puntoArco(V.muestras, V.arco, sp), pa = puntoArco(V.muestras, V.arco, Math.max(0, sp - 5)), pb = puntoArco(V.muestras, V.arco, Math.min(tot, sp + 5));
+          var tx = pb.x - pa.x, tz = pb.z - pa.z, tl = Math.sqrt(tx * tx + tz * tz) || 1, tapa = false, q;
+          tx /= tl; tz /= tl;
+          for (cx = Math.floor((p.x - 40) / CEL); !tapa && cx <= Math.floor((p.x + 40) / CEL); cx++) for (cz = Math.floor((p.z - 40) / CEL); !tapa && cz <= Math.floor((p.z + 40) / CEL); cz++) {
+            var l = idx[cx + ':' + cz]; if (!l) continue;
+            for (q = 0; q < l.length; q += 2) {
+              var w = l[q]; if (w === v || !prio(w, v)) continue;
+              var W = vias[w], a = W.muestras[l[q + 1]], b = W.muestras[l[q + 1] + 1], dx = b.x - a.x, dz = b.z - a.z, ll = dx * dx + dz * dz; if (ll < 1e-6) continue;
+              var u = clamp(((p.x - a.x) * dx + (p.z - a.z) * dz) / ll, 0, 1), ex = a.x + dx * u - p.x, ez = a.z + dz * u - p.z;
+              var cW = carrilesDe(W.calzada), lim = offV + cW[cW.length - 1] + 2 * COCHE_HW + 0.5;
+              if (ex * ex + ez * ez > lim * lim) continue;
+              var sn = Math.abs(tx * dz - tz * dx) / Math.sqrt(ll);
+              if (sn < 0.5) { tapa = true; break; }
+            }
+          }
+          if (tapa) { if (abierto) abierto[1] = sp + 5; else { abierto = [sp - 5, sp + 5]; lista.push(abierto); } } else abierto = null;
+        }
+        out.push(lista);
+      }
+      return out;
+    }
+    /** Resta a unos intervalos [a, b] otros intervalos. */
+    function restaTramos(vv, quita) {
+      var out = vv.map(function (x) { return [x[0], x[1]]; }), i, k;
+      for (k = 0; k < quita.length; k++) {
+        var nuevo = [];
+        for (i = 0; i < out.length; i++) {
+          var a = out[i][0], b = out[i][1], qa = quita[k][0], qb = quita[k][1];
+          if (qb <= a || qa >= b) { nuevo.push([a, b]); continue; }
+          if (qa > a) nuevo.push([a, qa]);
+          if (qb < b) nuevo.push([qb, b]);
+        }
+        out = nuevo;
+      }
+      return out;
+    }
+    function buildTrafficPaths() {
+      var vias = S.vias || [], rutas = [], porVia = [], v, i, k, R, cr = S.cruces || [], tapados = tapadosDe(vias);
+      S.tapados = tapados;
+      // Una ruta no acaba dentro de una glorieta: al final de la ruta el coche da
+      // la vuelta, y dentro de la cuerda la vuelta lo llevaba de un salto a la
+      // otra mitad del anillo, encima de quien estuviera allí. El tramo vivo que
+      // acaba (o empieza) dentro de la cuerda se recorta a dos metros de la entrada.
+      var cuerdas = {};
+      for (i = 0; i < cr.length; i++) if (cr[i].gl !== undefined) {
+        (cuerdas[cr[i].a] || (cuerdas[cr[i].a] = [])).push([cr[i].sa - cr[i].dA, cr[i].sa + cr[i].dA]);
+        (cuerdas[cr[i].b] || (cuerdas[cr[i].b] = [])).push([cr[i].sb - cr[i].dB, cr[i].sb + cr[i].dB]);
+      }
+      for (v = 0; v < vias.length; v++) {
+        porVia.push([]);
+        var V = vias[v], vv = restaTramos(V.vivos || [], tapados[v]), cu = cuerdas[v] || [];
+        for (i = 0; i < vv.length; i++) {
+          var s0 = vv[i][0], s1 = vv[i][1];
+          for (k = 0; k < cu.length; k++) {
+            if (s1 > cu[k][0] && s1 < cu[k][1] + 2) s1 = cu[k][0] - 2;
+            if (s0 > cu[k][0] - 2 && s0 < cu[k][1]) s0 = cu[k][1] + 2;
+          }
+          if (s1 - s0 < RUTA_MIN) continue;
+          R = { id: rutas.length, via: v, V: V, s0: s0, s1: s1, len: s1 - s0, total: V.arco[V.arco.length - 1],
+                semi: V.calzada * 0.5, carriles: carrilesDe(V.calzada), vmax: vmaxDe(V.calzada), conf: [], cebras: [], anillos: [], trama: V.barrio >= 0 };
+          rutas.push(R); porVia[v].push(R);
+        }
+      }
+      function rutaEn(v2, s) {
+        var l = porVia[v2] || [], j;
+        for (j = 0; j < l.length; j++) if (s >= l[j].s0 - 1 && s <= l[j].s1 + 1) return l[j];
+        return null;
+      }
+      var RA, RB;
+      for (i = 0; i < cr.length; i++) {
+        var c = cr[i];
+        if (c.gl !== undefined) {
+          RA = rutaEn(c.a, c.sa); RB = rutaEn(c.b, c.sb);
+          if (RA) { RA.conf.push({ tipo: 'gl', t: c.sa - RA.s0, d: c.dA, gl: c.gl }); RA.anillos.push(RA.conf[RA.conf.length - 1]); }
+          if (RB) { RB.conf.push({ tipo: 'gl', t: c.sb - RB.s0, d: c.dB, gl: c.gl }); RB.anillos.push(RB.conf[RB.conf.length - 1]); }
+          continue;
+        }
+        RA = rutaEn(c.may, c.sMay); RB = rutaEn(c.men, c.sMen);
+        if (!RA || !RB) continue;
+        // La ventana: lo que tarda el que cede en cruzar desde parado —de la línea
+        // a dejar atrás, con el coche entero, la calzada de la otra— más un margen.
+        var ven = Math.sqrt(2 * (c.lin + vias[c.may].calzada * 0.5 / c.sen + 2 * COCHE_HL) / COCHE_ACEL) + CEDE_MARGEN;
+        var fB = { tipo: 'cede', t: c.sMen - RB.s0, lin: c.lin, caja: c.caja, otra: RA, tOtra: c.sMay - RA.s0, cajaOtra: c.cajaMay, ventana: ven };
+        var fA = { tipo: 'manda', t: c.sMay - RA.s0, caja: c.cajaMay, otra: RB, tOtra: c.sMen - RB.s0, cajaOtra: c.caja };
+        // El marco del cruce (v0.11.0, ronda 1): las dos tangentes suavizadas, las
+        // mismas con las que puntoCarril aparta los carriles. `sab` es la tangente
+        // propia por la normal ajena (±seno del ángulo) y `cos` el coseno. Con ellos,
+        // geoCruce saca dónde se cortan DE VERDAD los carriles de dos coches: en un
+        // cruce oblicuo, el carril a u metros del eje corta la otra calle u·cot θ
+        // más allá que el eje, y la caja medida por el eje no lo veía.
+        puntoCarril(RB, fB.t, 0, _pe); puntoCarril(RA, fA.t, 0, _px);
+        var sBA = -_pe.tx * _px.tz + _pe.tz * _px.tx, coAB = _pe.tx * _px.tx + _pe.tz * _px.tz;
+        if (Math.abs(sBA) < CRUCE_SENO_MIN) sBA = sBA < 0 ? -CRUCE_SENO_MIN : CRUCE_SENO_MIN;
+        fB.sab = sBA; fA.sab = -sBA; fB.cos = fA.cos = coAB; fB.par = fA; fA.par = fB;
+        RB.conf.push(fB); RA.conf.push(fA);
+      }
+      var ce = S.cebras || [];
+      for (i = 0; i < ce.length; i++) {
+        R = rutaEn(ce[i].via, ce[i].s);
+        if (R) R.cebras.push({ t: ce[i].s - R.s0, med: ce[i].med, id: ce[i].id });
+      }
+      var porT = function (a, b) { return a.t - b.t; };
+      // La rejilla de búsqueda: por casilla de 400 m, qué rutas pasan y entre qué t.
+      var celdas = {};
+      for (i = 0; i < rutas.length; i++) {
+        R = rutas[i]; R.conf.sort(porT); R.cebras.sort(porT);
+        centrosVuelta(R);
+        for (k = 0; k <= R.len; k += RUTA_CELDA * 0.5) {
+          var p = puntoArco(R.V.muestras, R.V.arco, R.s0 + k), key = Math.floor(p.x / RUTA_CELDA) + ':' + Math.floor(p.z / RUTA_CELDA);
+          var l2 = celdas[key] || (celdas[key] = []), ult = l2.length ? l2[l2.length - 1] : null;
+          if (ult && ult.R === R && k - ult.b <= RUTA_CELDA) ult.b = Math.min(R.len, k + RUTA_CELDA * 0.5);
+          else l2.push({ R: R, a: Math.max(0, k - RUTA_CELDA * 0.5), b: Math.min(R.len, k + RUTA_CELDA * 0.5) });
+        }
+      }
+      S.rutaCeldas = celdas;
+      return rutas;
+    }
+    var _cq = { x: 0, z: 0 };
+    /** El punto del carril de un coche en `t` de su ruta (sin el anillo): pone x, z, tx, tz en `out`. */
+    function puntoCarril(R, t, lateral, out) {
+      var s = R.s0 + t, V = R.V;
+      var p = puntoArco(V.muestras, V.arco, s);
+      var a = puntoArco(V.muestras, V.arco, Math.max(0, s - TANGENTE_MIRA)), b = puntoArco(V.muestras, V.arco, Math.min(R.total, s + TANGENTE_MIRA));
+      var tx = b.x - a.x, tz = b.z - a.z, tl = Math.sqrt(tx * tx + tz * tz) || 1;
+      tx /= tl; tz /= tl;
+      out.x = p.x - tz * lateral; out.z = p.z + tx * lateral; out.tx = tx; out.tz = tz;
+      return out;
+    }
+    function giro(a) { a = a % (Math.PI * 2); return a < 0 ? a + Math.PI * 2 : a; }
+    var _pe = { x: 0, z: 0, tx: 0, tz: 0 }, _px = { x: 0, z: 0, tx: 0, tz: 0 };
+    /**
+     * La pose de un coche: x, z, y, su dirección de marcha (fx, fz) y, si va por
+     * una glorieta, su ángulo en el anillo. Dentro de la cuerda de la glorieta
+     * no va recto por la isla: da la vuelta por el anillo, en el sentido en que
+     * el centro le queda a la izquierda —el contrario al de las agujas del reloj
+     * visto desde arriba con el norte arriba (x al este, z al sur: el ángulo
+     * atan2(z, x) decrece), que es el de circular por la derecha—, del punto por
+     * el que entra al punto por el que sale; en los extremos, el radio se funde
+     * con el del carril para que no haya salto.
+     *
+     * Dando la vuelta al final de la ruta (`c.vu` ≥ 0, ronda 1): por el
+     * semicírculo de radio `c.off` alrededor del punto del eje `c.vtc`, del carril
+     * k de su sentido (`c.ve`) al carril k del otro; `c.vu` son los metros de arco
+     * recorridos. El desvío que quedara se va apagando hacia el radio del carril.
+     */
+    function poseCoche(c) {
+      var R = c.R, i, a = null, lat = c.dir * (c.off + c.desvio);
+      c.anillo = -1;
+      if (c.vu >= 0) {
+        var ph = clamp(c.vu / c.off, 0, Math.PI), rho = c.off + c.desvio, e = c.ve, sn = Math.sin(ph), cs = Math.cos(ph);
+        puntoCarril(R, clamp(c.vtc + e * rho * sn, 0, R.len), e * rho * cs, _cq);
+        c.x = _cq.x; c.z = _cq.z;
+        c.fx = e * (cs * _cq.tx + sn * _cq.tz); c.fz = e * (cs * _cq.tz - sn * _cq.tx);
+        c.y = cotaVia(R.V, R.s0 + clamp(c.vtc + e * rho * sn, 0, R.len));
+        return c;
+      }
+      for (i = 0; i < R.anillos.length; i++) if (Math.abs(c.t - R.anillos[i].t) < R.anillos[i].d) { a = R.anillos[i]; break; }
+      if (a) {
+        var g = S.glorietas[a.gl], lat0 = c.dir * c.off;
+        puntoCarril(R, a.t - c.dir * a.d, lat0, _pe); puntoCarril(R, a.t + c.dir * a.d, lat0, _px);
+        var wE = Math.atan2(_pe.z - g.z, _pe.x - g.x), wX = Math.atan2(_px.z - g.z, _px.x - g.x), D = giro(wE - wX);
+        var rE = Math.sqrt((_pe.x - g.x) * (_pe.x - g.x) + (_pe.z - g.z) * (_pe.z - g.z));
+        var rX = Math.sqrt((_px.x - g.x) * (_px.x - g.x) + (_px.z - g.z) * (_px.z - g.z)), Rr = g.R - g.anillo * 0.5;
+        var f = clamp((c.t - (a.t - c.dir * a.d)) * c.dir / (2 * a.d), 0, 1), w = wE - f * D;
+        var r = f < 0.5 ? lerp(rE, Rr, smoothstep(f * 2)) : lerp(Rr, rX, smoothstep(f * 2 - 1));
+        c.x = g.x + Math.cos(w) * r; c.z = g.z + Math.sin(w) * r; c.y = g.y !== undefined ? g.y : groundH(c.x, c.z) + 0.2;
+        c.fx = Math.sin(w); c.fz = -Math.cos(w);
+        c.anillo = a.gl; c.ang = w; c.angSal = wX; c.kAnillo = clamp(2 * a.d / Math.max(1, D * Rr), 0.2, 1);
+        return c;
+      }
+      puntoCarril(R, c.t, lat, _cq);
+      c.x = _cq.x; c.z = _cq.z; c.fx = _cq.tx * c.dir; c.fz = _cq.tz * c.dir;
+      c.y = cotaVia(R.V, R.s0 + c.t);
+      return c;
+    }
+    /** Lo que busca una casilla de la rejilla de rutas alrededor de un punto. */
+    function candidatasCerca(fx, fz, radio) {
+      var out = [], total = 0, i0 = Math.floor((fx - radio) / RUTA_CELDA), i1 = Math.floor((fx + radio) / RUTA_CELDA);
+      var j0 = Math.floor((fz - radio) / RUTA_CELDA), j1 = Math.floor((fz + radio) / RUTA_CELDA), i, j, k, l;
+      for (j = j0; j <= j1; j++) for (i = i0; i <= i1; i++) {
+        l = S.rutaCeldas && S.rutaCeldas[i + ':' + j]; if (!l) continue;
+        for (k = 0; k < l.length; k++) {
+          var w = (l[k].b - l[k].a) * l[k].R.carriles.length;
+          if (w <= 0) continue;
+          total += w; out.push({ R: l[k].R, a: l[k].a, b: l[k].b, acc: total });
+        }
+      }
+      return { lista: out, total: total, x: fx, z: fz };
+    }
+    /**
+     * Pone un coche en una calle cercana al foco: ruta, punto, sentido y carril
+     * salen de la serie del tráfico. Nunca en la zona de la vuelta, dentro de un
+     * cruce ni encima de otro coche de su carril (`porRuta`, la lista por ruta).
+     * Con `ojo` (la cámara, al recolocar) tampoco a la vista (`aLaVista`: dentro
+     * del campo de la cámara y a menos de lo que se dibuja) ni a menos de
+     * POP_MIN·R_VIVO de ella: la revisión contó 50 coches en diez minutos que
+     * aparecían de golpe a menos de 250 m del foco (ronda 1) y 136 a 500–900 m
+     * de la cámara (ronda 2). Sin `ojo` (al montar el tráfico o tras un salto
+     * del foco) el último intento vale aunque no cumpla; al recolocar, si ninguno
+     * cumple, el coche espera al turno siguiente.
+     */
+    function colocaCoche(c, cand, rnd, ojo, porRuta) {
+      if (!cand.lista.length) return false;
+      var intento, e, k, j, N = 12;
+      for (intento = 0; intento < N; intento++) {
+        var pick = rnd() * cand.total;
+        for (k = 0; k < cand.lista.length - 1 && cand.lista[k].acc < pick; k++) {}
+        e = cand.lista[k];
+        var t = e.a + rnd() * (e.b - e.a), R = e.R, dir = rnd() < 0.5 ? 1 : -1, kk = Math.min(R.carriles.length - 1, Math.floor(rnd() * R.carriles.length));
+        var ultimo = !ojo && intento === N - 1;
+        // Lejos de los centros de vuelta: un coche puesto a un metro del centro
+        // empezaba a girar en el cuadro siguiente encima del que ya giraba.
+        var mv = 2 * COCHE_HL + COCHE_FRENO + 4;
+        if (t < R.tc0 + mv || t > R.tc1 - mv) { if (!ultimo) continue; t = clamp(t, R.tc0 + mv, Math.max(R.tc0 + mv, R.tc1 - mv)); }
+        var p = puntoArco(R.V.muestras, R.V.arco, R.s0 + t), mal = false;
+        if ((p.x - cand.x) * (p.x - cand.x) + (p.z - cand.z) * (p.z - cand.z) > R_VIVO * R_VIVO) mal = true;
+        if (!mal && ojo) {
+          var d2o = (p.x - ojo.x) * (p.x - ojo.x) + (p.z - ojo.z) * (p.z - ojo.z);
+          // Con el punto del eje y el radio de la calzada: el carril puede caer
+          // hasta el borde, y un carril exterior dentro del campo es un coche visto.
+          if (d2o < POP_MIN * POP_MIN * R_VIVO * R_VIVO || aLaVista(p.x, cotaVia(R.V, R.s0 + t), p.z, d2o, R.semi + 3)) mal = true;
+        }
+        // Ni dentro de un cruce ni a menos de su distancia de frenado (y 15 m)
+        // antes de uno: un coche que aparece a 24 m/s a veinte metros de un cruce
+        // no ve a tiempo al que ya lo está cruzando.
+        var v0 = R.vmax * 0.8, fr = v0 * v0 / (2 * COCHE_DECEL) + 15;
+        for (j = 0; !mal && j < R.conf.length; j++) { var dd = (R.conf[j].t - t) * dir; if (dd > -R.conf[j].alc - COCHE_HL && dd < R.conf[j].alc + COCHE_HL + fr) mal = true; }
+        var fila = porRuta && porRuta[R.id];
+        if (fila) for (j = 0; !mal && j < fila.length; j++) {
+          var o = fila[j];
+          if (o !== c && !o.fuera && o.vu < 0 && o.dir === dir && o.k === kk && Math.abs(o.t - t) < 2 * COCHE_HL + COCHE_FRENO) mal = true;
+        }
+        if (mal && !ultimo) continue;
+        c.R = R; c.t = t; c.dir = dir;
+        c.k = kk; c.off = R.carriles[c.k];
+        c.vmax = R.vmax * (0.85 + 0.15 * rnd()) * (1 - 0.03 * c.k);
+        c.vel = c.vmax * 0.8; c.desvio = 0; c.lado = 0; c.parado = 0; c.espera = 0; c.cede = null; c.conf = null; c.forzado = null; c.anillo = -1; c.vu = -1; c.dtLod = 0;
+        limitesDesvio(c, R);
+        if (porRuta) (porRuta[R.id] || (porRuta[R.id] = [])).push(c);
+        poseCoche(c);
+        return true;
+      }
+      return false;
+    }
+    /**
+     * ¿Se vería un coche en (x, y, z), a d2 (metros²) de la cámara? Dentro del
+     * campo de la cámara del último paso de updateTraffic y a menos de lo que se
+     * dibuja, con una esfera de radio `r` (3 m si no se da). Sin campo calculado
+     * (antes del primer paso), sí.
+     */
+    function aLaVista(x, y, z, d2, r) {
+      var lim = limiteDibujo() + (r || 3);
+      if (d2 > lim * lim) return false;
+      if (!_frusOk) return true;
+      _frusEsf.center.set(x, y + 1, z); _frusEsf.radius = r || 3;
+      return _frus.intersectsSphere(_frusEsf);
+    }
+    /** Hasta dónde se dibuja un coche: COCHES_DIBUJO, o más lejos mientras su largo ocupe DIBUJO_PX píxeles. */
+    function limiteDibujo() {
+      var h = (renderer.domElement && renderer.domElement.height) || 800, tf = Math.tan(camera.fov * Math.PI / 360) || 0.47;
+      return Math.max(COCHES_DIBUJO, 2 * COCHE_HL * h * 0.5 / tf / DIBUJO_PX);
     }
     function buildTraffic(count) {
       if (S.traffic && S.traffic.mesh) { scene.remove(S.traffic.mesh); S.traffic.mesh.dispose(); }
       var paths = S.trafficPaths || [], cars = [], rnd = lcg(4242), i;
       if (!paths.length || count <= 0) { S.traffic = { cars: [], mesh: null }; return; }
-      var total = 0; for (i = 0; i < paths.length; i++) total += paths[i].len;
+      if (!COCHE_GEO) COCHE_GEO = carGeometry(true);
+      R_VIVO = Math.round(1000 * Math.sqrt(count / 240)); COCHES_DIBUJO = Math.round(R_VIVO * 1.4);
+      var f = focoTrafico(), cand = candidatasCerca(f.x, f.z, R_VIVO);
+      // Sin calles cerca del foco (en el mar, en el desierto): en las de toda la ciudad.
+      if (!cand.lista.length) cand = candidatasCerca(S.geo.worldW * 0.5, S.geo.worldH * 0.5, S.L);
+      var pr = {};
       for (i = 0; i < count; i++) {
-        var pick = rnd() * total, acc = 0, pi = 0;
-        for (pi = 0; pi < paths.length; pi++) { acc += paths[pi].len; if (pick <= acc) break; }
-        pi = Math.min(pi, paths.length - 1);
-        var vc = 22 + rnd() * 14;
-        cars.push({ path: paths[pi], t: rnd() * paths[pi].len, v: vc, vel: vc, dir: rnd() < 0.5 ? 1 : -1, hue: rnd(), desvio: 0, lado: 0 });
+        var c = { i: i, hue: rnd(), col: new THREE.Color(), fuera: false, vu: -1 };
+        c.col.setHSL(c.hue, c.hue < 0.3 ? 0.1 : 0.6, 0.55);
+        if (!colocaCoche(c, cand, rnd, null, pr)) c.fuera = true;
+        cars.push(c);
       }
-      var m = new THREE.InstancedMesh(C.cars.geometry, plainMat, cars.length); m.frustumCulled = false; m.receiveShadow = true; m.name = 'traffic';
-      for (i = 0; i < cars.length; i++) m.setColorAt(i, tmpColor.setHSL(cars[i].hue, cars[i].hue < 0.3 ? 0.1 : 0.6, 0.55));
-      m.instanceColor.needsUpdate = true;
+      var m = new THREE.InstancedMesh(COCHE_GEO, plainMat, cars.length); m.frustumCulled = false; m.receiveShadow = true; m.name = 'traffic';
+      for (i = 0; i < cars.length; i++) m.setColorAt(i, cars[i].col);
+      m.instanceColor.needsUpdate = true; m.count = 0; m.visible = false;
       scene.add(m);
-      S.traffic = { cars: cars, mesh: m };
+      S.traffic = { cars: cars, mesh: m, rnd: rnd, vivo: true, turno: 0, cand: cand, candClave: null, porRuta: {}, anillos: {},
+                    valvulas: 0, recolocados: 0, desatascos: 0, cediendo: 0, anteCebra: 0, dibujados: 0, saltos: 0, focoPrev: { x: f.x, z: f.z } };
     }
-    var _tp = new THREE.Vector3(), _tq = new THREE.Vector3();
+    /** Dónde está el que mira: los pies a pie y en VR, el centro de la órbita si no. */
+    function focoTrafico() {
+      if (S.xr) return rig.position;
+      if (S.mode === 'walk') return walk.pos;
+      return cam.cur.target;
+    }
     // --- Colisión con lo que se mueve (v0.10.12) ------------------------------------
     // El jugador chocaba con las fachadas y con nada más: los coches lo
     // atravesaban y él atravesaba a los demás avatares. Ahora los coches son cajas
@@ -2814,11 +3509,11 @@
     // perfil es el de una deceleración constante: v·√(hueco / D).
     var COCHE_FRENO = 7, COCHE_DECEL = 6, COCHE_ACEL = 3;
     // El desvío (v0.10.13): el coche que ve al jugador en su carril se aparta
-    // en vez de pararse, si hay sitio. El carril va a 4,5 m del eje; el coche
-    // pasa a 2,4 m del jugador, por el lado que menos lo saque del carril, y se
-    // mueve de lado a 2,5 m/s. Solo frena si no le da tiempo a quitarse antes
-    // de llegar, o si no cabe por ningún lado.
-    var COCHE_CARRIL = 4.5, DESVIO_HOLGURA = 2.4, DESVIO_V = 2.5;
+    // en vez de pararse, si hay sitio. El coche pasa a 2,4 m del jugador, por
+    // el lado que menos lo saque de su carril, sin acercarse a menos de 1,2 m
+    // del eje ni del bordillo, y se mueve de lado a 2,5 m/s. Solo frena si no le
+    // da tiempo a quitarse antes de llegar, o si no cabe por ningún lado.
+    var DESVIO_HOLGURA = 2.4, DESVIO_V = 2.5;
     /** El punto del suelo que ocupa el jugador, o null si va volando o en órbita. */
     function jugadorEnSuelo() {
       if (S.xr) return rig.position;
@@ -2833,7 +3528,7 @@
     function empujarDeMoviles(pos, r) {
       var tocado = null, i, tr = S.traffic;
       if (tr && tr.mesh) for (i = 0; i < tr.cars.length; i++) {
-        var c = tr.cars[i]; if (c.fx === undefined) continue;
+        var c = tr.cars[i]; if (c.fx === undefined || c.fuera) continue;
         var dx = pos.x - c.x, dz = pos.z - c.z;
         if (dx * dx + dz * dz > 16) continue;                      // a más de 4 m no toca
         var al = dx * c.fx + dz * c.fz, la = -dx * c.fz + dz * c.fx;
@@ -2852,7 +3547,15 @@
       }
       for (i = 0; i < S.avatarOrder.length; i++) {
         var e = S.avatars[S.avatarOrder[i]]; if (!e) continue;
-        var ax = pos.x - e.cur.x, az = pos.z - e.cur.z, ad2 = ax * ax + az * az, rr = r + AVATAR_R;
+        // El avatar ajeno se aparta primero (v0.11.0): hasta APARTE_MAX en la
+        // dirección que los separa, y el choque se mide contra ese sitio. Solo si
+        // hace falta más, se empuja al jugador. updateAvatars lo dibuja ahí.
+        var sx0 = e.cur.x - pos.x, sz0 = e.cur.z - pos.z, sd0 = Math.sqrt(sx0 * sx0 + sz0 * sz0), rr0 = r + AVATAR_R + 0.05;
+        if (sd0 < rr0) {
+          if (sd0 < 1e-3) { sx0 = Math.sin(e.yaw); sz0 = Math.cos(e.yaw); sd0 = 1; }
+          var ap0 = Math.min(APARTE_MAX, rr0 - sd0); e.apTx = sx0 / sd0 * ap0; e.apTz = sz0 / sd0 * ap0; e.apVisto = S.frame;
+        } else { e.apTx = 0; e.apTz = 0; e.apVisto = S.frame; }
+        var ax = pos.x - e.cur.x - e.apTx, az = pos.z - e.cur.z - e.apTz, ad2 = ax * ax + az * az, rr = r + AVATAR_R;
         if (ad2 >= rr * rr) continue;
         var ad = Math.sqrt(ad2);
         if (ad < 1e-4) { ax = 1; az = 0; } else { ax /= ad; az /= ad; }
@@ -2865,83 +3568,595 @@
       if (otro) tocado = otro;
       return tocado;
     }
-    /** Por vía y sentido, cuánto hueco lleva cada coche hasta el de delante (metros por la vía). */
+    /**
+     * Por ruta, sentido y carril, cuánto hueco lleva cada coche hasta el de
+     * delante (metros por la ruta) y quién es. El primero de la fila no tiene
+     * a nadie. De paso, qué coches hay en cada ruta y en cada glorieta.
+     *
+     * Un coche que da la vuelta (ronda 1) va en dos filas de su carril: en la de
+     * su sentido de llegada como el de delante de los que llegan detrás (en
+     * `vtc` + arco − (2·medio largo + 3) + COCHE_FRENO: el de detrás no entra en el
+     * semicírculo hasta que el de delante lleva 7,6 m de arco, y con un radio
+     * menor que 2,4 m, hasta que ha salido), y en la del sentido contrario como
+     * el de detrás de los que ya salieron (en `vtc` + lo que le falta de arco):
+     * de ahí toma él a su líder.
+     */
     function ordenaColas(cars) {
-      var grupos = {}, i, k, key;
-      for (i = 0; i < cars.length; i++) { key = cars[i].path.id + ':' + cars[i].dir; (grupos[key] || (grupos[key] = [])).push(cars[i]); }
+      var tr = S.traffic, grupos = {}, i, k, key, c, ent;
+      tr.porRuta = {}; tr.anillos = {};
+      for (i = 0; i < cars.length; i++) {
+        c = cars[i]; if (c.fuera) continue;
+        if (c.vu >= 0) {
+          var arco = Math.PI * c.off;
+          key = c.R.id + ':' + (-c.ve) + ':' + c.k; (grupos[key] || (grupos[key] = [])).push({ c: c, t: c.vtc + c.ve * (arco - c.vu), d: -c.ve, suyo: true });
+          key = c.R.id + ':' + c.ve + ':' + c.k; (grupos[key] || (grupos[key] = [])).push({ c: c, t: c.vtc + c.ve * (c.vu - 2 * COCHE_HL - 3 + COCHE_FRENO), d: c.ve, suyo: false });
+        } else {
+          key = c.R.id + ':' + c.dir + ':' + c.k; (grupos[key] || (grupos[key] = [])).push({ c: c, t: c.t, d: c.dir, suyo: true });
+        }
+        (tr.porRuta[c.R.id] || (tr.porRuta[c.R.id] = [])).push(c);
+        if (c.anillo >= 0) (tr.anillos[c.anillo] || (tr.anillos[c.anillo] = [])).push(c);
+      }
       for (key in grupos) {
         if (!Object.prototype.hasOwnProperty.call(grupos, key)) continue;
-        var g = grupos[key], n = g.length, len = g[0].path.len;
-        g.sort(function (a, b) { return a.t - b.t; });
+        var g = grupos[key], n = g.length;
+        g.sort(function (a, b) { return (a.t - b.t) || (a.c.i - b.c.i); });
         for (k = 0; k < n; k++) {
-          var c = g[k];
-          if (n < 2) { c.hueco = 1e9; continue; }
-          var d = c.dir > 0 ? g[(k + 1) % n] : g[(k - 1 + n) % n];
-          var h = c.dir > 0 ? d.t - c.t : c.t - d.t;
-          if (h < 0) h += len;
-          c.hueco = h;
+          ent = g[k]; if (!ent.suyo) continue;
+          var d = ent.d > 0 ? g[k + 1] : g[k - 1];
+          ent.c.lider = d ? d.c : null; ent.c.hueco = d ? Math.abs(d.t - ent.t) : 1e9;
         }
       }
     }
+    /**
+     * Hasta dónde se aparta un coche para esquivar al jugador (`desvMin` hacia
+     * la mediana, `desvMax` hacia el bordillo, relativos al centro de su
+     * carril): hasta el borde de la calzada si por ese lado no hay otro carril
+     * de su sentido, y sin salir del suyo si lo hay. Hasta la revisión 3 de la
+     * v0.11.0 el límite era siempre el borde de la calzada: en la troncal, los
+     * coches de dos carriles vecinos se apartaban hacia el mismo hueco y se
+     * solapaban a 25 m del jugador (la fila solo mira el carril propio). Sin
+     * sitio para pasar, el coche frena ante el jugador, como ya hacía.
+     */
+    function limitesDesvio(c, R) {
+      var L = R.carriles, k = c.k;
+      c.desvMin = k > 0 ? (L[k - 1] + L[k]) * 0.5 - c.off + COCHE_HW + 0.2 : 1.2 - c.off;
+      c.desvMax = k < L.length - 1 ? (L[k] + L[k + 1]) * 0.5 - c.off - COCHE_HW - 0.2 : R.semi - 1.2 - c.off;
+    }
+    /** La velocidad en el semicírculo de la vuelta: 3 m/s² de aceleración lateral, entre 2 m/s y VUELTA_V. */
+    function vGiro(r) { return clamp(Math.sqrt(3 * r), 2, VUELTA_V); }
+    /** Segundos para recorrer `D` metros saliendo a `v0` y acelerando hasta `vmax`. */
+    function tiempoHasta(D, v0, vmax) {
+      if (D <= 0) return 0;
+      var t1 = Math.max(0, (vmax - v0) / COCHE_ACEL), d1 = v0 * t1 + 0.5 * COCHE_ACEL * t1 * t1;
+      if (D <= d1) return (-v0 + Math.sqrt(v0 * v0 + 2 * COCHE_ACEL * D)) / COCHE_ACEL;
+      return t1 + (D - d1) / Math.max(vmax, 0.5);
+    }
+    /**
+     * Dónde se cortan de verdad los carriles de dos coches en un cruce (ronda 1).
+     * Con el cruce como recta (las tangentes suavizadas del marco, `sab` y `cos`),
+     * el carril de `c` a u_c del eje y el de `y` a u_y se cortan en
+     * s_c = (u_y − u_c·cos)/sab por la ruta de `c` y en s_y = (u_c − u_y·cos)/(−sab)
+     * por la de `y`. Cada coche pisa el carril del otro mientras está a menos de
+     * `h` de ese punto: su medio largo más (medio ancho propio proyectado + medio
+     * ancho ajeno + holgura)/seno. Todo en metros «de marcha» de cada uno (crecen
+     * en su sentido, cero en el centro del cruce): `xc` y [a0, a1] para `c`, `xy`
+     * y [b0, b1] para `y`. En un cruce recto esto es la caja de siempre; en el
+     * oblicuo de 23° de la revisión, el carril exterior de una troncal de 42 m
+     * corta la calle de trama a 45 m del centro, y la caja por el eje acababa en 20.
+     */
+    var _g = { h: 0, xc: 0, a0: 0, a1: 0, xy: 0, b0: 0, b1: 0 };
+    function geoCruce(c, cf, y) {
+      var sab = cf.sab, co = cf.cos, as = Math.abs(sab);
+      var uc = c.dir * (c.off + c.desvio), uy = y.dir * (y.off + y.desvio);
+      var h = COCHE_HL + (COCHE_HW * Math.abs(co) + COCHE_HW + CRUCE_HOLGURA) / as;
+      var sc = (uy - uc * co) / sab * c.dir, sy = (uc - uy * co) / -sab * y.dir;
+      _g.h = h; _g.xc = (c.t - cf.t) * c.dir; _g.a0 = sc - h; _g.a1 = sc + h;
+      _g.xy = (y.t - cf.tOtra) * y.dir; _g.b0 = sy - h; _g.b1 = sy + h;
+      return _g;
+    }
+    /**
+     * La calzada ajena entera a lo largo del carril de `c`, en metros de marcha:
+     * entre x0 y x1 la carrocería de `c` (con la holgura de geoCruce) pisa esa
+     * calzada. Con ella, la línea de detención de cada carril (nunca más adentro
+     * que x0 − 1), dónde se para la cortesía y cuándo ha dejado atrás el cruce.
+     * Con la holgura, x0 queda antes que el principio del tramo que choca con
+     * cualquier carril ajeno (geoCruce, b0): el carril más exterior está a 1,5 m
+     * o más del borde de la calzada y el coche mide 1 m de medio ancho. Sin ella,
+     * un coche parado en x0 − 1 en un cruce oblicuo quedaba dentro del tramo de
+     * otro y los dos se esperaban un cuadro.
+     */
+    var _b = { x0: 0, x1: 0 }, _b2 = { x0: 0, x1: 0 };
+    function bandaCruce(c, cf, out) {
+      var sab = cf.sab, co = cf.cos, uc = c.dir * (c.off + c.desvio);
+      var W = cf.otra.semi + COCHE_HL * Math.abs(sab) + COCHE_HW * Math.abs(co) + CRUCE_HOLGURA;
+      var p = (-W - uc * co) / sab * c.dir, q = (W - uc * co) / sab * c.dir;
+      out.x0 = Math.min(p, q); out.x1 = Math.max(p, q);
+      return out;
+    }
+    /**
+     * ¿Es `c` el primero de su fila ante el cruce? Su líder (si lo tiene) ya ha
+     * dejado atrás la calzada ajena (`x1`, en metros de marcha de `c`). La válvula
+     * y la cortesía solo valen para él: forzar a uno del medio de la cola haría
+     * que la preferente esperase a alguien que no puede moverse. No hace falta
+     * que esté en la línea: a veces espera unos metros antes (el paso de peatones
+     * de otro cruce cae justo donde se pararía).
+     */
+    function primeroEnFila(c, cf, x1) {
+      var L = c.lider;
+      return !L || L.vu >= 0 || (L.t - cf.t) * c.dir > x1;
+    }
+    /** Dónde se para el centro de `c` ante el cruce que cede, en metros de marcha: la línea pintada o la calzada ajena, lo que llegue antes. */
+    function paradaCede(c, cf, out) {
+      bandaCruce(c, cf, out);
+      return Math.min(-cf.lin - COCHE_HL - 0.5, out.x0 - 1);
+    }
+    /**
+     * ¿Tiene que ceder `c` en el cruce `cf`? Coche a coche, con sus carriles
+     * (geoCruce): sí si `y` pisa ya el carril de `c`, o si llegará a pisarlo antes
+     * de que `c` haya dejado atrás el suyo —lo que tarda `c` desde donde está y a
+     * la velocidad que lleva, acelerando, más el margen—. Uno PARADO fuera no
+     * llega: está esperando a algo (gente en su paso, su fila), y si arranca
+     * mientras `c` cruza, frena por él (la preferente no entra en el carril de
+     * quien ya está cruzando: ver la rama «manda» de updateTraffic).
+     * Salvo (ronda 2) el que está parado ante ESTE cruce (`cajaOcupada`) porque
+     * otro coche de la ruta de `c` le cruza el carril en marcha (o forzado por la
+     * válvula): ese sí llega. Sin la excepción, mientras la preferente esperaba a
+     * que se vaciara su carril, la que cede seguía pasando en fila, sin hueco: en
+     * diez minutos de ultra junto a la glorieta 0, seis preferentes pasaron de un
+     * minuto parados (72 s el que más). Solo en marcha: si el que la para está
+     * quieto (la cortesía para ante uno que espera en su línea), ceder a esa
+     * preferente cerraba ciclos de cuatro coches (dos que ceden en sentidos
+     * contrarios y los dos sentidos de la preferente, cada uno cortés con el otro).
+     */
+    function debeCeder(c, cf) {
+      var l = S.traffic.porRuta[cf.otra.id], i;
+      if (!l) return null;
+      for (i = 0; i < l.length; i++) {
+        var y = l[i]; if (y === c || y.fuera || y.vu >= 0) continue;
+        var g = geoCruce(c, cf, y);
+        if (g.xy > g.b1) continue;                                              // ya pasó
+        if (g.xy >= g.b0) return y;                                             // dentro
+        if (y.vel < 0.5) {
+          var yz = y.causa;
+          if (y.motivo === 'cajaOcupada' && y.conf === cf.par && yz && yz !== c && (yz.vel >= 0.5 || yz.forzado)) return y;
+          continue;
+        }
+        var ta = (g.b0 - g.xy) / Math.max(y.vel, 2);
+        if (ta < tiempoHasta(g.a1 - g.xc, c.vel, c.vmax) + CEDE_MARGEN) return y;
+      }
+      return null;
+    }
+    /**
+     * La válvula solo se abre si nadie de la preferente pisa ya el carril y todos
+     * los que vienen pueden pararse antes de él. La revisión contó 39 solapes con
+     * un coche «forzado»: la válvula de antes metía el coche aunque viniera alguien
+     * dentro de su distancia de frenado.
+     */
+    function valvulaSegura(c, cf) {
+      var l = S.traffic.porRuta[cf.otra.id], i;
+      if (!l) return true;
+      for (i = 0; i < l.length; i++) {
+        var y = l[i]; if (y === c || y.fuera || y.vu >= 0) continue;
+        var g = geoCruce(c, cf, y);
+        if (g.xy > g.b1) continue;
+        if (g.xy >= g.b0) return false;
+        if (y.vel < 0.5) continue;
+        if (g.b0 - 1 - g.xy < y.vel * y.vel / (2 * COCHE_DECEL * 1.2) + 1) return false;
+      }
+      return true;
+    }
+    /**
+     * ¿Hay alguien en la otra ruta del cruce que obligue a parar a `c`? Siempre, el
+     * que ya pisa el carril de `c`. Si `c` va por la preferente (`manda`), además
+     * el que va a pisarlo: con el morro pasada su línea, forzado por la válvula,
+     * o que ya no puede pararse antes de su línea; y, por cortesía, el que lleva
+     * más de CEDE_PACIENCIA − CORTESIA_ANTES segundos esperando en su línea sin
+     * nada que le tape la salida, si `c` puede pararse con la deceleración
+     * normal: así, cuando se cumple la paciencia, ya se ha abierto el hueco que la
+     * válvula necesita en una preferente con tráfico continuo.
+     * Devuelve el más cercano y deja en `_ya.arco` los metros de marcha hasta
+     * donde `c` tiene que tener el centro, o null.
+     */
+    var _b3 = { x0: 0, x1: 0 };
+    function ocupaCarril(c, cf, manda) {
+      var l = S.traffic.porRuta[cf.otra.id], i, mejor = null, md = 1e9, xB0 = manda ? bandaCruce(c, cf, _b3).x0 : 0;
+      if (!l) return null;
+      for (i = 0; i < l.length; i++) {
+        var y = l[i]; if (y === c || y.fuera || y.vu >= 0) continue;
+        var g = geoCruce(c, cf, y), xc = g.xc, a0 = g.a0, xy = g.xy, b0 = g.b0, b1 = g.b1, pa = a0 - 1 - xc;
+        if (xc > a0 - 0.5 || xy > b1) continue;                                 // c ya no puede pararse antes; y ya pasó
+        var va = xy >= b0;
+        if (!va && manda) {
+          var cp = cf.par, yStop = paradaCede(y, cp, _b2);
+          va = y.forzado === cp || xy > yStop + 0.8 || (y.vel > 2 && yStop - xy < y.vel * y.vel / (2 * COCHE_DECEL * 1.5));
+          // La cortesía se decide una vez (con la deceleración normal) y se
+          // mantiene mientras el otro siga esperando: al frenar, la distancia
+          // que queda se acerca a v²/2a y la condición dejaría de cumplirse al
+          // cuadro siguiente, y el coche dudaría entre frenar y seguir.
+          // La cortesía para ANTES de la calzada ajena entera (x0 − 1), no solo
+          // del carril de ese coche: parado a medias queda dentro del
+          // carril de otro que espera en el mismo cruce, y los dos se esperarían
+          // (en la prueba, en cuanto la cortesía paraba ante el carril, salieron
+          // ciclos de cuatro coches: dos que ceden y dos preferentes corteses).
+          if (!va && y.conf === cp && !y.tapa && y.vel < 0.5 && primeroEnFila(y, cp, _b2.x1) && y.espera > CEDE_PACIENCIA - CORTESIA_ANTES && xc < xB0 - 0.5 &&
+              (c.cortesia === y || xB0 - 1 - xc >= c.vel * c.vel / (2 * COCHE_DECEL) + 2)) { va = true; c.cortesia = y; pa = xB0 - 1 - xc; }
+        }
+        if (va && pa < md) { md = pa; mejor = y; }
+      }
+      if (!mejor) return null;
+      _ya.y = mejor; _ya.arco = md;
+      return _ya;
+    }
+    /** ¿Tiene que ceder `c` a la entrada de la glorieta? Al que va por el anillo y pasará por su entrada. */
+    function debeCederAnillo(c, cf, wE) {
+      var l = S.traffic.anillos[cf.gl], g = S.glorietas[cf.gl], Rr = g.R - g.anillo * 0.5, i;
+      if (!l) return null;
+      for (i = 0; i < l.length; i++) {
+        var y = l[i]; if (y === c) continue;
+        var falta = giro(y.ang - wE), resta = giro(y.ang - y.angSal);
+        if (falta > Math.PI * 2 - 0.45) return y;                              // acaba de pasar: aún la tapa
+        if (falta < resta + 0.05 && falta * Rr / Math.max(y.vel, 2) < 4.5) return y;
+      }
+      return null;
+    }
+    /**
+     * El coche que `c` lleva delante en el anillo de su glorieta (de cualquier
+     * ruta) y a cuántos metros de arco, si está a menos de 30 m. El anillo se
+     * recorre con el ángulo decreciendo (poseCoche): va delante el de ángulo menor.
+     * Dos coches de vías distintas no son de la misma fila, así que sin esto el de
+     * detrás atravesaba al de delante si este frenaba en el anillo (al salir hacia
+     * un paso ocupado, por ejemplo). La cesión a la entrada ya deja hueco: en 132
+     * encuentros de prueba, ninguna caja se montó en otra.
+     */
+    var _ya = { y: null, arco: 0 };
+    function delanteEnAnillo(c) {
+      var l = S.traffic.anillos[c.anillo], g = S.glorietas[c.anillo], Rr = g.R - g.anillo * 0.5, i, mejor = null, md = 30;
+      if (!l) return null;
+      for (i = 0; i < l.length; i++) {
+        var y = l[i]; if (y === c || y.anillo !== c.anillo) continue;
+        var a = giro(c.ang - y.ang) * Rr;
+        if (a > 0.01 && a < md) { md = a; mejor = y; }
+      }
+      if (!mejor) return null;
+      _ya.y = mejor; _ya.arco = md;
+      return _ya;
+    }
+    /**
+     * El paso de peatones que hay nada más salir del cruce está ocupado: quien
+     * entrase se quedaría parado dentro de la caja, tapándole el cruce a la otra
+     * calle mientras la gente pasa. Se espera fuera.
+     */
+    function salidaTapada(c, tCruce, alcance) {
+      var ce = c.R.cebras, ocu = S.cebraOcupada, j;
+      if (!ocu) return false;
+      for (j = 0; j < ce.length; j++) {
+        var rel = (ce[j].t - tCruce) * c.dir;
+        if (rel > 0 && rel <= alcance && ocu[ce[j].id]) return true;
+      }
+      return false;
+    }
+    /**
+     * El de delante está parado justo al otro lado del cruce: entrar sería
+     * quedarse dentro. `salida`: metros de marcha desde el centro hasta el borde
+     * del cruce por el carril de `c`; detrás tiene que caber el coche entero y 3 m.
+     */
+    function cajaTapada(c, tCruce, salida) {
+      var L = c.lider;
+      return L && L.vu < 0 && L.vel < 3 && (L.t - tCruce) * c.dir < salida + 2 * COCHE_HL + 3 ? L : null;
+    }
     function updateTraffic(dt) {
       var tr = S.traffic; if (!tr || !tr.mesh) return;
-      var i, j, jug = jugadorEnSuelo();
-      ordenaColas(tr.cars);
-      for (i = 0; i < tr.cars.length; i++) {
-        var c = tr.cars[i], P = c.path;
-        // El hueco libre por delante: el coche de su cola y, si el jugador pisa el
+      var i, j, jug = jugadorEnSuelo(), cars = tr.cars;
+      // La cámara, para no recolocar coches delante de ella ni dibujar los lejanos.
+      // (A pie la cámara cuelga del rig: se refresca la cadena para no leer la
+      // posición del cuadro anterior.)
+      camera.updateWorldMatrix(true, false);
+      _cp.setFromMatrixPosition(camera.matrixWorld);
+      // El campo de la cámara, para no recolocar a nadie a la vista (ronda 2).
+      _frusI.copy(camera.matrixWorld).invert();
+      _frus.setFromProjectionMatrix(_frusM.multiplyMatrices(camera.projectionMatrix, _frusI)); _frusOk = true;
+      // Los coches viven cerca de quien mira: el que queda lejos se vuelve a poner
+      // en una calle cercana, fuera de la vista. Se miran unos pocos por cuadro, por turnos.
+      if (tr.vivo) {
+        var f = focoTrafico(), clave = Math.floor(f.x / RUTA_CELDA) + ':' + Math.floor(f.z / RUTA_CELDA);
+        if (clave !== tr.candClave) { tr.candClave = clave; tr.cand = candidatasCerca(f.x, f.z, R_VIVO); }
+        var fp = tr.focoPrev, salto = !fp || (f.x - fp.x) * (f.x - fp.x) + (f.z - fp.z) * (f.z - fp.z) > SALTO * SALTO * R_VIVO * R_VIVO;
+        tr.focoPrev = { x: f.x, z: f.z };
+        if (salto && tr.cand.lista.length) {
+          // Un salto del foco: todos alrededor del foco nuevo, como al montar el tráfico.
+          var prS = {};
+          for (j = 0; j < cars.length; j++) { cars[j].fuera = !colocaCoche(cars[j], tr.cand, tr.rnd, null, prS); cars[j].causa = null; }
+          tr.saltos++;
+        } else if (tr.cand.lista.length) {
+          var lejos = (R_VIVO * 1.3) * (R_VIVO * 1.3), mira = Math.max(8, Math.ceil(cars.length / 30));
+          for (j = 0; j < mira; j++) {
+            var cc = cars[tr.turno = (tr.turno + 1) % cars.length];
+            if (cc.fuera) continue;
+            if ((cc.x - f.x) * (cc.x - f.x) + (cc.z - f.z) * (cc.z - f.z) > lejos && colocaCoche(cc, tr.cand, tr.rnd, _cp, tr.porRuta)) tr.recolocados++;
+          }
+        }
+      }
+      ordenaColas(cars);
+      tr.cediendo = 0; tr.anteCebra = 0; tr.nPaso = (tr.nPaso || 0) + 1;
+      var lod = tr.vivo && dt > 0 && dt <= LOD_DT, nLod = 0;
+      for (i = 0; i < cars.length; i++) {
+        var c = cars[i]; if (c.fuera) continue;
+        // `dtc`: el tiempo de este coche, con lo acumulado mientras se saltaba.
+        c.dtLod = (c.dtLod || 0) + dt;
+        if (lod && (c.i + tr.nPaso) % LOD_CADA && (c.x - _cp.x) * (c.x - _cp.x) + (c.z - _cp.z) * (c.z - _cp.z) > LOD_R * LOD_R) { nLod++; continue; }
+        var dtc = c.dtLod; c.dtLod = 0;
+        var P = c.R;
+        // El hueco libre por delante: el coche de su fila y, si el jugador pisa el
         // carril, el jugador. Se para a COCHE_FRENO metros del obstáculo; antes,
         // la velocidad sigue el perfil de una deceleración constante.
-        var hueco = c.hueco, D = c.v * c.v / (2 * COCHE_DECEL), quiere = 0, enVentana = false;
-        if (jug && c.fx !== undefined) {
+        // `c.motivo`: lo que más lo frena este cuadro (para las pruebas y las cifras).
+        var hueco = c.hueco, D = c.vmax * c.vmax / (2 * COCHE_DECEL), quiere = 0, enVentana = false, vlim = c.vmax, motivo = c.lider ? 'fila' : '';
+        // `c.causa`: el coche que lo frena, si es un coche (el de delante, el que
+        // tiene preferencia, el que ocupa la caja). Con ella las pruebas buscan
+        // ciclos de espera: un bloqueo mutuo es un ciclo de coches parados.
+        var causa = c.lider, yc, xc;
+        var mira2 = c.vel * c.vel / (2 * COCHE_DECEL) + 45;
+        var gira = c.vu >= 0;
+        if (gira) {
+          // Dando la vuelta: sin desvío (el semicírculo es su carril) y sin cruces
+          // (la zona de la vuelta no pisa ninguno); solo la fila y el jugador.
+          vlim = Math.min(vlim, vGiro(c.off));
+          if (jug) {
+            var gx = jug.x - c.x, gz = jug.z - c.z, gal = gx * c.fx + gz * c.fz, gla = -gx * c.fz + gz * c.fx;
+            if (gal > 0 && gal < hueco && Math.abs(gla) < COCHE_HW + 0.6) { hueco = gal; motivo = 'jugador'; }
+          }
+        } else if (jug && c.fx !== undefined) {
           var dx = jug.x - c.x, dz = jug.z - c.z, al = dx * c.fx + dz * c.fz, la = -dx * c.fz + dz * c.fx;
           // El jugador por delante, dentro de la distancia de frenado: el coche
           // elige por qué lado pasarle. `lp` es dónde está el jugador respecto al
           // CENTRO del carril (derecha positiva); pasar por su izquierda es ir a
           // lp − holgura y por su derecha a lp + holgura, si cabe en la calzada.
-          if (al > -COCHE_HL - 3 && al < D + COCHE_FRENO) {
+          // Solo si el jugador está en su trayectoria (a menos de la holgura más
+          // el medio ancho del coche de su línea): hasta la v0.10.16 el coche se
+          // apartaba HACIA un jugador que estaba en la acera, a once metros.
+          if (al > -COCHE_HL - 3 && al < D + COCHE_FRENO && Math.abs(la) < DESVIO_HOLGURA + COCHE_HW + 0.5) {
             enVentana = true;
             var lp = la + c.desvio, izq = lp - DESVIO_HOLGURA, der = lp + DESVIO_HOLGURA;
-            var cabeI = izq >= P.desvMin, cabeD = der <= P.desvMax;
+            var cabeI = izq >= c.desvMin, cabeD = der <= c.desvMax;
             // El lado se elige UNA vez y se mantiene mientras quepa. Reelegido
             // cada cuadro, con el jugador en el centro del carril los dos lados
             // empatan y el coche se quedaba dudando entre uno y otro sin moverse.
             if ((c.lado < 0 && !cabeI) || (c.lado > 0 && !cabeD)) c.lado = 0;
             if (!c.lado) c.lado = cabeI && (!cabeD || Math.abs(izq) <= Math.abs(der)) ? -1 : (cabeD ? 1 : 0);
             quiere = c.lado < 0 ? izq : (c.lado > 0 ? der : c.desvio);   // sin sitio: se queda y frena
+            quiere = clamp(quiere, Math.min(c.desvMin, c.desvio), Math.max(c.desvMax, c.desvio));
             // Frena solo si el jugador sigue en su trayectoria y no le da tiempo
             // a quitarse antes de llegar a él (o no cabe por ningún lado).
             var tLibre = Math.abs(quiere - c.desvio) / DESVIO_V;
-            if (Math.abs(la) < DESVIO_HOLGURA && al < hueco && (al < COCHE_FRENO + c.vel * tLibre || !c.lado)) hueco = Math.max(0, al);
+            if (Math.abs(la) < DESVIO_HOLGURA && al < hueco && (al < COCHE_FRENO + c.vel * tLibre || !c.lado)) { hueco = Math.max(0, al); motivo = 'jugador'; }
           }
         }
         if (!enVentana) c.lado = 0;
-        var meta = c.v * Math.sqrt(clamp((hueco - COCHE_FRENO) / D, 0, 1));
-        c.vel = meta < c.vel ? Math.max(meta, c.vel - COCHE_DECEL * 1.5 * dt) : Math.min(meta, c.vel + COCHE_ACEL * dt);
+        // Los cruces por delante: ceder, no taparle la caja a nadie, y la
+        // glorieta. Se miran todos los que caen dentro de lo que ve (en un cruce
+        // oblicuo, el carril de otro cruce más lejano puede llegar antes que el
+        // del primero) y manda la parada más corta; `cedeAqui` es su cruce.
+        var conf = gira ? [] : P.conf, cedeAqui = null, hConf = 1e9, mConf = '', yConf = null, k0, k1, kk, frena = c.vel * c.vel / (2 * COCHE_DECEL * 1.5) - 1, nCajas;
+        c.tapa = false; nCajas = 0;
+        if (c.dir > 0) { k0 = 0; k1 = conf.length; kk = 1; } else { k0 = conf.length - 1; k1 = -1; kk = -1; }
+        for (j = k0; j !== k1; j += kk) {
+          var cf = conf[j], dC = (cf.t - c.t) * c.dir;
+          if (dC - P.alcMax > mira2) break;                            // ordenados por t: los demás, más lejos aún
+          if (dC - cf.alc > mira2) continue;
+          if (cf.tipo === 'gl') {
+            var dEnt = dC - cf.d;                                      // hasta la entrada del anillo
+            if (dEnt < -2 * cf.d) continue;                            // ya la dejó atrás
+            if (dEnt > mira2) continue;
+            if (dEnt <= 0) {                                           // dentro del anillo
+              vlim = Math.min(vlim, ANILLO_V);
+              // Por el anillo van coches de las dos vías: cada uno guarda la
+              // distancia con el que lleva delante, sea de la ruta que sea.
+              var ya = c.anillo === cf.gl ? delanteEnAnillo(c) : null;
+              if (ya && ya.arco < hueco) { hueco = ya.arco; motivo = 'anillo'; causa = ya.y; }
+              continue;
+            }
+            vlim = Math.min(vlim, Math.sqrt(ANILLO_V * ANILLO_V + 2 * COCHE_DECEL * dEnt));
+            if (dEnt - COCHE_HL > 0.3) {
+              puntoCarril(P, cf.t - c.dir * cf.d, c.dir * c.off, _pe);
+              var gg = S.glorietas[cf.gl];
+              if ((yc = debeCederAnillo(c, cf, Math.atan2(_pe.z - gg.z, _pe.x - gg.x)) || cajaTapada(c, cf.t, cf.d))) {
+                var hg = dEnt - 1.2 - COCHE_HL + COCHE_FRENO;
+                if (hg < hConf) { hConf = hg; mConf = 'glorieta'; yConf = yc; cedeAqui = cf; }
+              }
+            }
+            continue;
+          }
+          // Cruce de dos calles: la calzada ajena por el carril de este coche
+          // (bandaCruce) y, coche a coche, dónde se cortan los carriles (geoCruce).
+          xc = -dC;
+          bandaCruce(c, cf, _b);
+          var x0 = _b.x0, x1 = _b.x1;
+          if (xc > x1) continue;                                       // cruce ya pasado
+          if (x0 - xc > mira2) continue;
+          if (x0 - xc > 0.5) { _cajas[nCajas++] = x0 - xc; _cajas[nCajas++] = x1 - xc; }
+          var alcSal = Math.max(cf.caja, x1 - COCHE_HL);               // del centro al borde de salida
+          var mm = '', dS = 0, oc;
+          if (cf.tipo === 'cede') {
+            var xStop = Math.min(-cf.lin - COCHE_HL - 0.5, x0 - 1), dStop = xStop - xc;
+            if (xc > xStop + 0.8) {
+              // El morro ya pasó la línea: cruza. Pero no se mete en el carril de
+              // alguien que se ha quedado parado en medio, si le da para pararse.
+              if (c.forzado === cf) c.forzado = null;
+              if ((oc = ocupaCarril(c, cf, false)) && (oc.arco >= frena || c.vel < 4)) { mm = 'cajaOcupada'; dS = oc.arco; yc = oc.y; }
+            } else {
+              var tapa = (yc = cajaTapada(c, cf.t, alcSal)) ? 'cajaTapada' : (salidaTapada(c, cf.t, alcSal + 8) ? 'salidaTapada' : '');
+              c.tapa = c.tapa || !!tapa;
+              // La válvula: tras CEDE_PACIENCIA segundos parado en la línea del
+              // mismo cruce, el coche se mete si puede salir por el otro lado y si
+              // todos los que vienen por la preferente pueden pararse antes de su
+              // carril; ellos frenan por él (ocupaCarril). Solo se salta la cesión,
+              // no la salida tapada: forzado y parado dentro, la preferente
+              // esperaría a alguien que no se mueve.
+              if (tapa) { if (c.forzado === cf) c.forzado = null; }
+              else if (c.espera > CEDE_PACIENCIA && c.conf === cf && c.forzado !== cf && c.vel < 0.5 && primeroEnFila(c, cf, x1) && valvulaSegura(c, cf)) { c.forzado = cf; tr.valvulas++; }
+              mm = tapa; dS = dStop;
+              if (!mm && c.forzado !== cf && (yc = debeCeder(c, cf))) mm = 'cede';
+            }
+          } else {
+            // La preferente no cede, pero no entra en el carril de quien ya está
+            // cruzando (o forzado, o sin sitio ya para pararse ante su línea), ni en
+            // un cruce que no puede dejar libre. Coche a coche: aunque esté ya
+            // sobre la calzada ajena, frena antes del carril del que cruza si le da.
+            if ((oc = ocupaCarril(c, cf, true)) && (oc.arco >= frena || c.vel < 4)) { mm = 'cajaOcupada'; dS = oc.arco; yc = oc.y; }
+            else if (xc < x0 - 0.5) {
+              // No entrar en un cruce que no puede dejar libre se decide antes de
+              // su propio paso de peatones: en los cruces de dos calles de barrio el
+              // paso de la preferente cae justo donde se pararía (x0 − 1), y quien
+              // se paraba encima tapaba a la gente que cruzaba. Si ya no le da
+              // para pararse antes del paso, sigue.
+              var dEntra = x0 - 1 - xc, q, sobre = -Infinity;
+              for (q = 0; q < P.cebras.length; q++) {
+                var dq = (P.cebras[q].t - c.t) * c.dir, mq = P.cebras[q].med;
+                if (dq - mq < COCHE_HL && dq + mq > -COCHE_HL) sobre = Math.max(sobre, dq + mq + COCHE_HL + 0.3);
+                else if (dq + mq > 0 && dq - mq < x0 - xc + 1) dEntra = Math.min(dEntra, dq - mq - COCHE_HL - 1.5);
+              }
+              if (dEntra < -0.5) dEntra = x0 - 1 - xc;               // ya está sobre el paso: como antes, en el borde del cruce
+              // Con el coche encima de un paso (ronda 2), la parada es donde la cola
+              // lo deja libre, aunque sea pasado el borde del cruce: parado en el
+              // borde, la cola quedaba sobre el paso y la gente —una función del
+              // tiempo— le pasaba por encima (10 contactos en diez minutos de ultra).
+              if (sobre > dEntra) dEntra = sobre;
+              if (dEntra >= frena || c.vel < 4) {
+                yc = cajaTapada(c, cf.t, alcSal);
+                mm = yc ? 'cajaTapada' : (salidaTapada(c, cf.t, alcSal + 8) ? 'salidaTapada' : '');
+                dS = dEntra;
+              }
+            }
+          }
+          if (mm && dS + COCHE_FRENO < hConf) { hConf = dS + COCHE_FRENO; mConf = mm; yConf = yc; cedeAqui = cf; }
+        }
+        if (cedeAqui && hConf < hueco) { hueco = hConf; motivo = mConf; causa = yConf; }
+        // Los pasos de peatones ocupados, si le da para parar antes.
+        var ceb = gira ? [] : P.cebras, ocu = S.cebraOcupada;
+        if (ocu && ceb.length) {
+          if (c.dir > 0) { k0 = 0; k1 = ceb.length; kk = 1; } else { k0 = ceb.length - 1; k1 = -1; kk = -1; }
+          for (j = k0; j !== k1; j += kk) {
+            var borde = (ceb[j].t - c.t) * c.dir - ceb[j].med - COCHE_HL; // del morro al borde del paso
+            if (borde < -0.2) continue;                                // encima o pasado
+            if (borde > mira2) break;
+            if (!ocu[ceb[j].id]) continue;
+            if (borde - 1.5 >= c.vel * c.vel / (2 * COCHE_DECEL * 1.5) - 1 || c.vel < 4) {
+              if (borde - 1.5 + COCHE_FRENO < hueco) { hueco = borde - 1.5 + COCHE_FRENO; motivo = 'peaton'; causa = null; }
+              tr.anteCebra++; c.peaton = ceb[j].id;
+            }
+            break;
+          }
+        }
+        // El final de la ruta: frena hasta la velocidad del semicírculo de la vuelta.
+        if (!gira) {
+          var dFin = c.dir > 0 ? P.tc1 - c.t : c.t - P.tc0;
+          vlim = Math.min(vlim, Math.sqrt(vGiro(c.off) * vGiro(c.off) + 2 * COCHE_DECEL * Math.max(0, dFin)));
+        }
+        // Ni encima de un paso de peatones: los pasos que tiene por delante entran
+        // en la misma lista (del morro a metro y medio del paso a la cola fuera de
+        // él). Sin esto, el preferente que esperaba ante un cruce de dos calles de
+        // barrio se paraba con el morro sobre su propio paso, y la gente que
+        // empezaba a cruzar después se le metía debajo (8 contactos en diez minutos
+        // junto a la glorieta 0).
+        if (!gira) for (j = 0; j < P.cebras.length; j++) {
+          var dcb = (P.cebras[j].t - c.t) * c.dir, mcb = P.cebras[j].med;
+          if (dcb - mcb - COCHE_HL - 0.5 > 0.5 && dcb - mcb < mira2) { _cajas[nCajas++] = dcb - mcb - COCHE_HL - 0.5; _cajas[nCajas++] = dcb + mcb - 1; }
+        }
+        // No pararse dentro de un cruce (ronda 1). Si lo que lo va a parar —un
+        // cruce más allá, un paso ocupado, el de delante ya lento— lo dejaría con
+        // la carrocería dentro de la calzada de otra calle que aún no ha pisado,
+        // se para antes de ella, si le da. En diez minutos de hora punta con 800
+        // coches salió una vez un bloqueo de verdad: una cola que se paró dentro
+        // de un cruce le tapó el paso a un preferente, que a su vez tapaba el
+        // cruce de al lado al primero de esa misma cola.
+        if (nCajas && (motivo !== 'fila' || (c.lider && c.lider.vel < 3))) {
+          // Se repite con la parada nueva: echarse atrás hasta el borde de un
+          // cruce puede dejar el coche encima del paso que tiene delante.
+          // La parada nueva solo vale si le da para pararse y si no lo deja
+          // encima de ningún paso, tampoco del que ya está pisando (ese no está
+          // en la lista): si no, se queda la de antes.
+          var dPara = hueco - COCHE_FRENO, dIni = dPara, antes, vuelta2, valida = true;
+          for (vuelta2 = 0; vuelta2 < 4; vuelta2++) {
+            antes = Infinity;
+            for (j = 0; j < nCajas; j += 2) if (dPara > _cajas[j] - 1 + 1e-6 && dPara < _cajas[j + 1] + COCHE_HL + 1 && _cajas[j] - 1 < antes) antes = _cajas[j] - 1;
+            if (antes === Infinity) break;
+            if (!(antes >= frena || c.vel < 4)) { valida = false; break; }
+            dPara = antes;
+          }
+          if (valida && dPara !== dIni) {
+            for (j = 0; j < P.cebras.length; j++) { var dq2 = (P.cebras[j].t - c.t) * c.dir; if (Math.abs(dPara - dq2) < P.cebras[j].med + COCHE_HL + 0.3) { valida = false; break; } }
+            if (valida) hueco = dPara + COCHE_FRENO;
+          }
+        }
+        if (hueco >= c.hueco && motivo === 'fila' && c.hueco > D + COCHE_FRENO) { motivo = ''; causa = null; }
+        if (motivo === 'jugador' || motivo === 'salidaTapada' || motivo === '') causa = null;
+        c.motivo = motivo; c.causa = causa || null;
+        // La espera cuenta mientras está parado cediendo y solo vuelve a cero al
+        // moverse: con todos los cruces a la vista, el que más frena puede
+        // alternar entre dos cercanos, y poner la espera a cero en cada cambio
+        // dejaba la válvula sin abrirse nunca.
+        if (cedeAqui) { tr.cediendo++; c.conf = cedeAqui; c.cede = cedeAqui; }
+        else { c.cede = null; if (c.vel > 1) c.conf = null; }
+        if (c.vel > 1) c.espera = 0;
+        var meta = Math.min(vlim, c.vmax * Math.sqrt(clamp((hueco - COCHE_FRENO) / D, 0, 1)));
+        c.vel = meta < c.vel ? Math.max(meta, c.vel - COCHE_DECEL * 1.5 * dtc) : Math.min(meta, c.vel + COCHE_ACEL * dtc);
+        if (c.vel < 0.5) { c.parado += dtc; if (c.cede) c.espera += dtc; } else c.parado = 0;
         var desvioAntes = c.desvio;
-        c.desvio += clamp(quiere - c.desvio, -DESVIO_V * dt, DESVIO_V * dt);
-        c.t += c.vel * dt * c.dir;
-        if (c.t > P.len) c.t -= P.len; else if (c.t < 0) c.t += P.len;
-        for (j = 1; j < P.cum.length && P.cum[j] < c.t; j++) {}
-        j = Math.min(j, P.pts.length - 1);
-        var a = P.pts[j - 1], b = P.pts[j], segLen = P.cum[j] - P.cum[j - 1] || 1, u = (c.t - P.cum[j - 1]) / segLen;
-        _tp.lerpVectors(a, b, u); _tq.subVectors(b, a).normalize();
-        var yaw = Math.atan2(-_tq.z, _tq.x) + (c.dir < 0 ? Math.PI : 0);
+        c.desvio += clamp(quiere - c.desvio, -DESVIO_V * dtc, DESVIO_V * dtc);
+        if (gira) {
+          c.vu += c.vel * dtc;
+          if (c.vu >= Math.PI * c.off) {
+            // Vuelta hecha: carril k del otro sentido, desde el centro de la vuelta.
+            c.dir = -c.ve; c.t = clamp(c.vtc + c.dir * (c.vu - Math.PI * c.off), 0, P.len); c.vu = -1; c.forzado = null; c.conf = null;
+          }
+        } else {
+          c.t += c.vel * dtc * c.dir * (c.anillo >= 0 ? c.kAnillo : 1);
+          if ((c.dir > 0 && c.t >= P.tc1) || (c.dir < 0 && c.t <= P.tc0)) {
+            // Empieza la vuelta: el arco que ya ha recorrido pasado el centro.
+            c.ve = c.dir; c.vtc = c.dir > 0 ? P.tc1 : P.tc0; c.vu = Math.abs(c.t - c.vtc); c.t = c.vtc; c.lado = 0; c.forzado = null;
+          }
+        }
+        poseCoche(c);
         // Al desviarse gira el morro lo que dicta su velocidad de lado: girar a
         // la derecha es girar en sentido horario visto desde arriba, o sea, yaw
         // negativo.
-        if (dt > 0) yaw -= Math.atan2((c.desvio - desvioAntes) / dt, Math.max(c.vel, 1));
-        // carril: a la derecha del sentido de marcha (4,5 m), más el desvío
-        var side = c.dir * (COCHE_CARRIL + c.desvio);
-        _tp.x += -_tq.z * side; _tp.z += _tq.x * side;
-        _tp.y = groundH(_tp.x, _tp.z) + 0.4;
-        // La pose se guarda: es lo que consultan el empuje del jugador y el
-        // frenado del cuadro siguiente.
-        c.x = _tp.x; c.z = _tp.z; c.fx = _tq.x * c.dir; c.fz = _tq.z * c.dir;
-        dummy.position.copy(_tp); dummy.rotation.set(0, yaw, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix();
-        tr.mesh.setMatrixAt(i, dummy.matrix);
+        c.yaw = Math.atan2(-c.fz, c.fx);
+        // El morro sigue al desvío, con tope de 0,35 rad: un coche recolocado
+        // (desvío a 0 de golpe) o casi parado salía girado hasta 51° respecto
+        // a su carril (revisión 3 de la v0.11.0).
+        if (dtc > 0 && c.anillo < 0 && c.vu < 0) c.yaw -= clamp(Math.atan2((c.desvio - desvioAntes) / dtc, Math.max(c.vel, 1)), -0.35, 0.35);
       }
-      tr.mesh.instanceMatrix.needsUpdate = true;
+      // El desatasco (ronda 1): un coche parado más de ATASCO_S segundos que está
+      // en un ciclo de esperas (siguiendo `causa` se vuelve a él) no va a salir
+      // nunca. De los del ciclo, el más lejano a la cámara se recoloca lejos de
+      // ella, como los que se alejan. La regla de arriba (no pararse dentro de un
+      // cruce) los evita casi siempre: esto es la red de seguridad.
+      for (i = 0; i < cars.length; i++) {
+        var ca = cars[i]; if (ca.fuera || ca.parado < ATASCO_S) continue;
+        // Se quita el del ciclo que no se ve (el más lejano de los que no se ven)
+        // o, si se ven todos, el más lejano (ronda 2).
+        var cx = ca.causa, nq = 0, ciclo = false, peor = ca, dmax = (ca.x - _cp.x) * (ca.x - _cp.x) + (ca.z - _cp.z) * (ca.z - _cp.z);
+        var oculto = !aLaVista(ca.x, ca.y, ca.z, dmax);
+        while (cx && nq < 16) {
+          if (cx === ca) { ciclo = true; break; }
+          if (cx.vel >= 0.5 || cx.fuera) break;
+          var dq = (cx.x - _cp.x) * (cx.x - _cp.x) + (cx.z - _cp.z) * (cx.z - _cp.z), oc = !aLaVista(cx.x, cx.y, cx.z, dq);
+          if ((oc && !oculto) || (oc === oculto && dq > dmax)) { dmax = dq; peor = cx; oculto = oc; }
+          cx = cx.causa; nq++;
+        }
+        if (ciclo && tr.cand && tr.cand.lista.length && colocaCoche(peor, tr.cand, tr.rnd, _cp, tr.porRuta)) { tr.desatascos++; peor.causa = null; }
+      }
+      // Se dibujan los que quedan a menos de limiteDibujo() de la cámara (`_cp`,
+      // leída al principio); los demás siguen vivos pero no se envían.
+      var m = tr.mesh, n = 0, lim = limiteDibujo() * limiteDibujo();
+      for (i = 0; i < cars.length; i++) {
+        var cd = cars[i]; if (cd.fuera) continue;
+        if ((cd.x - _cp.x) * (cd.x - _cp.x) + (cd.z - _cp.z) * (cd.z - _cp.z) > lim) continue;
+        dummy.position.set(cd.x, cd.y, cd.z); dummy.rotation.set(0, cd.yaw, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix();
+        m.setMatrixAt(n, dummy.matrix); m.setColorAt(n, cd.col); n++;
+      }
+      m.count = n; m.visible = n > 0; tr.dibujados = n; tr.saltadosLod = nLod;
+      m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true;
     }
 
     // --- Avatares (presencia efímera de la red) -----------------------------------
@@ -2986,12 +4201,20 @@
       // Pivote en el hombro/cadera: T(mundo) · Ry(guiñada) · Rx(balanceo).
       var yaw = rotR - e.yaw;
       _lo.set(ox * Math.cos(yaw) + oz * Math.sin(yaw), oy, -ox * Math.sin(yaw) + oz * Math.cos(yaw));
-      dummy.position.set(e.cur.x + _lo.x, e.cur.y + e.bob + oy, e.cur.z + _lo.z);
+      dummy.position.set(e.cur.x + (e.apx || 0) + _lo.x, e.cur.y + e.bob + oy, e.cur.z + (e.apz || 0) + _lo.z);
       dummy.rotation.set(swing, yaw, 0, 'YXZ'); dummy.scale.set(1, sy || 1, 1);
       dummy.updateMatrix(); mesh.setMatrixAt(idx, dummy.matrix); mesh.setColorAt(idx, e.color);
     }
+    // Un avatar ajeno va donde dice su cliente, y hasta la v0.10.16 el que se
+    // apartaba era siempre el jugador local: el otro se le metía encima y lo
+    // empujaba. Desde la v0.11.0 el ajeno que se solapa con el jugador se DIBUJA
+    // apartado —hasta 0,9 m, en la dirección que los separa— y el choque se mide
+    // contra donde se dibuja; su posición de red no cambia. Si se le sigue
+    // empujando más allá de esos 0,9 m, el que se mueve es el jugador, como antes.
+    var APARTE_MAX = 0.9;
     function updateAvatars(dt) {
       var n = S.avatarOrder.length, i, k = 1 - Math.exp(-dt * 4), counts = [0, 0, 0, 0], legs = 0, st;
+      var jug = jugadorEnSuelo(), ka = 1 - Math.exp(-dt * 8);
       for (st = 0; st < 4; st++) { C['avBody' + st] = ensureCap('avBody' + st, C['avBody' + st].geometry, C['avBody' + st].material, Math.max(n, 1), true); C['avArm' + st] = ensureCap('avArm' + st, C['avArm' + st].geometry, C['avArm' + st].material, Math.max(2 * n, 1), true); }
       C.avLeg = ensureCap('avLeg', C.avLeg.geometry, C.avLeg.material, Math.max(2 * n, 1), true);
       for (i = 0; i < n; i++) {
@@ -3003,12 +4226,17 @@
         var swing = Math.sin(e.phase) * 0.7 * e.moving, robe = e.style === 1 || e.style === 2;
         e.bob = Math.abs(Math.sin(e.phase)) * 0.045 * e.moving + Math.sin(e.phase * 0.5) * 0.01;
         var dy = e.yawT - e.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); e.yaw += dy * k;
+        // Lo que decidió el choque de este cuadro (empujarDeMoviles); sin jugador en
+        // el suelo, o si el choque no ha corrido desde hace un cuadro, vuelve a su sitio.
+        var fresco = jug && e.apVisto !== undefined && S.frame - e.apVisto <= 1;
+        var tax = fresco ? e.apTx : 0, taz = fresco ? e.apTz : 0;
+        e.apx = (e.apx || 0) + (tax - (e.apx || 0)) * ka; e.apz = (e.apz || 0) + (taz - (e.apz || 0)) * ka;
         var bi = counts[e.style]++, body = C['avBody' + e.style], arms = C['avArm' + e.style];
         // guiñada de la cuadrícula: 0 = norte local (−z local)
-        place(body, bi, e.cur.x, e.cur.y + e.bob, e.cur.z, 1, 1, 1, e.color, rotR - e.yaw);
+        place(body, bi, e.cur.x + e.apx, e.cur.y + e.bob, e.cur.z + e.apz, 1, 1, 1, e.color, rotR - e.yaw);
         limb(arms, bi * 2, e, -0.29, 1.34, 0, swing * 0.8, 1); limb(arms, bi * 2 + 1, e, 0.29, 1.34, 0, -swing * 0.8, 1);
         if (!robe) { limb(C.avLeg, legs++, e, -0.11, 0.76, 0, -swing, 1); limb(C.avLeg, legs++, e, 0.11, 0.76, 0, swing, 1); }
-        if (C.avatarLabels.items.length > i) C.avatarLabels.move(i, e.cur.x, e.cur.y + e.bob + 2.3, e.cur.z);
+        if (C.avatarLabels.items.length > i) C.avatarLabels.move(i, e.cur.x + e.apx, e.cur.y + e.bob + 2.3, e.cur.z + e.apz);
       }
       for (st = 0; st < 4; st++) { finish(C['avBody' + st], counts[st]); finish(C['avArm' + st], counts[st] * 2); }
       finish(C.avLeg, legs);
@@ -3072,7 +4300,7 @@
         txt = t(sectorName(clamp(p.kind | 0, 0, SECTOR_NAMES.length - 1))) + ' (' + x + ', ' + y + ')';
         if (p.name) txt += ' · ' + p.name;
         if (S.city && S.city.me && p.owner === S.city.me) txt += ' · ' + t('Mía');
-        if (p.sale) txt += ' · 💰 ' + (p.sale / 1e8).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + ' RAMI';
+        if (p.sale) txt += ' · 🏷️ ' + (p.sale / 1e8).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + ' RAMI';
       } else txt = t(S.cellSea[y * N + x] ? 'Parcela libre (mar)' : 'Parcela libre') + ' (' + x + ', ' + y + ')';
       if (d) txt += ' · ' + d.nombre;
       var w = cellWorld(x, y);
@@ -3452,7 +4680,11 @@
       Q = QUALITY[name]; qualityName = name;
       renderer.setPixelRatio(Math.min(dpr, Q.pr));
       renderer.shadowMap.enabled = !!Q.shadows; sun.castShadow = !!Q.shadows;
-      sun.shadow.mapSize.set(Q.shadowMap, Q.shadowMap); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+      // Las cascadas (y el lado de cada mapa) se rehacen aquí y solo aquí: cambiar
+      // el número de luces recompila los materiales, que es lo que hace la línea
+      // de needsUpdate de abajo de todos modos.
+      montaCascadas();
+      shared.uInterior.value = Q.interiores ? 1 : 0;
       if (S.ready) { buildTraffic(Q.traffic); buildPalms(); buildClusters(); }
       scene.traverse(function (o) { if (o.material && o.material.needsUpdate !== undefined) o.material.needsUpdate = true; });
       buildMat.needsUpdate = true; plainMat.needsUpdate = true; terrainMat.needsUpdate = true;
@@ -3483,7 +4715,7 @@
       scene.add(S.sea);
       var bedGeo = new THREE.PlaneGeometry(S.L * 8, S.L * 8, 1, 1); bedGeo.rotateX(-Math.PI / 2);
       var bedCol = new Uint8Array(3); terrainColor(bedH, 0, 0, bedCol, 0);
-      S.seabed = new THREE.Mesh(bedGeo, new THREE.MeshLambertMaterial({ color: new THREE.Color(bedCol[0] / 255, bedCol[1] / 255, bedCol[2] / 255) }));
+      S.seabed = new THREE.Mesh(bedGeo, sombraEnCascadas(new THREE.MeshLambertMaterial({ color: new THREE.Color(bedCol[0] / 255, bedCol[1] / 255, bedCol[2] / 255) })));
       S.seabed.position.set(S.center.x, bedH + 5, S.center.z); S.seabed.frustumCulled = false;
       scene.add(S.seabed);
       S.sky = makeSky(1000, skyMat); scene.add(S.sky);
@@ -3500,7 +4732,7 @@
       S.catastro = catastroNuevo();
       buildLandmarks(meta);
       buildClusters(meta);
-      S.trafficPaths = buildTrafficPaths(meta);
+      S.trafficPaths = buildTrafficPaths();
       buildTraffic(Q.traffic);
       buildPalms();
       // Etiquetas de lugares
@@ -3629,20 +4861,25 @@
       var sem = semillaMorfologia(Math.round(w.x / CELL), Math.round(w.z / CELL), 9);
       var ang = real01(sem) * Math.PI;            // el giro de la retícula
       var R = (c.radius_m || 600) * 0.94;
+      // calzada, acera y tipo (v0.11.0): los peatones de city/vida.js rehacen
+      // con ellos las aceras y las esquinas de la retícula.
       S.tramas.push({ x: w.x, z: w.z, R: R, ang: ang, paso: t.paso,
-                      medio: t.calzada * 0.5 + t.acera, radio: radioEsquina(t.calzada) });
+                      medio: t.calzada * 0.5 + t.acera, radio: radioEsquina(t.calzada),
+                      calzada: t.calzada, acera: t.acera, kind: c.kind || 'blocks' });
       var cs = Math.cos(ang), sn = Math.sin(ang), lineas = [], n = Math.floor(R / t.paso), i, d, semi;
       for (i = -n; i <= n; i++) {
         d = i * t.paso;
         semi = Math.sqrt(Math.max(0, R * R - d * d));   // cuerda del círculo a esa altura
         if (semi < t.paso * 0.6) continue;              // tramos demasiado cortos: sobran
         // Familia paralela al giro, y la perpendicular.
+        // `k` (v0.11.0): el índice de la línea en su familia, para que una calle
+        // de la trama se sepa en qué fila de la retícula está.
         lineas.push({ pts: [{ x: w.x + cs * -semi - sn * d, z: w.z + sn * -semi + cs * d },
                             { x: w.x + cs * semi - sn * d, z: w.z + sn * semi + cs * d }],
-                      calzada: t.calzada, acera: t.acera, familia: 0 });
+                      calzada: t.calzada, acera: t.acera, familia: 0, k: i });
         lineas.push({ pts: [{ x: w.x + cs * d - sn * -semi, z: w.z + sn * d + cs * -semi },
                             { x: w.x + cs * d - sn * semi, z: w.z + sn * d + cs * semi }],
-                      calzada: t.calzada, acera: t.acera, familia: 1 });
+                      calzada: t.calzada, acera: t.acera, familia: 1, k: i });
       }
       return lineas;
     }
@@ -3854,7 +5091,9 @@
           }
         }
       }
-      var glorietas = [], n = 0, a, b;
+      // `cruces` (v0.11.0): cada cruce resuelto, con quién manda y dónde están sus
+      // líneas, para que el tráfico sepa dónde ceder (buildTrafficPaths).
+      var glorietas = [], cruces = [], n = 0, a, b;
       for (key in celdas) {
         if (!Object.prototype.hasOwnProperty.call(celdas, key)) continue;
         lista = celdas[key];
@@ -3890,7 +5129,8 @@
               }
               // Tres vías que concurren en un punto dan tres parejas: el anillo se
               // levanta una sola vez, pero las tres se cortan.
-              if (!rep) glorietas.push({ x: c.x, z: c.z, R: Rg, anillo: anillo });
+              if (!rep) { glorietas.push({ x: c.x, z: c.z, R: Rg, anillo: anillo }); q = glorietas.length - 1; }
+              cruces.push({ a: ia, b: ib, sa: sa, sb: sb, gl: q, dA: dA, dB: dB });
               A.cortes.push([sa - dA, sa + dA]);
               B.cortes.push([sb - dB, sb + dB]);
               // Ceda el paso en las cuatro entradas, metro y pico antes del anillo.
@@ -3947,6 +5187,17 @@
             var sLin = (co2 + dLin) / c.sen, sCe1 = (co2 + dCeb) / c.sen, sCe2 = (co2 + dCeb + 2.5) / c.sen;
             menor.marcas.push({ s: sMen - sLin, lado: 1, tipo: 4 }, { s: sMen + sLin, lado: -1, tipo: 4 });
             menor.marcas.push({ s: sMen - sCe2, s2: sMen - sCe1, tipo: 6 }, { s: sMen + sCe1, s2: sMen + sCe2, tipo: 6 });
+            // Y en la preferente, si las dos son calles de barrio (v0.11.0): sin
+            // ese paso, quien vive a un lado de la calle principal del barrio no
+            // tenía por dónde cruzarla. Misma medida, desde la acera de la que
+            // cede. Las vías del mapa no llevan: son autovías.
+            if (mayor.rango < 1000) {
+              var dCebM = 0.45 + menor.acera + 0.3, co1 = menor.calzada * 0.5;
+              var sM1 = (co1 + dCebM) / c.sen, sM2 = (co1 + dCebM + 2.5) / c.sen;
+              mayor.marcas.push({ s: sMay - sM2, s2: sMay - sM1, tipo: 6 }, { s: sMay + sM1, s2: sMay + sM2, tipo: 6 });
+            }
+            cruces.push({ may: mayor === A ? ia : ib, men: mayor === A ? ib : ia, sMay: sMay, sMen: sMen, sen: c.sen,
+                          lin: sLin, caja: acMay / c.sen, cajaMay: menor.calzada * 0.5 / c.sen });
           }
         }
       }
@@ -3954,7 +5205,66 @@
         lineas[i].cajas = fundeTramos(lineas[i].cajas);
         lineas[i].cortes = fundeTramos(lineas[i].cortes);
       }
-      return { n: n, glorietas: glorietas };
+      return { n: n, glorietas: glorietas, cruces: cruces };
+    }
+    /**
+     * La cota de la calzada de una vía en `s` (v0.11.0): la de sus filas,
+     * interpolada. Donde la cinta de la que cede falta —dentro del cruce— sale
+     * de las dos filas que lo rodean, que están a la cota común del cruce.
+     */
+    function cotaVia(v, s) {
+      var fs = v.filasS, fy = v.filasY, lo = 0, hi = fs ? fs.length - 1 : -1, mid;
+      if (hi < 0) return 0;
+      if (s <= fs[0]) return fy[0];
+      if (s >= fs[hi]) return fy[hi];
+      while (lo + 1 < hi) { mid = (lo + hi) >> 1; if (fs[mid] <= s) lo = mid; else hi = mid; }
+      return fy[lo] + (fy[lo + 1] - fy[lo]) * (s - fs[lo]) / Math.max(1e-6, fs[lo + 1] - fs[lo]);
+    }
+    // --- El suelo de la calle (v0.11.0) ---------------------------------------------
+    // La cinta se nivela por la cota máxima de su sección (cotaSeccion), así que
+    // en ladera va hasta dos metros por encima del terreno. Los coches y los
+    // peatones van por la cinta; el jugador iba por el terreno, con los ojos por
+    // debajo de la acera. `sueloCalle` da la cota de la calzada o de la acera bajo
+    // un punto (−Infinity si no hay calle): una rejilla de 64 m con los tramos de
+    // cada vía y las siete glorietas.
+    var SUELO_CELDA = 64, SUELO_ALTO = 0.18;
+    function indiceSuelo(lineas) {
+      var idx = {}, r, j, cx, cz;
+      for (r = 0; r < lineas.length; r++) {
+        var L = lineas[r], m = L.muestras, hh = anchoTotal(L) + 10;
+        for (j = 0; j + 1 < m.length; j++) {
+          var x0 = Math.min(m[j].x, m[j + 1].x) - hh, x1 = Math.max(m[j].x, m[j + 1].x) + hh;
+          var z0 = Math.min(m[j].z, m[j + 1].z) - hh, z1 = Math.max(m[j].z, m[j + 1].z) + hh;
+          for (cx = Math.floor(x0 / SUELO_CELDA); cx <= Math.floor(x1 / SUELO_CELDA); cx++) {
+            for (cz = Math.floor(z0 / SUELO_CELDA); cz <= Math.floor(z1 / SUELO_CELDA); cz++) {
+              var k = cx + ':' + cz; (idx[k] || (idx[k] = [])).push(r, j);
+            }
+          }
+        }
+      }
+      return idx;
+    }
+    function sueloCalle(x, z) {
+      var y = -Infinity, l = S.sueloIdx && S.sueloIdx[Math.floor(x / SUELO_CELDA) + ':' + Math.floor(z / SUELO_CELDA)], k, i;
+      if (l) for (k = 0; k < l.length; k += 2) {
+        var L = S.vias[l[k]], j = l[k + 1], a = L.muestras[j], b = L.muestras[j + 1];
+        var dx = b.x - a.x, dz = b.z - a.z, ll = dx * dx + dz * dz; if (ll < 1e-6) continue;
+        var t = ((x - a.x) * dx + (z - a.z) * dz) / ll; if (t < 0 || t > 1) continue;
+        var ln = Math.sqrt(ll), u = Math.abs(((x - a.x) * dz - (z - a.z) * dx) / ln), sv = L.arco[j] + t * ln;
+        if (enTramo(L.cortes, sv)) continue;
+        var vv = L.vivos || [], vivo = false, q;
+        for (q = 0; q < vv.length; q++) if (sv >= vv[q][0] - 1 && sv <= vv[q][1] + 1) { vivo = true; break; }
+        if (!vivo) continue;
+        var abre = ensancheEnBocas(L.bocas, sv);
+        if (u > anchoTotal(L) + abre) continue;
+        var h = cotaVia(L, sv) + (u - abre > L.calzada * 0.5 + 0.45 && !enTramo(L.cajas, sv) ? SUELO_ALTO : 0);
+        if (h > y) y = h;
+      }
+      for (i = 0; i < S.glorietas.length; i++) {
+        var g = S.glorietas[i], gx = x - g.x, gz = z - g.z, rr = Math.sqrt(gx * gx + gz * gz);
+        if (g.y !== undefined && rr <= g.R) y = Math.max(y, g.y + (rr < Math.max(4, g.R - g.anillo) ? SUELO_ALTO : 0));
+      }
+      return y;
     }
     /** ¿Está `s` dentro de alguno de los tramos? La lista viene ordenada. */
     function enTramo(tramos, s) {
@@ -4051,7 +5361,7 @@
         }
         var an = roads[r].calzada ? roads[r] : anchoVia(largoKm / 1000);
         // Rango: cualquier vía del mapa manda sobre cualquier calle deducida.
-        lineas.push({ muestras: m0, calzada: an.calzada, acera: an.acera, rango: 1000 + an.calzada });
+        lineas.push({ muestras: m0, calzada: an.calzada, acera: an.acera, rango: 1000 + an.calzada, barrio: -1 });
       }
       // 2) La trama deducida de cada barrio.
       S.tramas = [];
@@ -4063,7 +5373,8 @@
             muestras: remuestreaMundo(tl[i].pts, VIA_PASO), calzada: tl[i].calzada, acera: tl[i].acera,
             // Dentro del barrio manda siempre la familia paralela al giro: así el
             // barrio entero tiene un sentido, en vez de alternar cruce a cruce.
-            rango: tl[i].calzada * 2 - tl[i].familia
+            rango: tl[i].calzada * 2 - tl[i].familia,
+            barrio: r, familia: tl[i].familia, k: tl[i].k
           });
         }
       }
@@ -4071,6 +5382,8 @@
       var cru = resuelveCruces(lineas);
       S.glorietas = cru.glorietas;
       S.nCruces = cru.n;
+      S.cruces = cru.cruces;
+      S.vias = lineas;
       S.marcas = [];
       // 4) La geometría, tesela a tesela.
       for (r = 0; r < lineas.length; r++) {
@@ -4112,16 +5425,23 @@
         }
         var marcas = lineas[r].marcas;
         paradas.sort(function (p, q) { return p - q; });
-        var sUlt = -1e9, sAnt = -1e9, filaAnt = null;
+        var sUlt = -1e9, sAnt = -1e9, filaAnt = null, tramoVivo = null;
+        // Lo que el tráfico necesita de la cinta (v0.11.0): los tramos donde hay
+        // calle —la cinta se corta en el agua y fuera del mapa, y la ruta de los
+        // coches se corta igual— y la cota de la calzada en cada fila.
+        lineas[r].vivos = []; lineas[r].filasS = []; lineas[r].filasY = [];
         for (i = 0; i < paradas.length; i++) {
           var sp = paradas[i];
           if (sp < -1e-6 || sp > total + 1e-6) continue;
           if (sp - sUlt < 0.03) continue;                            // dos paradas pegadas
-          if (enTramo(cortes, sp)) { filaAnt = null; continue; }
           var p0 = puntoArco(muestras, arco, sp);
           var dentro = p0.x >= ac && p0.z >= ac && p0.x <= geo.worldW - ac && p0.z <= geo.worldH - ac
             && Math.max(surfaceH(p0.x, p0.z), 0) > 0.6;      // ni fuera del mapa ni en el agua
-          if (!dentro) { filaAnt = null; continue; }          // se corta la cinta, no se cose el hueco
+          if (!dentro) { filaAnt = null; tramoVivo = null; continue; }   // se corta la cinta, no se cose el hueco
+          // Dentro del cruce la cinta de la que cede falta, pero la calle sigue:
+          // el tramo vivo no se corta ahí.
+          if (!tramoVivo) { tramoVivo = [sp, sp]; lineas[r].vivos.push(tramoVivo); } else tramoVivo[1] = sp;
+          if (enTramo(cortes, sp)) { filaAnt = null; continue; }
           // La tangente se mira a cuarenta y cinco metros por banda: a un metro
           // cada codo del dataset saldría en pico, y las paradas del cruce van a
           // metro y medio unas de otras.
@@ -4136,6 +5456,7 @@
           var cota = cotaSeccion(p0, tx, tz, ac + 9), hF = cota.hF, hC = cota.hC;
           var nb = nivelEnBocas(bocas, sp);
           if (nb) { hF += nb.w * (nb.hF - hF); hC += nb.w * (nb.hC - hC); }
+          lineas[r].filasS.push(sp); lineas[r].filasY.push(hF + 0.22);
           var perfil = enTramo(cajas, sp) ? perfilL : perfilN;
           // El bordillo se abre en cuarto de circunferencia al llegar a la boca:
           // todo el perfil se separa del eje lo mismo, así que la acera y la
@@ -4193,6 +5514,26 @@
         TD.cose = false;
         if (!D.m.reg) { D.m.reg = true; S.marcas.push({ x: (D.v[0][0] + D.v[3][0]) * 0.5, z: (D.v[0][2] + D.v[3][2]) * 0.5, tipo: D.tipo }); }
       }
+      // 5b) Los pasos de peatones que se han dibujado, con su sitio y su sentido
+      //     (v0.11.0): los coches se paran ante ellos si hay alguien cruzando, y
+      //     los peatones de city/vida.js cruzan por ellos. Cada paso sabe en qué
+      //     vía y en qué punto de ella está; `aw` es la media distancia de una
+      //     acera a la otra por la línea por la que se anda.
+      S.cebras = [];
+      for (r = 0; r < lineas.length; r++) {
+        var Lc = lineas[r], mc = Lc.marcas, tot = Lc.arco[Lc.arco.length - 1];
+        for (k = 0; k < mc.length; k++) {
+          if (mc[k].tipo !== 6 || !mc[k].reg) continue;
+          var sc = (mc[k].s + mc[k].s2) * 0.5, pc = puntoArco(Lc.muestras, Lc.arco, sc);
+          var qa = puntoArco(Lc.muestras, Lc.arco, Math.max(0, sc - MIRA)), qb = puntoArco(Lc.muestras, Lc.arco, Math.min(tot, sc + MIRA));
+          var ctx2 = qb.x - qa.x, ctz = qb.z - qa.z, ctl = Math.sqrt(ctx2 * ctx2 + ctz * ctz) || 1, ab = ensancheEnBocas(Lc.bocas, sc);
+          mc[k].cebra = S.cebras.length;
+          S.cebras.push({ id: S.cebras.length, via: r, s: sc, med: (mc[k].s2 - mc[k].s) * 0.5, x: pc.x, z: pc.z, tx: ctx2 / ctl, tz: ctz / ctl,
+                          w: Lc.calzada * 0.5 + ab, aw: Lc.calzada * 0.5 + 0.45 + Lc.acera * 0.5 + ab, y: cotaVia(Lc, sc) });
+        }
+      }
+      S.cebraOcupada = new Uint8Array(S.cebras.length);
+      S.sueloIdx = indiceSuelo(lineas);
       // 6) Las glorietas: anillo de asfalto sin marcas, bordillo e isla central.
       for (r = 0; r < cru.glorietas.length; r++) {
         glorieta(cru.glorietas[r], trozoDe(cru.glorietas[r].x, cru.glorietas[r].z), ALTO);
@@ -4238,6 +5579,7 @@
         }
       }
       var y = hF + 0.235, yc = hC + 0.235, Ri = Math.max(4, gl.R - gl.anillo), b0 = pos.length / 3;
+      gl.y = y;                                    // la cota del anillo, para los coches que lo recorren
       for (i = 0; i <= N; i++) {
         an = i * 2 * Math.PI / N; cs = Math.cos(an); sn = Math.sin(an);
         // Cuatro aros por radio: exterior del anillo, pie del bordillo, coronación
@@ -4355,7 +5697,9 @@
       // fachada gana.
       if (walk.fly < 2) { walk.choqueMovil = empujarDeMoviles(walk.pos, 0.42); if (walk.choqueMovil) empujarFuera(walk.pos, 0.42); }
       else walk.choqueMovil = null;
-      walk.pos.y = groundH(walk.pos.x, walk.pos.z);
+      // Sobre la acera o la calzada si las hay (v0.11.0): la cinta va nivelada y en
+      // ladera queda por encima del terreno.
+      walk.pos.y = Math.max(groundH(walk.pos.x, walk.pos.z), sueloCalle(walk.pos.x, walk.pos.z));
       colocaCamaraAPie();
     }
     function colocaCamaraAPie() {
@@ -4382,15 +5726,127 @@
       for (var ie = 0; ie < extEtiquetas.length; ie++) extEtiquetas[ie].cull(camera, _cp, W, H, labelRects);
     }
     var lastSun = 0;
+    var _sLd = new THREE.Vector3(), _sLr = new THREE.Vector3(), _sLu = new THREE.Vector3(), _sLc = new THREE.Vector3();
+    /**
+     * Cascadas (v0.11.0): la caja de sombra de `luz`, de lado 2r, centrada en
+     * (cx, cy, cz) y con el centro llevado a la rejilla de texels del mapa en el
+     * plano de la luz; sin eso, cada paso del jugador desplaza la rejilla una
+     * fracción de texel y los bordes de las sombras tiemblan. La cámara de sombra
+     * de three mira con up = +y, así que sus ejes son (up × dir) y dir × eso: los
+     * mismos que aquí. `dist` es lo que la luz se retira hacia el sol: tiene que
+     * alcanzar la coronación de la torre más alta que haga sombra dentro de la caja
+     * (una torre de 830 m con el sol a 30° queda a 1,7 km en esa dirección).
+     */
+    function cajaSombra(luz, cx, cy, cz, r, dist) {
+      var sc = luz.shadow.camera, texel = 2 * r / luz.shadow.mapSize.x;
+      _sLd.copy(lightDir).normalize();
+      _sLr.set(0, 1, 0).cross(_sLd); if (_sLr.lengthSq() < 1e-8) _sLr.set(1, 0, 0); _sLr.normalize();
+      _sLu.copy(_sLd).cross(_sLr).normalize();
+      var a = Math.round((cx * _sLr.x + cy * _sLr.y + cz * _sLr.z) / texel) * texel;
+      var b = Math.round((cx * _sLu.x + cy * _sLu.y + cz * _sLu.z) / texel) * texel;
+      var d = cx * _sLd.x + cy * _sLd.y + cz * _sLd.z;
+      _sLc.copy(_sLr).multiplyScalar(a).addScaledVector(_sLu, b).addScaledVector(_sLd, d);
+      var lejos = dist + r * 3;
+      if (Math.abs(sc.right - r) > 1e-3 || Math.abs(sc.far - lejos) > 1) { sc.left = -r; sc.right = r; sc.top = r; sc.bottom = -r; sc.near = 10; sc.far = lejos; sc.updateProjectionMatrix(); }
+      luz.position.copy(_sLc).addScaledVector(_sLd, dist);
+      luz.target.position.copy(_sLc); luz.target.updateMatrixWorld();
+      // El sesgo, en metros de mundo, proporcional al texel de SU cascada: la
+      // lejana cubre también la calle que ve la cercana, y como las tres se
+      // multiplican, un acné de la lejana ensuciaría la zona nítida.
+      luz.shadow.normalBias = clamp(texel * 2, 0.15, 8);
+      luz.shadow.bias = -texel / (lejos - 10);
+    }
+    var RADIO_CASCADA_A_PIE = [150, 800, 3500];
     function updateShadowFrame() {
       if (!Q.shadows) return;
       var tg = cam.cur.target;
+      if (cascadas.length) {
+        var n = cascadas.length + 1, k, R = cam.cur.radius, aPie = S.mode === 'walk' || S.xr;
+        for (k = 0; k < n; k++) {
+          var luz = k === 0 ? sun : cascadas[k - 1], rk;
+          if (aPie) rk = RADIO_CASCADA_A_PIE[Math.min(k, 2)];
+          else rk = k === 0 ? clamp(R * 0.5, 150, 1750) : (k === 1 ? clamp(R * 1.3, 800, 3500) : clamp(R * 3, 3500, 7000));
+          // A pie la caja se adelanta media caja en la dirección de la mirada: lo
+          // que queda detrás del jugador no se ve.
+          var ax = 0, az = 0;
+          if (aPie && !S.xr) { ax = -Math.sin(walk.yaw) * rk * 0.5; az = -Math.cos(walk.yaw) * rk * 0.5; }
+          var ox = S.xr ? rig.position.x : tg.x, oz = S.xr ? rig.position.z : tg.z, oy = S.xr ? rig.position.y : Math.max(tg.y, 0);
+          cajaSombra(luz, ox + ax, oy, oz + az, rk, Math.max(rk * 3, 2000));
+        }
+        return;
+      }
       // Caja de sombra proporcional a lo que se ve: a pie, 350 m nítidos; en órbita lejana, hasta 3,5 km.
       var r = S.mode === 'walk' ? 350 : clamp(cam.cur.radius * 1.3, 350, 3500);
       var sc = sun.shadow.camera;
       if (Math.abs(sc.right - r) > 1) { sc.left = -r; sc.right = r; sc.top = r; sc.bottom = -r; sc.near = 10; sc.far = r * 6; sc.updateProjectionMatrix(); }
       sun.position.set(tg.x + lightDir.x * r * 3, Math.max(tg.y, 0) + lightDir.y * r * 3 + 50, tg.z + lightDir.z * r * 3);
       sun.target.position.copy(tg); sun.target.updateMatrixWorld();
+    }
+    /**
+     * Profundidad lineal (el experimento de la v0.11.0): planos cercano y lejano
+     * por cuadro. Con un búfer de 24 bits el error de profundidad a una distancia
+     * z es de unos z² / (cercano · 2²⁴) metros, así que lo que manda es el plano
+     * cercano, y el cercano no puede pasar de lo que la cámara tiene al lado: lo
+     * que queda más cerca que él no se dibuja. Por eso sale de la HOLGURA de la
+     * cámara (holguraCamara), no de su altura sobre el terreno: volando con E
+     * pegado a una fachada, o en la planta 30 de una torre con los pies en el
+     * suelo del piso, la altura es de cien metros y la pared está a dos.
+     *
+     *   - A pie sin volar (walk.fly < 2, que es también como lleva un módulo al
+     *     jugador por dentro de un edificio): 0,5 m fijos. El logarítmico va con
+     *     0,3; a 1 km el error es de 12 cm.
+     *   - Volando y en órbita: la mitad de la holgura, entre 0,5 y 500 m (a 500 m
+     *     la esfera del cielo, de 1 km de radio, sigue entera dentro del cono en
+     *     pantallas de hasta 2,4:1), en escalones de 2^¼ hacia abajo por debajo
+     *     de ese tope: el plano no cambia en cada paso y el patrón de
+     *     profundidad no tiembla.
+     *
+     * El lejano llega hasta donde la niebla ya lo ha tapado todo. En VR no se
+     * toca: enterVR fija los suyos.
+     */
+    // Lo que no está en el catastro y sobresale del suelo o de una azotea sin
+    // estar en ninguna huella: palmeras, farolas, coches, gente, marquesinas (a
+    // ras de suelo) y rótulos y remates (sobre la coronación, hasta 12 m).
+    var HOLGURA_SUELO = 30, HOLGURA_AZOTEA = 15;
+    var _hLoc = { x: 0, z: 0 };
+    /**
+     * La distancia de `p` a lo más cercano que el visor sabe dónde está, hasta
+     * `rmax`: el terreno (menos HOLGURA_SUELO), la caja de cada sólido del
+     * catastro en las celdas que alcanza `rmax` (con HOLGURA_AZOTEA de más por
+     * arriba) y los avatares. Recorre como mucho (2·rmax/256 + 1)² celdas, sin
+     * reservar memoria: un sólido repetido en dos celdas da la misma distancia.
+     */
+    function holguraCamara(p, rmax) {
+      var hol = Math.min(rmax, Math.max(0, p.y - groundH(p.x, p.z) - HOLGURA_SUELO)), cat = S.catastro, i, j, n;
+      if (cat && hol > 0) {
+        var i0 = Math.max(0, Math.floor((p.x - hol) / SOLIDO_CELDA)), i1 = Math.min(cat.nx - 1, Math.floor((p.x + hol) / SOLIDO_CELDA));
+        var j0 = Math.max(0, Math.floor((p.z - hol) / SOLIDO_CELDA)), j1 = Math.min(cat.nz - 1, Math.floor((p.z + hol) / SOLIDO_CELDA));
+        for (j = j0; j <= j1; j++) for (i = i0; i <= i1; i++) {
+          var lista = cat.bins[j * cat.nx + i]; if (!lista) continue;
+          for (n = 0; n < lista.length; n++) {
+            var so = cat.items[lista[n]]; aLocal(so, p.x, p.z, _hLoc);
+            var ex = Math.max(Math.abs(_hLoc.x) - so.hw, 0), ez = Math.max(Math.abs(_hLoc.z) - so.hd, 0);
+            var top = so.y0 + so.h + HOLGURA_AZOTEA, ey = p.y > top ? p.y - top : (p.y < so.y0 ? so.y0 - p.y : 0);
+            var d = Math.sqrt(ex * ex + ey * ey + ez * ez); if (d < hol) hol = d;
+          }
+        }
+      }
+      for (n = 0; n < S.avatarOrder.length && hol > 0; n++) {
+        var av = S.avatars[S.avatarOrder[n]]; if (!av) continue;
+        var da = av.cur.distanceTo(p) - 3; if (da < hol) hol = Math.max(0, da);
+      }
+      return hol;
+    }
+    function planosProfundidad() {
+      if (profundidad !== 'lineal' || S.xr) return;
+      _cp.setFromMatrixPosition(camera.matrixWorld);
+      var near = 0.5;
+      if (S.mode !== 'walk' || walk.fly >= 2) {
+        near = clamp(holguraCamara(_cp, 1000) * 0.5, 0.5, 500);
+        if (near < 500) near = Math.pow(2, Math.floor(Math.log(near) / Math.LN2 * 4) / 4);
+      }
+      var far = clamp(_cp.distanceTo(S.center) + S.L * 1.7, 4000, 900000);
+      if (camera.near !== near || camera.far !== far) { camera.near = near; camera.far = far; camera.updateProjectionMatrix(); }
     }
     function frame(now) {
       S.raf = 0;
@@ -4400,7 +5856,7 @@
       if (!S.fpsT) S.fpsT = now;
       else if (now - S.fpsT >= 1000) { S.fps = S.fpsN * 1000 / (now - S.fpsT); S.fpsN = 0; S.fpsT = now; }
       if (S.ready) {
-        updateCamera(dt);
+        updateCamera(dt); planosProfundidad();
         if (now - lastSun > 2000) { lastSun = now; updateSun(); }
         var dist = S.mode === 'walk' ? 2000 : camera.position.distanceTo(cam.cur.target);
         scene.fog.near = dist + S.L * 0.15 * Q.far; scene.fog.far = dist + S.L * 1.6 * Q.far;
@@ -4507,12 +5963,27 @@
         b.fase = 2;
       }
     }
+    /**
+     * Los efectos de imagen activos (v0.11.0), en español; el panel los traduce.
+     * Los del núcleo y los que cada módulo anuncia en su `estadisticas` (el campo
+     * `efectos`, una lista). La medida de fluidez los anota: una cifra de cuadros
+     * por segundo sin saber qué se dibujaba no compara con nada.
+     */
+    function efectosActivos(ex) {
+      var l = [], k;
+      if (Q.interiores) l.push('interiores por paralaje');
+      if (cascadas.length) l.push('cascadas de sombra');
+      if (profundidad === 'lineal') l.push('profundidad lineal');
+      if (!ex) { ex = {}; emitir('estadisticas', ex); }
+      for (k in ex) if (ex[k] && ex[k].efectos && ex[k].efectos.length) l = l.concat(ex[k].efectos);
+      return l;
+    }
     function benchFin() {
       var b = S.bench, g = b.guardado; S.bench = null;
       if (g.mode === 'walk') { setMode('walk'); walk.pos.copy(g.pos); walk.yaw = g.yaw; walk.pitch = g.pitch; walk.fly = g.fly; }
       else { setMode('orbit'); ponVista(g.cur); cam.goal.theta = g.goal.theta; cam.goal.phi = g.goal.phi; cam.goal.radius = g.goal.radius; cam.goal.target.copy(g.goal.target); cam.flight = g.flight; }
       b.resolve({ gpu: gpuName(), calidad: qualityName, ancho: renderer.domElement.width, alto: renderer.domElement.height, pixelRatio: renderer.getPixelRatio(),
-                  segundos: b.seg, duracion: Math.round((performance.now() - b.inicio) / 100) / 10, vistas: b.res });
+                  segundos: b.seg, duracion: Math.round((performance.now() - b.inicio) / 100) / 10, vistas: b.res, efectos: efectosActivos() });
     }
     function resize() {
       if (S.disposed) return;
@@ -4585,7 +6056,7 @@
           xr.lastTrig[i] = trig;
         }
       }
-      var gh = groundH(rig.position.x, rig.position.z);
+      var gh = Math.max(groundH(rig.position.x, rig.position.z), sueloCalle(rig.position.x, rig.position.z));   // la acera, si la hay (v0.11.0)
       if (rig.position.y < gh) rig.position.y = gh;
       if (rig.position.y - gh < 2) empujarDeMoviles(rig.position, 0.42);
     }
@@ -4617,7 +6088,9 @@
         xr.saved = { near: camera.near, far: camera.far };
         renderer.xr.enabled = true;
         try { renderer.xr.setReferenceSpaceType('local-floor'); } catch (e) {}
-        camera.near = 0.1; camera.far = 200000; camera.updateProjectionMatrix();
+        // Con profundidad lineal, 0,1 m de plano cercano dejaría la calle a 1 km con
+        // metros de error: 0,3 y 40 km (sin probar en unas gafas: aquí no las hay).
+        camera.near = profundidad === 'lineal' ? 0.3 : 0.1; camera.far = profundidad === 'lineal' ? 40000 : 200000; camera.updateProjectionMatrix();
         return renderer.xr.setSession(session).then(function () {
           vrPlacement(rig.position); rig.rotation.set(0, S.mode === 'walk' ? walk.yaw : rotR, 0);
           var i;
@@ -4688,19 +6161,31 @@
       keys: function () { return keys; }, puntero: function () { return pointerPos; },
       shared: shared, buildMat: buildMat, plainMat: plainMat, terrainMat: terrainMat, mats: mats, noiseTex: noiseTex, envRT: envRT,
       makeBuildingMaterial: makeBuildingMaterial, sun: sun, hemi: hemi, sunDir: sunDir, lightDir: lightDir,
+      /** 'log' o 'lineal': el búfer de profundidad con el que se montó (v0.11.0). */
+      profundidad: function () { return profundidad; },
+      /** Las luces de sombra además del sol (cascadas; vacío en baja y media). */
+      cascadas: function () { return cascadas; },
       uniformes: { viewport: viewportUniform, lod: lodUniform, drop: dropUniform, noche: nightUniform, fantasma: ghostTime },
       util: { fnv1a: fnv1a, hash2: hash2, semillaMorfologia: semillaMorfologia, semillaRopaje: semillaRopaje, real01: real01, lcg: lcg,
-        clamp: clamp, lerp: lerp, smoothstep: smoothstep, strSeed: strSeed, lin1: lin1, lin3: lin3 },
+        clamp: clamp, lerp: lerp, smoothstep: smoothstep, strSeed: strSeed, lin1: lin1, lin3: lin3,
+        /** v0.11.0: que un material de three (Lambert, Phong, Standard) lea las tres cascadas de sombra y no solo la del sol. */
+        sombraEnCascadas: sombraEnCascadas,
+        /** v0.11.0: el valor de `aflags` de un edificio (fachada + su id para los interiores por paralaje). */
+        flagsEdificio: flagsEdificio },
       geom: { prim: prim, newAcc: newAcc, pushPart: pushPart, pushParts: pushParts, accGeometry: accGeometry, piezas: piezas,
         cuerpoTorre: cuerpoTorre, cuerpoBloque: cuerpoBloque, cuerpoNave: cuerpoNave, cuerpoVilla: cuerpoVilla, parcelaPartes: parcelaPartes,
         edificioPartes: edificioPartes, carGeometry: carGeometry, avatarBodyGeometry: avatarBodyGeometry, avatarLimbGeometry: avatarLimbGeometry,
         palmGeometry: palmGeometry, inst: inst, place: place, finish: finish, ensureCap: ensureCap,
-        colores: { GLASS: GLASS, GLASS2: GLASS2, STEEL: STEEL, WHITE: WHITE, SAND: SAND, GOLD: GOLD, DARK: DARK, GREEN: GREEN, PINK: PINK, RED: RED, ASPHALT: ASPHALT, WATER: WATER } },
+        colores: { GLASS: GLASS, GLASS2: GLASS2, STEEL: STEEL, WHITE: WHITE, SAND: SAND, GOLD: GOLD, DARK: DARK, GREEN: GREEN, PINK: PINK, RED: RED, ASPHALT: ASPHALT, WATER: WATER,
+          PUERTA: TONO_PUERTA, VIDRIERA: TONO_VIDRIERA } },
       mundo: { surfaceH: surfaceH, coarseH: coarseH, groundH: groundH, insideMap: insideMap, cellWorld: cellWorld, cellLocal: cellLocal,
         worldToCell: worldToCell, localToWorld: localToWorld, worldToLocal: worldToLocal, latLonToCell: latLonToCell, cellLatLon: cellLatLon,
         rotOff: rotOff, gridYaw: gridYaw, districtOf: districtOf, dubaiHour: dubaiHour, parcelInfo: parcelInfo, sectorName: sectorName,
         SECTOR_ARCH: SECTOR_ARCH, SECTOR_COLORS: SECTOR_COLORS, SECTOR_NAMES: SECTOR_NAMES, ARCH_KEYS: ARCH_KEYS,
         TESELA_VIA: TESELA_VIA, TIPOS_BARRIO: TIPOS_BARRIO, fachadaBarrio: fachadaBarrio, fachadaParcela: fachadaParcela,
+        // v0.11.0 (vida): la cota de la calzada de una vía de S.vias en `s`, y el
+        // ensanche de la esquina a `d` metros del bordillo de la otra calle.
+        cotaVia: cotaVia, ensancheBoca: ensancheBoca, enTramo: enTramo, sueloCalle: sueloCalle,
         FACHADA: { RETICULA: FACHADA_RETICULA, LISA: FACHADA_LISA, CORTINA: FACHADA_CORTINA, CINTA: FACHADA_CINTA } },
       catastro: { alta: function (so) { catastroAlta(S.catastro, so); }, quita: function (pred) { catastroQuita(S.catastro, pred); },
         bajo: solidoBajo, rayo: rayoSolido, empujarFuera: empujarFuera, huellaLibre: function (x, z, r) { return huellaLibre(S.catastro, x, z, r); }, aLocal: aLocal },
@@ -4766,7 +6251,12 @@
         var env = null;
         try { var px = new Uint8Array(4 * 4 * 4); renderer.readRenderTargetPixels(envRT, 0, 0, 4, 4, px, 2); var sum = 0; for (var i = 0; i < 64; i++) sum += px[i]; env = Math.round(sum / 64); } catch (e) { env = -1; }
         var o = { fps: Math.round(S.fps), drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, frame: S.frame, landmarks: S.landmarks.length, skyline: S.clusterTotal, solidos: S.catastro ? S.catastro.items.length : 0, trozosBarrio: S.trozosBarrio, trozosParcela: S.trozosParcela, ocultos: S.ocultos, trozosFantasma: S.trozosFantasma, avatars: S.avatarOrder.length, quality: qualityName, mode: S.xr ? 'vr' : S.mode, env: env, ext: {} };
+        var trf = S.traffic;
+        if (trf && trf.cars) o.trafico = { coches: trf.cars.length, dibujados: trf.dibujados || 0, cediendo: trf.cediendo || 0, anteCebra: trf.anteCebra || 0,
+          valvulas: trf.valvulas || 0, recolocados: trf.recolocados || 0, desatascos: trf.desatascos || 0, saltos: trf.saltos || 0, saltadosLod: trf.saltadosLod || 0,
+          girando: trf.cars.filter(function (c) { return !c.fuera && c.vu >= 0; }).length, rutas: (S.trafficPaths || []).length, cebras: (S.cebras || []).length };
         emitir('estadisticas', o.ext);
+        o.profundidad = profundidad; o.efectos = efectosActivos(o.ext);
         return o;
       },
       bench: bench, gpu: gpuName,
@@ -4827,6 +6317,39 @@
       _debug: { scene: scene, camera: camera, renderer: renderer, state: S, meshes: C, cam: cam, walk: walk, vrPlacement: function () { return vrPlacement(new THREE.Vector3()); }, keysDown: function () { return Object.keys(keys); }, pick: pick, rayoSolido: rayoSolido, empujarFuera: empujarFuera, empujarDeMoviles: empujarDeMoviles,
         // Un paso de simulación sin dibujar, para probar la colisión sin depender del reloj.
         paso: function (dt) { if (!S.ready) return; updateCamera(dt); updateTraffic(dt); updateAvatars(dt); emitir('cuadro', dt, performance.now()); },
+        // El tráfico (v0.11.0), para las pruebas: `vivo(false)` deja de recolocar
+        // coches lejanos; `escenario([{ ruta, t, dir, carril, vel }, …])` deja
+        // solo esos coches (los demás fuera) y `normal()` los devuelve a la calle.
+        trafico: {
+          estado: function () { return S.traffic; }, rutas: function () { return S.trafficPaths; },
+          vivo: function (v) { if (S.traffic) S.traffic.vivo = !!v; },
+          /** Segundos de espera antes de la válvula (Infinity la quita), para probar que no hay bloqueos sin ella. */
+          paciencia: function (sg) { if (sg !== undefined) CEDE_PACIENCIA = sg; return CEDE_PACIENCIA; },
+          /** La simulación por cercanía (ronda 2): `lod(false)` actualiza todos los coches en cada paso. */
+          lod: function (v) { if (v !== undefined) LOD_CADA = v ? 3 : 1; return LOD_CADA > 1; },
+          escenario: function (lista) {
+            var tr = S.traffic, i; if (!tr || !tr.cars) return 0;
+            for (i = 0; i < tr.cars.length; i++) {
+              var c = tr.cars[i], e = lista[i];
+              if (!e) { c.fuera = true; continue; }
+              var R = S.trafficPaths[e.ruta];
+              c.fuera = false; c.R = R; c.t = e.t; c.dir = e.dir; c.k = Math.min(R.carriles.length - 1, e.carril || 0); c.off = R.carriles[c.k];
+              c.vmax = e.vmax || R.vmax; c.vel = e.vel === undefined ? c.vmax : e.vel; c.desvio = 0; c.lado = 0; c.parado = 0; c.espera = 0; c.cede = null; c.conf = null; c.forzado = null; c.vu = -1;
+              limitesDesvio(c, R); poseCoche(c);
+            }
+            tr.vivo = false; return Math.min(lista.length, tr.cars.length);
+          },
+          normal: function () {
+            var tr = S.traffic, i; if (!tr || !tr.cars) return;
+            var f = focoTrafico(), cand = candidatasCerca(f.x, f.z, R_VIVO), pr = {};
+            for (i = 0; i < tr.cars.length; i++) { tr.cars[i].fuera = false; if (!colocaCoche(tr.cars[i], cand, tr.rnd, null, pr)) tr.cars[i].fuera = true; }
+            tr.vivo = true; tr.focoPrev = { x: f.x, z: f.z };
+          },
+          pose: function (c) { return poseCoche(c); }, puntoCarril: function (R, t, lat) { return puntoCarril(R, t, lat, {}); },
+          /** La geometría de un cruce entre dos coches (geoCruce) y la calzada ajena por el carril de uno (bandaCruce), copiadas. */
+          geo: function (c, cf, y) { var g = geoCruce(c, cf, y); return { h: g.h, xc: g.xc, a0: g.a0, a1: g.a1, xy: g.xy, b0: g.b0, b1: g.b1 }; },
+          banda: function (c, cf) { var o = {}; bandaCruce(c, cf, o); o.parada = cf.tipo === 'cede' ? paradaCede(c, cf, {}) : null; return o; }
+        },
         ctx: ctx, extFallos: function () { return extFallos; } }
     };
     // Lo que cada módulo publica (`publico`) cuelga de handle.ext[nombre].
