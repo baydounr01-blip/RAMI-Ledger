@@ -19,6 +19,7 @@ pub mod identity;
 pub mod protocol;
 pub mod secure;
 pub mod selftest;
+pub mod sharami;
 
 use std::collections::{HashMap, HashSet};
 use std::net::{Shutdown, TcpListener, TcpStream, ToSocketAddrs};
@@ -47,6 +48,24 @@ pub const MAX_LINE: u64 = MAX_FRAME as u64;
 /// se llena y se le expulsa en vez de acumular memoria sin límite (antes era un
 /// canal ilimitado: una amplificación tan grande como el atacante quisiera).
 pub const OUT_QUEUE: usize = 128;
+/// Conexiones ENTRANTES a la vez en la fase de saludo (antes de autenticarse).
+/// Cada una ocupa un hilo y un descriptor durante como mucho 5 s; sin tope,
+/// una avalancha de conexiones vacías (unas 200 por segundo bastaban) agotaba
+/// los descriptores del proceso entero, panel incluido, y un fallo al crear el
+/// hilo tumbaba el hilo central de la red. Las que sobran se cierran sin leer
+/// nada ni contestar (auditoría de 2026‑09‑29, hallazgo R1).
+pub const MAX_PENDING_INBOUND: usize = 64;
+/// Marcados salientes en vuelo a la vez (resolución de nombre + conexión con
+/// 5 s de espera cada uno). Un `Peers` con direcciones inventadas no puede
+/// convertir el nodo en un lanzador de conexiones sin límite (hallazgo R2).
+pub const MAX_DIALS_IN_FLIGHT: usize = 32;
+/// Longitud máxima de una dirección `host:puerto` que se acepta marcar.
+pub const MAX_ADDR_LEN: usize = 256;
+/// Una misma dirección no se marca más de una vez en este plazo, venga de
+/// donde venga (seed, red local o un `Peers` de un par): un par que repite
+/// direcciones no nos hace repetir marcados. Menor que los 15 s del
+/// mantenimiento, que sigue reintentando los seeds caídos.
+pub const DIAL_MEMORY: Duration = Duration::from_secs(10);
 
 /// Configuración de arranque de la red.
 #[derive(Clone)]
@@ -106,6 +125,23 @@ pub enum NetEvent {
     },
     Disconnected { peer: PeerId },
     Message { peer: PeerId, frame: Frame },
+}
+
+/// ¿Tiene `addr` la forma `host:puerto` que se puede marcar? Host no vacío de
+/// letras, cifras, `.`, `-` y `:` (IPv6 entre corchetes), puerto distinto de 0
+/// y longitud acotada. Se comprueba ANTES de lanzar un hilo: una dirección
+/// basura que llega por `Peers` no cuesta nada.
+pub fn dial_addr_ok(addr: &str) -> bool {
+    if addr.is_empty() || addr.len() > MAX_ADDR_LEN {
+        return false;
+    }
+    let Some((host, port)) = addr.rsplit_once(':') else {
+        return false;
+    };
+    if host.is_empty() || port.parse::<u16>().map_or(true, |p| p == 0) {
+        return false;
+    }
+    host.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']'))
 }
 
 /// IP del socket + puerto anunciado => dirección remarcable.
@@ -251,8 +287,12 @@ impl Network {
     pub fn send(&self, peer: PeerId, f: Frame) {
         let _ = self.tx.send(Internal::Cmd(Cmd::Send(peer, f)));
     }
-    /// Marca (conecta) a una dirección `host:puerto`.
+    /// Marca (conecta) a una dirección `host:puerto`. Una dirección que no
+    /// tiene esa forma se descarta aquí, antes de gastar un hilo en ella.
     pub fn dial(&self, addr: String) {
+        if !dial_addr_ok(&addr) {
+            return;
+        }
         let _ = self.tx.send(Internal::Cmd(Cmd::Dial(addr)));
     }
     /// Expulsa a un par (cierra su socket). El nodo recibe `Disconnected`.
@@ -282,6 +322,11 @@ fn central_loop(
     let mut peers: HashMap<PeerId, Peer> = HashMap::new();
     let mut by_node: HashMap<u64, PeerId> = HashMap::new();
     let mut next_id: PeerId = 1;
+    // Saludos entrantes en curso (ver MAX_PENDING_INBOUND): lo sube el central
+    // al aceptar y lo baja el hilo de la conexión al terminar su handshake.
+    let pending_inbound = Arc::new(AtomicUsize::new(0));
+    // Direcciones marcadas hace poco (ver DIAL_MEMORY).
+    let mut recent_dials: HashMap<String, Instant> = HashMap::new();
 
     let own_node = cfg.node_id();
     let refresh = |peers: &HashMap<PeerId, Peer>| {
@@ -326,10 +371,17 @@ fn central_loop(
     while let Ok(ev) = rx.recv() {
         match ev {
             Internal::Inbound(stream, addr) => {
-                spawn_conn(stream, addr, true, &cfg, listen_port, tx.clone());
+                // Tope de saludos entrantes simultáneos: el que sobra se
+                // cierra sin leer nada (ni respuesta ni hilo para él).
+                if pending_inbound.load(Ordering::Relaxed) >= MAX_PENDING_INBOUND {
+                    let _ = stream.shutdown(Shutdown::Both);
+                    continue;
+                }
+                pending_inbound.fetch_add(1, Ordering::Relaxed);
+                spawn_conn(stream, addr, true, &cfg, listen_port, tx.clone(), Some(pending_inbound.clone()));
             }
             Internal::Outbound(stream, addr) => {
-                spawn_conn(stream, addr, false, &cfg, listen_port, tx.clone());
+                spawn_conn(stream, addr, false, &cfg, listen_port, tx.clone(), None);
             }
             Internal::Registered { writer, addr, inbound, node, port, pubkey, fingerprint, assign } => {
                 if node == own_node || by_node.contains_key(&node) || peers.len() >= cfg.max_peers {
@@ -393,6 +445,14 @@ fn central_loop(
                 }
             }
             Internal::Cmd(Cmd::Dial(addr)) => {
+                let now = Instant::now();
+                if recent_dials.len() > 1024 {
+                    recent_dials.retain(|_, t| now.duration_since(*t) < DIAL_MEMORY);
+                }
+                if recent_dials.get(&addr).is_some_and(|t| now.duration_since(*t) < DIAL_MEMORY) {
+                    continue;
+                }
+                recent_dials.insert(addr.clone(), now);
                 spawn_dialer(addr, tx.clone());
             }
             Internal::Maintenance => {
@@ -487,8 +547,41 @@ fn spawn_lan_discovery(net_hex: String, node_id: u64, listen_port: u16, tx: Send
     });
 }
 
+/// Marcados salientes en vuelo en este proceso (ver MAX_DIALS_IN_FLIGHT).
+static DIALS_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+/// Plaza de un saludo entrante: se libera al soltarse, salga el hilo por
+/// donde salga (éxito, rechazo, timeout o fallo al crear el hilo).
+struct PlazaSaludo(Option<Arc<AtomicUsize>>);
+impl Drop for PlazaSaludo {
+    fn drop(&mut self) {
+        if let Some(c) = &self.0 {
+            c.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Plaza de un marcado saliente: igual, sobre el contador del proceso.
+struct PlazaMarcado;
+impl Drop for PlazaMarcado {
+    fn drop(&mut self) {
+        DIALS_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 fn spawn_dialer(addr: String, tx: Sender<Internal>) {
-    thread::spawn(move || {
+    if DIALS_IN_FLIGHT.load(Ordering::Relaxed) >= MAX_DIALS_IN_FLIGHT {
+        // Ya hay bastantes marcados en vuelo: este se descarta. Los seeds
+        // vuelven a intentarse en el mantenimiento de cada 15 s.
+        return;
+    }
+    DIALS_IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
+    let plaza = PlazaMarcado;
+    let addr_log = addr.clone();
+    // `Builder::spawn` devuelve el error en vez de abortar el hilo central si
+    // el sistema no da más hilos (`thread::spawn` entra en pánico).
+    let spawned = thread::Builder::new().name("rami-dial".into()).spawn(move || {
+        let _plaza = plaza;
         let targets = match addr.to_socket_addrs() {
             Ok(it) => it,
             Err(_) => return,
@@ -500,11 +593,16 @@ fn spawn_dialer(addr: String, tx: Sender<Internal>) {
             }
         }
     });
+    if let Err(e) = spawned {
+        eprintln!("[net] sin hilo para marcar a {addr_log}: {e}");
+    }
 }
 
 /// Hilo lector + handshake de una conexión. El handshake del Túnel RAMI usa
 /// el MISMO BufReader que luego usa el bucle de lectura (así no se pierden
 /// bytes ya bufferizados). El escritor cifrado se entrega al hilo escritor.
+/// `pending`: contador de saludos entrantes en curso (solo para entrantes),
+/// que se libera en cuanto el handshake termina, bien o mal.
 fn spawn_conn(
     stream: TcpStream,
     addr: String,
@@ -512,10 +610,14 @@ fn spawn_conn(
     cfg: &NetConfig,
     listen_port: u16,
     tx: Sender<Internal>,
+    pending: Option<Arc<AtomicUsize>>,
 ) {
     let net = cfg.network_id;
     let identity = cfg.identity.clone();
-    thread::spawn(move || {
+    let plaza = PlazaSaludo(pending);
+    let addr_log = addr.clone();
+    let spawned = thread::Builder::new().name("rami-conn".into()).spawn(move || {
+        let plaza = plaza;
         // 1) handshake autenticado (con timeout de lectura de 5 s).
         let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
         let res = if inbound {
@@ -523,6 +625,8 @@ fn spawn_conn(
         } else {
             handshake_initiator(stream, &net, &identity, listen_port)
         };
+        // El saludo terminó: su plaza queda libre pase lo que pase después.
+        drop(plaza);
         let (ss, peer_id) = match res {
             Ok(ok) => ok,
             Err(HandshakeError::OldProtocol) => {
@@ -592,6 +696,11 @@ fn spawn_conn(
         }
         let _ = tx.send(Internal::PeerClosed(peer));
     });
+    if let Err(e) = spawned {
+        // Sin hilo no hay conexión: el socket y la plaza (movidos al cierre
+        // que no llegó a arrancar) se sueltan aquí mismo.
+        eprintln!("[net] sin hilo para la conexión de {addr_log}: {e}");
+    }
 }
 
 fn writer_loop(mut writer: SecureWriter<TcpStream>, out_rx: Receiver<Frame>) {
@@ -617,6 +726,46 @@ mod tests {
         assert_eq!(parse_discovery("hola"), None);
         assert_eq!(parse_discovery(&format!("RAMI1 {net} 1 0")), None);
         assert_eq!(parse_discovery("RAMI1 corto 1 30301"), None);
+    }
+
+    #[test]
+    fn dial_addr_shape_is_checked_before_spawning() {
+        assert!(dial_addr_ok("1.2.3.4:30301"));
+        assert!(dial_addr_ok("seed.quantbot.army:30301"));
+        assert!(dial_addr_ok("[::1]:30301"));
+        assert!(!dial_addr_ok(""));
+        assert!(!dial_addr_ok("1.2.3.4"));
+        assert!(!dial_addr_ok("1.2.3.4:0"));
+        assert!(!dial_addr_ok("1.2.3.4:99999"));
+        assert!(!dial_addr_ok(":30301"));
+        assert!(!dial_addr_ok("host con espacios:30301"));
+        assert!(!dial_addr_ok("evil/../x:30301"));
+        assert!(!dial_addr_ok(&format!("{}:30301", "x".repeat(MAX_ADDR_LEN))));
+    }
+
+    /// Hallazgo R1 de la auditoría de 2026‑09‑29: una avalancha de conexiones
+    /// vacías no puede dejar sin red al nodo. Las que exceden el tope se
+    /// cierran en el acto; las que quedan en espera caducan a los 5 s y, en
+    /// cuanto sueltan su plaza, un par legítimo vuelve a entrar.
+    #[test]
+    fn inbound_flood_does_not_kill_the_network() {
+        let net = [14u8; 32];
+        let (a, a_rx) = Network::start(cfg(0, Some(0), vec![], net));
+        let port = a.listen_port;
+        // Más conexiones ociosas que plazas de saludo, todas mantenidas abiertas.
+        let idle: Vec<TcpStream> = (0..(MAX_PENDING_INBOUND + 36))
+            .filter_map(|_| TcpStream::connect(("127.0.0.1", port)).ok())
+            .collect();
+        assert!(idle.len() > MAX_PENDING_INBOUND, "la prueba necesita más conexiones que plazas");
+        // El central sigue vivo y sin pares registrados.
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(a.peer_count(), 0);
+        // Pasado el timeout del saludo las plazas se liberan y un par de verdad conecta.
+        std::thread::sleep(Duration::from_millis(5_500));
+        let _ok = raw_client(port, net, PROTO_VERSION).expect("conexión TCP tras la avalancha");
+        assert!(wait_connected(&a_rx).is_some(), "la red no volvió a aceptar pares tras la avalancha");
+        assert_eq!(espera_pares(&a, 1), 1);
+        drop(idle);
     }
 
     /// Identidades de prueba (la búsqueda de PoW cuesta ~1 s; se generan una
