@@ -1703,6 +1703,107 @@ fn parse_pk_sig(pk: &str, sig: &str) -> Option<([u8; 32], [u8; 64])> {
     Some((pk, sig))
 }
 
+/// Por qué se descarta un frame `Presence` o `Chat` ajeno. Las comprobaciones
+/// van en este orden, de lo barato a lo caro: la forma de los campos, el eco
+/// de lo nuestro, la secuencia, el ritmo y el repetido solo miran memoria que
+/// ÚNICAMENTE un frame ya verificado pudo escribir; la prueba de trabajo (un
+/// SHA-256) y la firma Ed25519 (~50 µs) van al final. Así un par que inunda
+/// con frames de una identidad ya vista se descarta por secuencia o por ritmo
+/// sin que se llegue a tocar la firma; y como un descarte no escribe nada,
+/// quien reutiliza la clave de otro tampoco lo deja fuera de ritmo
+/// (auditoría de 2026‑09‑29, hallazgo R3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Descarte {
+    /// Hex, longitudes, caracteres de control o coordenadas fuera de cota.
+    Forma,
+    /// Nuestro propio frame, de vuelta.
+    Eco,
+    /// Secuencia repetida o antigua para esa identidad.
+    Secuencia,
+    /// Más rápido que el ritmo mínimo por identidad.
+    Ritmo,
+    /// El mismo mensaje ya está en el chat reciente.
+    Repetido,
+    /// La prueba de trabajo de la identidad no vale.
+    Pow,
+    /// La firma Ed25519 no vale.
+    Firma,
+}
+
+/// Puerta de un `Presence` ajeno: decide sin tocar el estado y devuelve la
+/// clave pública de la identidad si el frame se admite.
+fn admitir_presence(
+    presence: &HashMap<[u8; 32], PresenceEntry>,
+    presence_last: &HashMap<[u8; 32], Instant>,
+    own: &[u8; 32],
+    frame: &Frame,
+) -> Result<[u8; 32], Descarte> {
+    let Frame::Presence { pk, pow, seq, ts, name, x, y, z, yaw, avatar, sig, .. } = frame else {
+        return Err(Descarte::Forma);
+    };
+    let Some((pkb, sigb)) = parse_pk_sig(pk, sig) else { return Err(Descarte::Forma) };
+    if name.len() > PRESENCE_NAME_MAX || name.chars().any(|c| c.is_control()) {
+        return Err(Descarte::Forma);
+    }
+    if [x, y, z].iter().any(|v| v.abs() > PRESENCE_COORD_MAX) || !(0..=360).contains(yaw) {
+        return Err(Descarte::Forma);
+    }
+    if pkb == *own {
+        return Err(Descarte::Eco);
+    }
+    if presence.get(&pkb).is_some_and(|e| *seq <= e.seq) {
+        return Err(Descarte::Secuencia);
+    }
+    if presence_last.get(&pkb).is_some_and(|t| t.elapsed() < PRESENCE_MIN_INTERVAL) {
+        return Err(Descarte::Ritmo);
+    }
+    if !identity_pow_ok(&pkb, *pow) {
+        return Err(Descarte::Pow);
+    }
+    if !ed_verify(&pkb, &presence_msg(&pkb, *seq, *ts, name, *x, *y, *z, *yaw, *avatar), &sigb) {
+        return Err(Descarte::Firma);
+    }
+    Ok(pkb)
+}
+
+/// Puerta de un `Chat` ajeno, como `admitir_presence`. El chat no guarda una
+/// secuencia por identidad: el mismo mensaje llegado por dos caminos se
+/// reconoce por identidad, marca de tiempo y texto en el chat reciente,
+/// también antes de la firma.
+fn admitir_chat(
+    chat: &VecDeque<ChatEntry>,
+    chat_last: &HashMap<[u8; 32], Instant>,
+    own: &[u8; 32],
+    frame: &Frame,
+) -> Result<[u8; 32], Descarte> {
+    let Frame::Chat { pk, pow, seq, ts, name, text, sig, .. } = frame else {
+        return Err(Descarte::Forma);
+    };
+    let Some((pkb, sigb)) = parse_pk_sig(pk, sig) else { return Err(Descarte::Forma) };
+    if name.len() > PRESENCE_NAME_MAX || text.is_empty() || text.len() > CHAT_TEXT_MAX {
+        return Err(Descarte::Forma);
+    }
+    if name.chars().any(|c| c.is_control()) || text.chars().any(|c| c.is_control() && c != ' ') {
+        return Err(Descarte::Forma);
+    }
+    if pkb == *own {
+        return Err(Descarte::Eco);
+    }
+    if chat_last.get(&pkb).is_some_and(|t| t.elapsed() < CHAT_MIN_INTERVAL) {
+        return Err(Descarte::Ritmo);
+    }
+    if chat.iter().any(|c| c.pk == pkb && c.ts == *ts && c.text == *text) {
+        return Err(Descarte::Repetido);
+    }
+    if !identity_pow_ok(&pkb, *pow) {
+        return Err(Descarte::Pow);
+    }
+    if !ed_verify(&pkb, &chat_msg(&pkb, *seq, *ts, name, text), &sigb) {
+        return Err(Descarte::Firma);
+    }
+    Ok(pkb)
+}
+
 #[derive(Clone)]
 struct MiningJob {
     header: BlockHeader,
@@ -2762,12 +2863,12 @@ impl Node {
             }
             Frame::Ping { nonce } => self.net.send(peer, Frame::Pong { nonce }),
             Frame::Pong { .. } => {}
-            Frame::Presence { pk, pow, seq, ts, name, x, y, z, yaw, avatar, hops, sig } => {
-                self.on_presence(peer, pk, pow, seq, ts, name, x, y, z, yaw, avatar, hops, sig);
+            Frame::Presence { .. } => {
+                self.on_presence(peer, frame);
                 return; // efímero: no cambia el estado que publica el panel
             }
-            Frame::Chat { pk, pow, seq, ts, name, text, hops, sig } => {
-                self.on_chat(peer, pk, pow, seq, ts, name, text, hops, sig);
+            Frame::Chat { .. } => {
+                self.on_chat(peer, frame);
                 return;
             }
         }
@@ -2780,37 +2881,15 @@ impl Node {
         self.peer_rule.iter().filter(|(p, r)| **r >= REGLA_DUBAI && Some(**p) != except).map(|(p, _)| *p).collect()
     }
 
-    /// Presencia recibida: identidad con prueba de trabajo, firma válida,
-    /// secuencia creciente, ritmo acotado, campos acotados. Si pasa, se guarda
-    /// (tope de memoria) y se retransmite con un salto menos.
-    #[allow(clippy::too_many_arguments)]
-    fn on_presence(&mut self, from: PeerId, pk: String, pow: u64, seq: u64, ts: u64, name: String, x: i32, y: i32, z: i32, yaw: i32, avatar: u8, hops: u8, sig: String) {
-        let Some((pkb, sigb)) = parse_pk_sig(&pk, &sig) else { return };
-        if pkb == self.identity.pubkey {
-            return; // eco de lo nuestro
-        }
-        if name.len() > PRESENCE_NAME_MAX || name.chars().any(|c| c.is_control()) {
+    /// Presencia recibida: la decide `admitir_presence` (campos acotados,
+    /// secuencia creciente y ritmo por identidad ANTES de la prueba de
+    /// trabajo y la firma). Si pasa, se guarda (tope de memoria) y se
+    /// retransmite con un salto menos.
+    fn on_presence(&mut self, from: PeerId, frame: Frame) {
+        let Ok(pkb) = admitir_presence(&self.presence, &self.presence_last, &self.identity.pubkey, &frame) else {
             return;
-        }
-        if [x, y, z].iter().any(|v| v.abs() > PRESENCE_COORD_MAX) || !(0..=360).contains(&yaw) {
-            return;
-        }
-        if !identity_pow_ok(&pkb, pow) {
-            return;
-        }
-        if !ed_verify(&pkb, &presence_msg(&pkb, seq, ts, &name, x, y, z, yaw, avatar), &sigb) {
-            return;
-        }
-        if let Some(e) = self.presence.get(&pkb) {
-            if seq <= e.seq {
-                return; // repetida o antigua
-            }
-        }
-        if let Some(t) = self.presence_last.get(&pkb) {
-            if t.elapsed() < PRESENCE_MIN_INTERVAL {
-                return;
-            }
-        }
+        };
+        let Frame::Presence { seq, ts, name, x, y, z, yaw, avatar, hops, .. } = &frame else { return };
         if !self.presence.contains_key(&pkb) && self.presence.len() >= PRESENCE_CAP {
             // Tope: fuera el más antiguo.
             if let Some((&old, _)) = self.presence.iter().min_by_key(|(_, e)| e.seen) {
@@ -2819,39 +2898,29 @@ impl Node {
             }
         }
         self.presence_last.insert(pkb, Instant::now());
-        self.presence.insert(pkb, PresenceEntry { seq, ts, name: name.clone(), x, y, z, yaw, avatar, seen: Instant::now() });
-        if hops < PRESENCE_MAX_HOPS {
-            let f = Frame::Presence { pk, pow, seq, ts, name, x, y, z, yaw, avatar, hops: hops + 1, sig };
+        self.presence.insert(
+            pkb,
+            PresenceEntry { seq: *seq, ts: *ts, name: name.clone(), x: *x, y: *y, z: *z, yaw: *yaw, avatar: *avatar, seen: Instant::now() },
+        );
+        if *hops < PRESENCE_MAX_HOPS {
+            let mut f = frame;
+            if let Frame::Presence { hops, .. } = &mut f {
+                *hops += 1;
+            }
             for p in self.peers_dubai(Some(from)) {
                 self.net.send(p, f.clone());
             }
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn on_chat(&mut self, from: PeerId, pk: String, pow: u64, seq: u64, ts: u64, name: String, text: String, hops: u8, sig: String) {
-        let Some((pkb, sigb)) = parse_pk_sig(&pk, &sig) else { return };
-        if pkb == self.identity.pubkey {
+    /// Chat recibido: la decide `admitir_chat`, en el mismo orden que la
+    /// presencia. Si pasa, entra en el chat reciente (tope) y se retransmite
+    /// con un salto menos.
+    fn on_chat(&mut self, from: PeerId, frame: Frame) {
+        let Ok(pkb) = admitir_chat(&self.chat, &self.chat_last, &self.identity.pubkey, &frame) else {
             return;
-        }
-        if name.len() > PRESENCE_NAME_MAX || text.is_empty() || text.len() > CHAT_TEXT_MAX {
-            return;
-        }
-        if name.chars().any(|c| c.is_control()) || text.chars().any(|c| c.is_control() && c != ' ') {
-            return;
-        }
-        if !identity_pow_ok(&pkb, pow) || !ed_verify(&pkb, &chat_msg(&pkb, seq, ts, &name, &text), &sigb) {
-            return;
-        }
-        if let Some(t) = self.chat_last.get(&pkb) {
-            if t.elapsed() < CHAT_MIN_INTERVAL {
-                return;
-            }
-        }
-        // Un mismo mensaje (misma identidad y secuencia) no entra dos veces.
-        if self.chat.iter().any(|c| c.pk == pkb && c.ts == ts && c.text == text) {
-            return;
-        }
+        };
+        let Frame::Chat { ts, name, text, hops, .. } = &frame else { return };
         self.chat_last.insert(pkb, Instant::now());
         if self.chat_last.len() > PRESENCE_CAP * 2 {
             self.chat_last.retain(|_, t| t.elapsed() < Duration::from_secs(60));
@@ -2859,9 +2928,12 @@ impl Node {
         if self.chat.len() >= CHAT_CAP {
             self.chat.pop_front();
         }
-        self.chat.push_back(ChatEntry { pk: pkb, name: name.clone(), text: text.clone(), ts });
-        if hops < CHAT_MAX_HOPS {
-            let f = Frame::Chat { pk, pow, seq, ts, name, text, hops: hops + 1, sig };
+        self.chat.push_back(ChatEntry { pk: pkb, name: name.clone(), text: text.clone(), ts: *ts });
+        if *hops < CHAT_MAX_HOPS {
+            let mut f = frame;
+            if let Frame::Chat { hops, .. } = &mut f {
+                *hops += 1;
+            }
             for p in self.peers_dubai(Some(from)) {
                 self.net.send(p, f.clone());
             }
@@ -3601,5 +3673,123 @@ fn miner_loop(shared: Arc<MiningShared>, tx: Sender<NodeMsg>) {
             hashes = 0;
             t0 = Instant::now();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::OnceLock;
+
+    /// Identidad de prueba con prueba de trabajo válida (la búsqueda del
+    /// nonce cuesta alrededor de un segundo; se hace una vez por proceso).
+    fn ident() -> &'static NodeIdentity {
+        static ID: OnceLock<NodeIdentity> = OnceLock::new();
+        ID.get_or_init(|| NodeIdentity::from_seed_search([21u8; 32]))
+    }
+
+    /// Firma que no vale para nada.
+    const FIRMA_MALA: [u8; 64] = [7u8; 64];
+
+    fn presence_frame(id: &NodeIdentity, seq: u64, sig: Option<[u8; 64]>) -> Frame {
+        let (ts, name, x, y, z, yaw, avatar) = (1_790_000_000u64, "Rami", 10, 20, 30, 90, 1u8);
+        let sig = sig.unwrap_or_else(|| id.sign(&presence_msg(&id.pubkey, seq, ts, name, x, y, z, yaw, avatar)));
+        Frame::Presence { pk: hex::encode(id.pubkey), pow: id.pow_nonce, seq, ts, name: name.into(), x, y, z, yaw, avatar, hops: 0, sig: hex::encode(sig) }
+    }
+
+    fn chat_frame(id: &NodeIdentity, seq: u64, ts: u64, text: &str, sig: Option<[u8; 64]>) -> Frame {
+        let name = "Rami";
+        let sig = sig.unwrap_or_else(|| id.sign(&chat_msg(&id.pubkey, seq, ts, name, text)));
+        Frame::Chat { pk: hex::encode(id.pubkey), pow: id.pow_nonce, seq, ts, name: name.into(), text: text.into(), hops: 0, sig: hex::encode(sig) }
+    }
+
+    /// Un nonce que NO cumple la prueba de trabajo de esta identidad.
+    fn pow_malo(id: &NodeIdentity) -> u64 {
+        let n = id.pow_nonce.wrapping_add(1);
+        assert!(!identity_pow_ok(&id.pubkey, n), "el nonce vecino no debería valer");
+        n
+    }
+
+    fn hace(d: Duration) -> Instant {
+        Instant::now().checked_sub(d).expect("reloj monótono demasiado joven")
+    }
+
+    /// Auditoría de 2026‑09‑29, R3: un `Presence` de una identidad ya vista
+    /// que llega por encima del ritmo, o con la secuencia repetida, se
+    /// descarta ANTES de comprobar la prueba de trabajo y la firma. Los
+    /// frames de la prueba llevan las dos inválidas a propósito: si se
+    /// comprobaran primero, el motivo sería `Pow` o `Firma`.
+    #[test]
+    fn presence_over_the_rate_is_dropped_before_the_signature() {
+        let id = ident();
+        let own = [0u8; 32];
+        let mut presence: HashMap<[u8; 32], PresenceEntry> = HashMap::new();
+        let mut last: HashMap<[u8; 32], Instant> = HashMap::new();
+        // Una presencia legítima (seq 5) admitida hace un instante.
+        presence.insert(id.pubkey, PresenceEntry { seq: 5, ts: 1, name: "Rami".into(), x: 0, y: 0, z: 0, yaw: 0, avatar: 0, seen: Instant::now() });
+        last.insert(id.pubkey, Instant::now());
+
+        let mut malo = presence_frame(id, 6, Some(FIRMA_MALA));
+        if let Frame::Presence { pow, .. } = &mut malo {
+            *pow = pow_malo(id);
+        }
+        assert_eq!(admitir_presence(&presence, &last, &own, &malo), Err(Descarte::Ritmo));
+        let mut repetido = presence_frame(id, 5, Some(FIRMA_MALA));
+        if let Frame::Presence { pow, .. } = &mut repetido {
+            *pow = pow_malo(id);
+        }
+        assert_eq!(admitir_presence(&presence, &last, &own, &repetido), Err(Descarte::Secuencia));
+
+        // Pasado el ritmo mínimo, ese mismo frame SÍ llega a la prueba de
+        // trabajo y a la firma, y cae por ellas, en ese orden.
+        last.insert(id.pubkey, hace(PRESENCE_MIN_INTERVAL * 2));
+        assert_eq!(admitir_presence(&presence, &last, &own, &malo), Err(Descarte::Pow));
+        let firma_mala = presence_frame(id, 6, Some(FIRMA_MALA));
+        assert_eq!(admitir_presence(&presence, &last, &own, &firma_mala), Err(Descarte::Firma));
+        // El legítimo entra.
+        assert_eq!(admitir_presence(&presence, &last, &own, &presence_frame(id, 6, None)), Ok(id.pubkey));
+        // Una identidad sin memoria (nunca vista) no tiene atajo: su firma se verifica.
+        assert_eq!(admitir_presence(&HashMap::new(), &HashMap::new(), &own, &firma_mala), Err(Descarte::Firma));
+        assert_eq!(admitir_presence(&HashMap::new(), &HashMap::new(), &own, &presence_frame(id, 1, None)), Ok(id.pubkey));
+        // Lo nuestro de vuelta y lo mal formado se descartan antes que nada.
+        assert_eq!(admitir_presence(&presence, &last, &id.pubkey, &presence_frame(id, 9, None)), Err(Descarte::Eco));
+        let mut lejos = presence_frame(id, 9, None);
+        if let Frame::Presence { x, .. } = &mut lejos {
+            *x = PRESENCE_COORD_MAX + 1;
+        }
+        assert_eq!(admitir_presence(&HashMap::new(), &HashMap::new(), &own, &lejos), Err(Descarte::Forma));
+        assert_eq!(admitir_presence(&presence, &last, &own, &Frame::Ping { nonce: 1 }), Err(Descarte::Forma));
+    }
+
+    /// R3 para el chat: ritmo y repetido antes que la prueba de trabajo y la
+    /// firma, con los mismos frames inválidos.
+    #[test]
+    fn chat_over_the_rate_is_dropped_before_the_signature() {
+        let id = ident();
+        let own = [0u8; 32];
+        let mut chat: VecDeque<ChatEntry> = VecDeque::new();
+        let mut last: HashMap<[u8; 32], Instant> = HashMap::new();
+        last.insert(id.pubkey, Instant::now());
+
+        let mut malo = chat_frame(id, 2, 100, "hola", Some(FIRMA_MALA));
+        if let Frame::Chat { pow, .. } = &mut malo {
+            *pow = pow_malo(id);
+        }
+        assert_eq!(admitir_chat(&chat, &last, &own, &malo), Err(Descarte::Ritmo));
+
+        // Con el ritmo cumplido, el mismo mensaje ya en el chat reciente se
+        // reconoce como repetido, también sin mirar la firma.
+        last.insert(id.pubkey, hace(CHAT_MIN_INTERVAL * 2));
+        chat.push_back(ChatEntry { pk: id.pubkey, name: "Rami".into(), text: "hola".into(), ts: 100 });
+        assert_eq!(admitir_chat(&chat, &last, &own, &malo), Err(Descarte::Repetido));
+        chat.clear();
+        // Y solo entonces se llega a la prueba de trabajo y a la firma.
+        assert_eq!(admitir_chat(&chat, &last, &own, &malo), Err(Descarte::Pow));
+        assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 2, 100, "hola", Some(FIRMA_MALA))), Err(Descarte::Firma));
+        assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 2, 100, "hola", None)), Ok(id.pubkey));
+        // Forma: texto vacío o con control, y lo nuestro de vuelta.
+        assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 3, 100, "", None)), Err(Descarte::Forma));
+        assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 3, 100, "hola\nadiós", None)), Err(Descarte::Forma));
+        assert_eq!(admitir_chat(&chat, &last, &id.pubkey, &chat_frame(id, 3, 100, "hola", None)), Err(Descarte::Eco));
     }
 }
