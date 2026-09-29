@@ -380,15 +380,24 @@ fn write_simple(stream: TcpStream, status: u16, msg: &str) -> io::Result<()> {
     )
 }
 
-fn write_response(mut w: TcpStream, resp: Response) -> io::Result<()> {
-    let cors = if PUBLIC_CORS.load(std::sync::atomic::Ordering::Relaxed) { "Access-Control-Allow-Origin: *\r\n" } else { "" };
-    let head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n{cors}\r\n",
+/// Cabeceras de TODA respuesta del proceso (panel local y API pública): sin
+/// adivinar tipos, sin referer y, desde la auditoría de 2026‑09‑29 (R5), sin
+/// enmarcar: una web abierta en el navegador no puede meter el panel en un
+/// `<iframe>` y superponerle su interfaz (la guardia de Host/Origin/token ya
+/// impedía darle órdenes; esto impide también engañar al usuario con clics).
+fn response_head(resp: &Response, cors: &str) -> String {
+    format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nX-Frame-Options: DENY\r\nContent-Security-Policy: frame-ancestors 'none'\r\n{cors}\r\n",
         resp.status,
         reason(resp.status),
         resp.content_type,
         resp.body.len()
-    );
+    )
+}
+
+fn write_response(mut w: TcpStream, resp: Response) -> io::Result<()> {
+    let cors = if PUBLIC_CORS.load(std::sync::atomic::Ordering::Relaxed) { "Access-Control-Allow-Origin: *\r\n" } else { "" };
+    let head = response_head(&resp, cors);
     w.write_all(head.as_bytes())?;
     w.write_all(&resp.body)?;
     w.flush()?;
@@ -465,6 +474,26 @@ mod tests {
         let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode & 0o077, 0, "otros usuarios no deben poder leer el token");
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// Auditoría de 2026‑09‑29 (R5): ninguna respuesta se puede enmarcar desde
+    /// otra web, y las cabeceras de siempre siguen ahí. La API pública añade
+    /// el CORS abierto y nada más.
+    #[test]
+    fn every_response_refuses_framing() {
+        let resp = Response::json(&serde_json::json!({"ok": true}));
+        let head = response_head(&resp, "");
+        assert!(head.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(head.contains("\r\nX-Frame-Options: DENY\r\n"));
+        assert!(head.contains("\r\nContent-Security-Policy: frame-ancestors 'none'\r\n"));
+        assert!(head.contains("\r\nX-Content-Type-Options: nosniff\r\n"));
+        assert!(head.contains("\r\nReferrer-Policy: no-referrer\r\n"));
+        assert!(head.contains(&format!("\r\nContent-Length: {}\r\n", resp.body.len())));
+        assert!(head.ends_with("\r\n\r\n"));
+        assert!(!head.contains("Access-Control-Allow-Origin"));
+        let pub_head = response_head(&resp, "Access-Control-Allow-Origin: *\r\n");
+        assert!(pub_head.contains("\r\nAccess-Control-Allow-Origin: *\r\n\r\n"));
+        assert!(pub_head.contains("\r\nX-Frame-Options: DENY\r\n"));
     }
 
     #[test]

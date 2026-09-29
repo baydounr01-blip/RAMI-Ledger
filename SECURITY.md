@@ -17,7 +17,7 @@ lo encuentre en `docs/AUDITORIA-2026-09.md`.
 
 | Superficie | Atacante | Defensa |
 |---|---|---|
-| **Panel local** (`127.0.0.1:8645`) | cualquier web abierta en tu navegador (CSRF, DNS rebinding), otro usuario/proceso de la máquina | solo escucha en loopback; `Host` **exacto** (`127.0.0.1:puerto`, `localhost:puerto`, `[::1]:puerto`); `Origin`/`Referer` deben ser el panel; todo POST en `application/json`; **token de sesión** (`~/.rami/panel-<puerto>.token`, 0600, como el `.cookie` de Bitcoin Core) en `X-Rami-Token` para toda orden `/api/*`; líneas, cabeceras y cuerpo acotados; timeouts; `X-Content-Type-Options`, `Referrer-Policy` |
+| **Panel local** (`127.0.0.1:8645`) | cualquier web abierta en tu navegador (CSRF, DNS rebinding), otro usuario/proceso de la máquina | solo escucha en loopback; `Host` **exacto** (`127.0.0.1:puerto`, `localhost:puerto`, `[::1]:puerto`); `Origin`/`Referer` deben ser el panel; todo POST en `application/json`; **token de sesión** (`~/.rami/panel-<puerto>.token`, 0600, como el `.cookie` de Bitcoin Core) en `X-Rami-Token` para toda orden `/api/*`; líneas, cabeceras y cuerpo acotados; timeouts; `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options: DENY` y `frame-ancestors 'none'` (nadie enmarca el panel desde otra web) |
 | **Red P2P** (`0.0.0.0:30301`) | cualquier par de Internet | Túnel RAMI: identidad Ed25519 con **prueba de trabajo**, saludo firmado por ambas partes, X25519 efímero, HKDF-SHA256, ChaCha20-Poly1305 con contador; frames ≤ 16 MiB comprobados antes de reservar memoria; ≤ 4 peticiones de rama en vuelo por par, rondas por (par, punta), expulsión por cola llena; **topes de consenso** (≤ 4096 tx y ≤ 2 MiB por bloque) y de mempool (5000 tx, 64 por firmante); TOFU de identidades |
 | **Actualizador** | quien controle la red (MITM) o el espejo web, pero no GitHub | HTTPS con rustls; `SHA256SUMS.txt` **solo desde GitHub** (el espejo solo sirve bytes); nombres de archivo saneados; nunca se instala nada con hash distinto; sin *downgrade*; **firma Ed25519 de release** (`SHA256SUMS.sig`) exigida en cuanto el monedero lleva la clave pública del mantenedor |
 | **Claves** | robo del disco, corte de luz a mitad de escritura | keystore cifrado con PBKDF2-HMAC-SHA256 (600 000 iteraciones) + ChaCha20-Poly1305 con AAD; `node.key` y token con permisos 0600; escritura **atómica** (temporal + fsync + rename) |
@@ -78,16 +78,15 @@ ejecutable frente a `BINARIES-SHA256.txt` del release.
   32 bytes no se borran explícitamente.
 - **De la auditoría de 2026‑09‑29** (`docs/AUDITORIA-2026-09-29.md`): el
   ritmo de presencia y chat se comprueba después de verificar la firma (R3);
-  el panel no manda `X-Frame-Options` ni CSP (R5); el paso de publicación del
-  release interpola la etiqueta en el shell (R6); ficheros de una sesión
-  local de regtest siguen en git (R8). Los parches de R1, R2 y R7 de esa
-  auditoría **no se compilaron en la sesión que los escribió**: los valida el
-  CI, y hasta que esté en verde cuentan como propuestos.
+  el panel no acota sus hilos por conexión (R4); el nodo todavía acepta de
+  un par, en `Peers`, nombres que resolver y sin ritmo por par (la parte
+  pendiente de R2). Los parches de R1, R2, R5, R6, R7 y R8 los compiló y
+  probó el CI del PR que los trae.
 - **SHARAMI v1 no resiste un ordenador cuántico** (X25519): el modo híbrido
   con ML-KEM-768 tiene el sitio reservado en el formato y entra cuando la
   dependencia esté en `Cargo.lock`.
 
 Detalle de hallazgos y correcciones: [`docs/AUDITORIA-2026-09.md`](docs/AUDITORIA-2026-09.md)
 (v0.7.0 → v0.7.1) y [`docs/AUDITORIA-2026-09-29.md`](docs/AUDITORIA-2026-09-29.md)
-(v0.11.0, los tres repositorios).
+(v0.11.0).
 Bytes del protocolo: [`chain/crates/rami-net/PROTOCOL.md`](chain/crates/rami-net/PROTOCOL.md).
