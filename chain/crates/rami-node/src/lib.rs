@@ -323,6 +323,41 @@ pub fn make_genesis(is_testnet: bool, params: Params, miner: AccountId) -> Block
 /// Pares conocidos persistidos (peers.json, array JSON de "host:puerto").
 /// Tope de 64 para que el archivo no crezca sin límite.
 const KNOWN_PEERS_CAP: usize = 64;
+/// De un mismo par se atiende como mucho un `Peers` en este plazo; los demás
+/// se ignoran sin cerrar la conexión. Un par honesto contesta un `Peers` al
+/// `GetPeers` de la conexión y poco más (auditoría de 2026‑09‑29, R2).
+const PEERS_MIN_INTERVAL: Duration = Duration::from_secs(30);
+/// Direcciones de un `Peers` que se marcan como mucho.
+const PEERS_MAX_DIAL: usize = 8;
+
+/// ¿Es `addr` una dirección `IP:puerto` LITERAL (IPv4 o `[IPv6]:puerto`) a la
+/// que tiene sentido conectar? Un nombre no vale: resolverlo costaría un hilo
+/// y una consulta DNS que elegiría el par, y el transporte lo aceptaría
+/// (`dial_addr_ok` admite nombres porque los seeds de configuración los
+/// llevan). Fuera también el puerto 0 y las IP «cualquiera», de
+/// multidifusión y de difusión.
+fn literal_addr_ok(addr: &str) -> bool {
+    let Ok(sa) = addr.parse::<std::net::SocketAddr>() else {
+        return false;
+    };
+    let ip = sa.ip();
+    let difusion = matches!(ip, std::net::IpAddr::V4(v4) if v4.is_broadcast());
+    sa.port() != 0 && !ip.is_unspecified() && !ip.is_multicast() && !difusion
+}
+
+/// Direcciones de un `Peers` recibido de `from` que se pasan al transporte:
+/// ninguna si a ese par ya se le atendió un `Peers` hace menos de
+/// `PEERS_MIN_INTERVAL` (`peers_last` solo cambia al atender uno, así que un
+/// par que insiste no adelanta su turno); si no, las `IP:puerto` literales,
+/// hasta `PEERS_MAX_DIAL`. El transporte pone además sus propios topes
+/// (`rami_net::MAX_DIALS_IN_FLIGHT`, `rami_net::DIAL_MEMORY`).
+fn peers_a_marcar(peers_last: &mut HashMap<rami_net::PeerId, Instant>, from: rami_net::PeerId, addrs: Vec<String>, now: Instant) -> Vec<String> {
+    if peers_last.get(&from).is_some_and(|t| now.duration_since(*t) < PEERS_MIN_INTERVAL) {
+        return Vec::new();
+    }
+    peers_last.insert(from, now);
+    addrs.into_iter().filter(|a| literal_addr_ok(a)).take(PEERS_MAX_DIAL).collect()
+}
 
 fn peers_path(root: &Path) -> PathBuf {
     root.join("peers.json")
@@ -1703,6 +1738,107 @@ fn parse_pk_sig(pk: &str, sig: &str) -> Option<([u8; 32], [u8; 64])> {
     Some((pk, sig))
 }
 
+/// Por qué se descarta un frame `Presence` o `Chat` ajeno. Las comprobaciones
+/// van en este orden, de lo barato a lo caro: la forma de los campos, el eco
+/// de lo nuestro, la secuencia, el ritmo y el repetido solo miran memoria que
+/// ÚNICAMENTE un frame ya verificado pudo escribir; la prueba de trabajo (un
+/// SHA-256) y la firma Ed25519 (~50 µs) van al final. Así un par que inunda
+/// con frames de una identidad ya vista se descarta por secuencia o por ritmo
+/// sin que se llegue a tocar la firma; y como un descarte no escribe nada,
+/// quien reutiliza la clave de otro tampoco lo deja fuera de ritmo
+/// (auditoría de 2026‑09‑29, hallazgo R3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Descarte {
+    /// Hex, longitudes, caracteres de control o coordenadas fuera de cota.
+    Forma,
+    /// Nuestro propio frame, de vuelta.
+    Eco,
+    /// Secuencia repetida o antigua para esa identidad.
+    Secuencia,
+    /// Más rápido que el ritmo mínimo por identidad.
+    Ritmo,
+    /// El mismo mensaje ya está en el chat reciente.
+    Repetido,
+    /// La prueba de trabajo de la identidad no vale.
+    Pow,
+    /// La firma Ed25519 no vale.
+    Firma,
+}
+
+/// Puerta de un `Presence` ajeno: decide sin tocar el estado y devuelve la
+/// clave pública de la identidad si el frame se admite.
+fn admitir_presence(
+    presence: &HashMap<[u8; 32], PresenceEntry>,
+    presence_last: &HashMap<[u8; 32], Instant>,
+    own: &[u8; 32],
+    frame: &Frame,
+) -> Result<[u8; 32], Descarte> {
+    let Frame::Presence { pk, pow, seq, ts, name, x, y, z, yaw, avatar, sig, .. } = frame else {
+        return Err(Descarte::Forma);
+    };
+    let Some((pkb, sigb)) = parse_pk_sig(pk, sig) else { return Err(Descarte::Forma) };
+    if name.len() > PRESENCE_NAME_MAX || name.chars().any(|c| c.is_control()) {
+        return Err(Descarte::Forma);
+    }
+    if [x, y, z].iter().any(|v| v.abs() > PRESENCE_COORD_MAX) || !(0..=360).contains(yaw) {
+        return Err(Descarte::Forma);
+    }
+    if pkb == *own {
+        return Err(Descarte::Eco);
+    }
+    if presence.get(&pkb).is_some_and(|e| *seq <= e.seq) {
+        return Err(Descarte::Secuencia);
+    }
+    if presence_last.get(&pkb).is_some_and(|t| t.elapsed() < PRESENCE_MIN_INTERVAL) {
+        return Err(Descarte::Ritmo);
+    }
+    if !identity_pow_ok(&pkb, *pow) {
+        return Err(Descarte::Pow);
+    }
+    if !ed_verify(&pkb, &presence_msg(&pkb, *seq, *ts, name, *x, *y, *z, *yaw, *avatar), &sigb) {
+        return Err(Descarte::Firma);
+    }
+    Ok(pkb)
+}
+
+/// Puerta de un `Chat` ajeno, como `admitir_presence`. El chat no guarda una
+/// secuencia por identidad: el mismo mensaje llegado por dos caminos se
+/// reconoce por identidad, marca de tiempo y texto en el chat reciente,
+/// también antes de la firma.
+fn admitir_chat(
+    chat: &VecDeque<ChatEntry>,
+    chat_last: &HashMap<[u8; 32], Instant>,
+    own: &[u8; 32],
+    frame: &Frame,
+) -> Result<[u8; 32], Descarte> {
+    let Frame::Chat { pk, pow, seq, ts, name, text, sig, .. } = frame else {
+        return Err(Descarte::Forma);
+    };
+    let Some((pkb, sigb)) = parse_pk_sig(pk, sig) else { return Err(Descarte::Forma) };
+    if name.len() > PRESENCE_NAME_MAX || text.is_empty() || text.len() > CHAT_TEXT_MAX {
+        return Err(Descarte::Forma);
+    }
+    if name.chars().any(|c| c.is_control()) || text.chars().any(|c| c.is_control() && c != ' ') {
+        return Err(Descarte::Forma);
+    }
+    if pkb == *own {
+        return Err(Descarte::Eco);
+    }
+    if chat_last.get(&pkb).is_some_and(|t| t.elapsed() < CHAT_MIN_INTERVAL) {
+        return Err(Descarte::Ritmo);
+    }
+    if chat.iter().any(|c| c.pk == pkb && c.ts == *ts && c.text == *text) {
+        return Err(Descarte::Repetido);
+    }
+    if !identity_pow_ok(&pkb, *pow) {
+        return Err(Descarte::Pow);
+    }
+    if !ed_verify(&pkb, &chat_msg(&pkb, *seq, *ts, name, text), &sigb) {
+        return Err(Descarte::Firma);
+    }
+    Ok(pkb)
+}
+
 #[derive(Clone)]
 struct MiningJob {
     header: BlockHeader,
@@ -2007,6 +2143,8 @@ struct Node {
     /// Pares conocidos remarcables; se persisten en peers.json del directorio de
     /// cadena y se re-marcan al arrancar (descubrimiento sin servidor central).
     known_peers: HashSet<String>,
+    /// peer -> cuándo se le atendió el último `Peers` (ver PEERS_MIN_INTERVAL).
+    peers_last: HashMap<rami_net::PeerId, Instant>,
     netinfo: Arc<Mutex<NetInfo>>,
     net: Network,
     mining: Arc<MiningShared>,
@@ -2149,6 +2287,7 @@ pub fn spawn(cfg: NodeConfig) -> Result<NodeHandle, String> {
         peer_ident: HashMap::new(),
         known_identities: HashMap::new(),
         known_peers: HashSet::new(),
+        peers_last: HashMap::new(),
         netinfo: netinfo.clone(),
         net,
         mining: mining.clone(),
@@ -2524,6 +2663,7 @@ impl Node {
                 self.peer_rule.remove(&peer);
                 self.peer_meta.remove(&peer);
                 self.peer_ident.remove(&peer);
+                self.peers_last.remove(&peer);
                 self.peer_tips.remove(&peer);
                 self.inflight.remove(&peer);
                 self.strikes.remove(&peer);
@@ -2754,20 +2894,23 @@ impl Node {
                 }
             }
             Frame::Peers { addrs } => {
+                // Un `Peers` por par cada 30 s y solo `IP:puerto` literales
+                // (`peers_a_marcar`); el que sobra se ignora, no se corta.
+                let addrs = peers_a_marcar(&mut self.peers_last, peer, addrs, Instant::now());
                 if self.net.peer_count() < 16 {
-                    for a in addrs.into_iter().take(8) {
+                    for a in addrs {
                         self.net.dial(a);
                     }
                 }
             }
             Frame::Ping { nonce } => self.net.send(peer, Frame::Pong { nonce }),
             Frame::Pong { .. } => {}
-            Frame::Presence { pk, pow, seq, ts, name, x, y, z, yaw, avatar, hops, sig } => {
-                self.on_presence(peer, pk, pow, seq, ts, name, x, y, z, yaw, avatar, hops, sig);
+            Frame::Presence { .. } => {
+                self.on_presence(peer, frame);
                 return; // efímero: no cambia el estado que publica el panel
             }
-            Frame::Chat { pk, pow, seq, ts, name, text, hops, sig } => {
-                self.on_chat(peer, pk, pow, seq, ts, name, text, hops, sig);
+            Frame::Chat { .. } => {
+                self.on_chat(peer, frame);
                 return;
             }
         }
@@ -2780,37 +2923,15 @@ impl Node {
         self.peer_rule.iter().filter(|(p, r)| **r >= REGLA_DUBAI && Some(**p) != except).map(|(p, _)| *p).collect()
     }
 
-    /// Presencia recibida: identidad con prueba de trabajo, firma válida,
-    /// secuencia creciente, ritmo acotado, campos acotados. Si pasa, se guarda
-    /// (tope de memoria) y se retransmite con un salto menos.
-    #[allow(clippy::too_many_arguments)]
-    fn on_presence(&mut self, from: PeerId, pk: String, pow: u64, seq: u64, ts: u64, name: String, x: i32, y: i32, z: i32, yaw: i32, avatar: u8, hops: u8, sig: String) {
-        let Some((pkb, sigb)) = parse_pk_sig(&pk, &sig) else { return };
-        if pkb == self.identity.pubkey {
-            return; // eco de lo nuestro
-        }
-        if name.len() > PRESENCE_NAME_MAX || name.chars().any(|c| c.is_control()) {
+    /// Presencia recibida: la decide `admitir_presence` (campos acotados,
+    /// secuencia creciente y ritmo por identidad ANTES de la prueba de
+    /// trabajo y la firma). Si pasa, se guarda (tope de memoria) y se
+    /// retransmite con un salto menos.
+    fn on_presence(&mut self, from: PeerId, frame: Frame) {
+        let Ok(pkb) = admitir_presence(&self.presence, &self.presence_last, &self.identity.pubkey, &frame) else {
             return;
-        }
-        if [x, y, z].iter().any(|v| v.abs() > PRESENCE_COORD_MAX) || !(0..=360).contains(&yaw) {
-            return;
-        }
-        if !identity_pow_ok(&pkb, pow) {
-            return;
-        }
-        if !ed_verify(&pkb, &presence_msg(&pkb, seq, ts, &name, x, y, z, yaw, avatar), &sigb) {
-            return;
-        }
-        if let Some(e) = self.presence.get(&pkb) {
-            if seq <= e.seq {
-                return; // repetida o antigua
-            }
-        }
-        if let Some(t) = self.presence_last.get(&pkb) {
-            if t.elapsed() < PRESENCE_MIN_INTERVAL {
-                return;
-            }
-        }
+        };
+        let Frame::Presence { seq, ts, name, x, y, z, yaw, avatar, hops, .. } = &frame else { return };
         if !self.presence.contains_key(&pkb) && self.presence.len() >= PRESENCE_CAP {
             // Tope: fuera el más antiguo.
             if let Some((&old, _)) = self.presence.iter().min_by_key(|(_, e)| e.seen) {
@@ -2819,39 +2940,29 @@ impl Node {
             }
         }
         self.presence_last.insert(pkb, Instant::now());
-        self.presence.insert(pkb, PresenceEntry { seq, ts, name: name.clone(), x, y, z, yaw, avatar, seen: Instant::now() });
-        if hops < PRESENCE_MAX_HOPS {
-            let f = Frame::Presence { pk, pow, seq, ts, name, x, y, z, yaw, avatar, hops: hops + 1, sig };
+        self.presence.insert(
+            pkb,
+            PresenceEntry { seq: *seq, ts: *ts, name: name.clone(), x: *x, y: *y, z: *z, yaw: *yaw, avatar: *avatar, seen: Instant::now() },
+        );
+        if *hops < PRESENCE_MAX_HOPS {
+            let mut f = frame;
+            if let Frame::Presence { hops, .. } = &mut f {
+                *hops += 1;
+            }
             for p in self.peers_dubai(Some(from)) {
                 self.net.send(p, f.clone());
             }
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn on_chat(&mut self, from: PeerId, pk: String, pow: u64, seq: u64, ts: u64, name: String, text: String, hops: u8, sig: String) {
-        let Some((pkb, sigb)) = parse_pk_sig(&pk, &sig) else { return };
-        if pkb == self.identity.pubkey {
+    /// Chat recibido: la decide `admitir_chat`, en el mismo orden que la
+    /// presencia. Si pasa, entra en el chat reciente (tope) y se retransmite
+    /// con un salto menos.
+    fn on_chat(&mut self, from: PeerId, frame: Frame) {
+        let Ok(pkb) = admitir_chat(&self.chat, &self.chat_last, &self.identity.pubkey, &frame) else {
             return;
-        }
-        if name.len() > PRESENCE_NAME_MAX || text.is_empty() || text.len() > CHAT_TEXT_MAX {
-            return;
-        }
-        if name.chars().any(|c| c.is_control()) || text.chars().any(|c| c.is_control() && c != ' ') {
-            return;
-        }
-        if !identity_pow_ok(&pkb, pow) || !ed_verify(&pkb, &chat_msg(&pkb, seq, ts, &name, &text), &sigb) {
-            return;
-        }
-        if let Some(t) = self.chat_last.get(&pkb) {
-            if t.elapsed() < CHAT_MIN_INTERVAL {
-                return;
-            }
-        }
-        // Un mismo mensaje (misma identidad y secuencia) no entra dos veces.
-        if self.chat.iter().any(|c| c.pk == pkb && c.ts == ts && c.text == text) {
-            return;
-        }
+        };
+        let Frame::Chat { ts, name, text, hops, .. } = &frame else { return };
         self.chat_last.insert(pkb, Instant::now());
         if self.chat_last.len() > PRESENCE_CAP * 2 {
             self.chat_last.retain(|_, t| t.elapsed() < Duration::from_secs(60));
@@ -2859,9 +2970,12 @@ impl Node {
         if self.chat.len() >= CHAT_CAP {
             self.chat.pop_front();
         }
-        self.chat.push_back(ChatEntry { pk: pkb, name: name.clone(), text: text.clone(), ts });
-        if hops < CHAT_MAX_HOPS {
-            let f = Frame::Chat { pk, pow, seq, ts, name, text, hops: hops + 1, sig };
+        self.chat.push_back(ChatEntry { pk: pkb, name: name.clone(), text: text.clone(), ts: *ts });
+        if *hops < CHAT_MAX_HOPS {
+            let mut f = frame;
+            if let Frame::Chat { hops, .. } = &mut f {
+                *hops += 1;
+            }
             for p in self.peers_dubai(Some(from)) {
                 self.net.send(p, f.clone());
             }
@@ -3601,5 +3715,166 @@ fn miner_loop(shared: Arc<MiningShared>, tx: Sender<NodeMsg>) {
             hashes = 0;
             t0 = Instant::now();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::OnceLock;
+
+    /// Identidad de prueba con prueba de trabajo válida (la búsqueda del
+    /// nonce cuesta alrededor de un segundo; se hace una vez por proceso).
+    fn ident() -> &'static NodeIdentity {
+        static ID: OnceLock<NodeIdentity> = OnceLock::new();
+        ID.get_or_init(|| NodeIdentity::from_seed_search([21u8; 32]))
+    }
+
+    /// Firma que no vale para nada.
+    const FIRMA_MALA: [u8; 64] = [7u8; 64];
+
+    fn presence_frame(id: &NodeIdentity, seq: u64, sig: Option<[u8; 64]>) -> Frame {
+        let (ts, name, x, y, z, yaw, avatar) = (1_790_000_000u64, "Rami", 10, 20, 30, 90, 1u8);
+        let sig = sig.unwrap_or_else(|| id.sign(&presence_msg(&id.pubkey, seq, ts, name, x, y, z, yaw, avatar)));
+        Frame::Presence { pk: hex::encode(id.pubkey), pow: id.pow_nonce, seq, ts, name: name.into(), x, y, z, yaw, avatar, hops: 0, sig: hex::encode(sig) }
+    }
+
+    fn chat_frame(id: &NodeIdentity, seq: u64, ts: u64, text: &str, sig: Option<[u8; 64]>) -> Frame {
+        let name = "Rami";
+        let sig = sig.unwrap_or_else(|| id.sign(&chat_msg(&id.pubkey, seq, ts, name, text)));
+        Frame::Chat { pk: hex::encode(id.pubkey), pow: id.pow_nonce, seq, ts, name: name.into(), text: text.into(), hops: 0, sig: hex::encode(sig) }
+    }
+
+    /// Un nonce que NO cumple la prueba de trabajo de esta identidad.
+    fn pow_malo(id: &NodeIdentity) -> u64 {
+        let n = id.pow_nonce.wrapping_add(1);
+        assert!(!identity_pow_ok(&id.pubkey, n), "el nonce vecino no debería valer");
+        n
+    }
+
+    fn hace(d: Duration) -> Instant {
+        Instant::now().checked_sub(d).expect("reloj monótono demasiado joven")
+    }
+
+    /// Auditoría de 2026‑09‑29, R3: un `Presence` de una identidad ya vista
+    /// que llega por encima del ritmo, o con la secuencia repetida, se
+    /// descarta ANTES de comprobar la prueba de trabajo y la firma. Los
+    /// frames de la prueba llevan las dos inválidas a propósito: si se
+    /// comprobaran primero, el motivo sería `Pow` o `Firma`.
+    #[test]
+    fn presence_over_the_rate_is_dropped_before_the_signature() {
+        let id = ident();
+        let own = [0u8; 32];
+        let mut presence: HashMap<[u8; 32], PresenceEntry> = HashMap::new();
+        let mut last: HashMap<[u8; 32], Instant> = HashMap::new();
+        // Una presencia legítima (seq 5) admitida hace un instante.
+        presence.insert(id.pubkey, PresenceEntry { seq: 5, ts: 1, name: "Rami".into(), x: 0, y: 0, z: 0, yaw: 0, avatar: 0, seen: Instant::now() });
+        last.insert(id.pubkey, Instant::now());
+
+        let mut malo = presence_frame(id, 6, Some(FIRMA_MALA));
+        if let Frame::Presence { pow, .. } = &mut malo {
+            *pow = pow_malo(id);
+        }
+        assert_eq!(admitir_presence(&presence, &last, &own, &malo), Err(Descarte::Ritmo));
+        let mut repetido = presence_frame(id, 5, Some(FIRMA_MALA));
+        if let Frame::Presence { pow, .. } = &mut repetido {
+            *pow = pow_malo(id);
+        }
+        assert_eq!(admitir_presence(&presence, &last, &own, &repetido), Err(Descarte::Secuencia));
+
+        // Pasado el ritmo mínimo, ese mismo frame SÍ llega a la prueba de
+        // trabajo y a la firma, y cae por ellas, en ese orden.
+        last.insert(id.pubkey, hace(PRESENCE_MIN_INTERVAL * 2));
+        assert_eq!(admitir_presence(&presence, &last, &own, &malo), Err(Descarte::Pow));
+        let firma_mala = presence_frame(id, 6, Some(FIRMA_MALA));
+        assert_eq!(admitir_presence(&presence, &last, &own, &firma_mala), Err(Descarte::Firma));
+        // El legítimo entra.
+        assert_eq!(admitir_presence(&presence, &last, &own, &presence_frame(id, 6, None)), Ok(id.pubkey));
+        // Una identidad sin memoria (nunca vista) no tiene atajo: su firma se verifica.
+        assert_eq!(admitir_presence(&HashMap::new(), &HashMap::new(), &own, &firma_mala), Err(Descarte::Firma));
+        assert_eq!(admitir_presence(&HashMap::new(), &HashMap::new(), &own, &presence_frame(id, 1, None)), Ok(id.pubkey));
+        // Lo nuestro de vuelta y lo mal formado se descartan antes que nada.
+        assert_eq!(admitir_presence(&presence, &last, &id.pubkey, &presence_frame(id, 9, None)), Err(Descarte::Eco));
+        let mut lejos = presence_frame(id, 9, None);
+        if let Frame::Presence { x, .. } = &mut lejos {
+            *x = PRESENCE_COORD_MAX + 1;
+        }
+        assert_eq!(admitir_presence(&HashMap::new(), &HashMap::new(), &own, &lejos), Err(Descarte::Forma));
+        assert_eq!(admitir_presence(&presence, &last, &own, &Frame::Ping { nonce: 1 }), Err(Descarte::Forma));
+    }
+
+    /// R3 para el chat: ritmo y repetido antes que la prueba de trabajo y la
+    /// firma, con los mismos frames inválidos.
+    #[test]
+    fn chat_over_the_rate_is_dropped_before_the_signature() {
+        let id = ident();
+        let own = [0u8; 32];
+        let mut chat: VecDeque<ChatEntry> = VecDeque::new();
+        let mut last: HashMap<[u8; 32], Instant> = HashMap::new();
+        last.insert(id.pubkey, Instant::now());
+
+        let mut malo = chat_frame(id, 2, 100, "hola", Some(FIRMA_MALA));
+        if let Frame::Chat { pow, .. } = &mut malo {
+            *pow = pow_malo(id);
+        }
+        assert_eq!(admitir_chat(&chat, &last, &own, &malo), Err(Descarte::Ritmo));
+
+        // Con el ritmo cumplido, el mismo mensaje ya en el chat reciente se
+        // reconoce como repetido, también sin mirar la firma.
+        last.insert(id.pubkey, hace(CHAT_MIN_INTERVAL * 2));
+        chat.push_back(ChatEntry { pk: id.pubkey, name: "Rami".into(), text: "hola".into(), ts: 100 });
+        assert_eq!(admitir_chat(&chat, &last, &own, &malo), Err(Descarte::Repetido));
+        chat.clear();
+        // Y solo entonces se llega a la prueba de trabajo y a la firma.
+        assert_eq!(admitir_chat(&chat, &last, &own, &malo), Err(Descarte::Pow));
+        assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 2, 100, "hola", Some(FIRMA_MALA))), Err(Descarte::Firma));
+        assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 2, 100, "hola", None)), Ok(id.pubkey));
+        // Forma: texto vacío o con control, y lo nuestro de vuelta.
+        assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 3, 100, "", None)), Err(Descarte::Forma));
+        assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 3, 100, "hola\nadiós", None)), Err(Descarte::Forma));
+        assert_eq!(admitir_chat(&chat, &last, &id.pubkey, &chat_frame(id, 3, 100, "hola", None)), Err(Descarte::Eco));
+    }
+
+    /// Auditoría de 2026‑09‑29, R2 (la parte del nodo): de un `Peers` solo se
+    /// marcan direcciones `IP:puerto` literales, nunca nombres que haya que
+    /// resolver, y de un mismo par se atiende como mucho un `Peers` cada
+    /// `PEERS_MIN_INTERVAL`; los demás se ignoran sin adelantar su turno.
+    #[test]
+    fn peers_are_rate_limited_per_peer_and_only_literal_addresses_are_dialed() {
+        let mut last: HashMap<rami_net::PeerId, Instant> = HashMap::new();
+        let t0 = Instant::now();
+        let mezcla: Vec<String> = [
+            "1.2.3.4:30301",
+            "seed.quantbot.army:30301",
+            "[::1]:30301",
+            "localhost:30301",
+            "0.0.0.0:30301",
+            "[::]:30301",
+            "255.255.255.255:30301",
+            "239.255.77.77:30301",
+            "1.2.3.4:0",
+            "1.2.3.4",
+            "::1:30301",
+            "",
+            "10.0.0.1:30302",
+        ]
+        .iter()
+        .map(|a| a.to_string())
+        .collect();
+        assert_eq!(peers_a_marcar(&mut last, 7, mezcla.clone(), t0), vec!["1.2.3.4:30301", "[::1]:30301", "10.0.0.1:30302"]);
+        // El mismo par, dentro del plazo: nada, y sin adelantar su turno.
+        assert!(peers_a_marcar(&mut last, 7, mezcla.clone(), t0 + Duration::from_millis(100)).is_empty());
+        assert!(peers_a_marcar(&mut last, 7, mezcla.clone(), t0 + PEERS_MIN_INTERVAL - Duration::from_millis(1)).is_empty());
+        // Otro par tiene su propio ritmo.
+        assert_eq!(peers_a_marcar(&mut last, 8, mezcla.clone(), t0 + Duration::from_secs(1)).len(), 3);
+        // Cumplido el plazo desde el ÚLTIMO atendido (no desde el último ignorado), se vuelve a atender.
+        assert_eq!(peers_a_marcar(&mut last, 7, mezcla.clone(), t0 + PEERS_MIN_INTERVAL).len(), 3);
+        // Tope de direcciones por `Peers`, y las literales cuentan aunque vengan detrás de nombres.
+        let muchas: Vec<String> = (0..20).map(|i| format!("10.0.1.{i}:30301")).collect();
+        assert_eq!(peers_a_marcar(&mut last, 9, muchas, t0).len(), PEERS_MAX_DIAL);
+        let detras: Vec<String> = ["a.example.com:30301", "b.example.com:30301", "10.0.2.1:30301"].iter().map(|a| a.to_string()).collect();
+        assert_eq!(peers_a_marcar(&mut last, 10, detras, t0), vec!["10.0.2.1:30301"]);
+        // Todo lo que el nodo deja pasar lo acepta también el transporte.
+        assert!(rami_net::dial_addr_ok("1.2.3.4:30301") && rami_net::dial_addr_ok("[::1]:30301"));
     }
 }

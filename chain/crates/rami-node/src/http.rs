@@ -1,7 +1,8 @@
 //! Servidor HTTP/1.1 mínimo (solo `std`) para el panel LOCAL del monedero.
 //!
 //! Escucha solo en 127.0.0.1: es la interfaz de una app de escritorio, no un
-//! servicio público. Un hilo por conexión, `Connection: close`. Sin dependencias.
+//! servicio público. Un hilo por conexión (como mucho `MAX_CONNS` a la vez),
+//! `Connection: close`. Sin dependencias.
 //!
 //! Defensas (v0.7.1): líneas y cabeceras acotadas (nadie puede hacernos
 //! reservar memoria sin límite), timeouts de lectura/escritura (un cliente
@@ -13,8 +14,9 @@
 //! `Referer` se entregan al manejador para vetar peticiones cross-origin.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -27,6 +29,14 @@ const MAX_HEADERS: usize = 100;
 const MAX_BODY: usize = 1 << 20;
 /// Un cliente que no termina de hablar en este tiempo se corta.
 const IO_TIMEOUT: Duration = Duration::from_secs(15);
+/// Conexiones atendidas a la vez: cada una ocupa un hilo hasta que contesta
+/// o vence `IO_TIMEOUT`. La que sobra se cierra sin leerla, con el mismo
+/// patrón que `rami_net::MAX_PENDING_INBOUND` (contador y plaza que se
+/// libera al soltarse). El panel abre un puñado; sin tope, otro proceso de
+/// la máquina, o cualquier cliente de la API pública de `rami-node market`,
+/// abría conexiones hasta agotar los hilos del proceso entero (auditoría de
+/// 2026‑09‑29, hallazgo R4).
+pub const MAX_CONNS: usize = 64;
 
 pub struct Request {
     pub method: String,
@@ -263,17 +273,44 @@ fn reason(status: u16) -> &'static str {
 /// defensa es justo lo contrario (Host exacto, Origin, token).
 static PUBLIC_CORS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Sirve para siempre. `handler` se comparte entre hilos.
+/// Plaza de una conexión atendida: se libera al soltarse, salga el hilo por
+/// donde salga (respuesta escrita, error, timeout o fallo al crear el hilo).
+struct Plaza(Arc<AtomicUsize>);
+impl Drop for Plaza {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// Sirve para siempre. `handler` se comparte entre hilos. Como mucho
+/// `MAX_CONNS` conexiones a la vez: la que sobra se cierra sin leer nada.
 pub fn serve<F>(listener: TcpListener, handler: F)
 where
     F: Fn(Request) -> Response + Send + Sync + 'static,
 {
     let handler = Arc::new(handler);
+    // Solo este bucle sube el contador; lo bajan las plazas al soltarse.
+    let conns = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming().flatten() {
+        if conns.load(Ordering::Relaxed) >= MAX_CONNS {
+            let _ = stream.shutdown(Shutdown::Both);
+            continue;
+        }
+        conns.fetch_add(1, Ordering::Relaxed);
+        let plaza = Plaza(conns.clone());
         let h = handler.clone();
-        thread::spawn(move || {
+        // `Builder::spawn` devuelve el error en vez de abortar el bucle de
+        // aceptación si el sistema no da más hilos (`thread::spawn` entra en
+        // pánico).
+        let spawned = thread::Builder::new().name("rami-http".into()).spawn(move || {
+            let _plaza = plaza;
             let _ = handle_conn(stream, h);
         });
+        if let Err(e) = spawned {
+            // Sin hilo no hay respuesta: el socket y la plaza (movidos al
+            // cierre que no llegó a arrancar) se sueltan aquí mismo.
+            eprintln!("[panel] sin hilo para una conexión: {e}");
+        }
     }
 }
 
@@ -494,6 +531,60 @@ mod tests {
         let pub_head = response_head(&resp, "Access-Control-Allow-Origin: *\r\n");
         assert!(pub_head.contains("\r\nAccess-Control-Allow-Origin: *\r\n\r\n"));
         assert!(pub_head.contains("\r\nX-Frame-Options: DENY\r\n"));
+    }
+
+    /// Auditoría de 2026‑09‑29 (R4): el servidor atiende como mucho
+    /// `MAX_CONNS` conexiones a la vez. La que sobra se cierra sin leerla
+    /// (manda una petición completa y no recibe nada; el manejador no la ve)
+    /// y, en cuanto las ociosas cuelgan y sueltan su plaza, se vuelve a
+    /// atender.
+    #[test]
+    fn excess_connections_are_closed_without_reading() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let atendidas = Arc::new(AtomicUsize::new(0));
+        let contador = atendidas.clone();
+        thread::spawn(move || {
+            serve(listener, move |_req| {
+                contador.fetch_add(1, Ordering::Relaxed);
+                Response::json(&serde_json::json!({"ok": true}))
+            })
+        });
+        let pide = |port: u16| -> (Vec<u8>, io::Result<usize>) {
+            let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
+            // Si el servidor ya cerró, escribir falla: da igual, lo que
+            // importa es lo que se lee.
+            let _ = s.write_all(format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").as_bytes());
+            let mut buf = Vec::new();
+            let r = s.read_to_end(&mut buf);
+            (buf, r)
+        };
+        // MAX_CONNS clientes que conectan y callan: cada uno ocupa una plaza
+        // (y un hilo) hasta que cuelgue o venza IO_TIMEOUT.
+        let ociosas: Vec<TcpStream> = (0..MAX_CONNS).map(|_| TcpStream::connect(("127.0.0.1", port)).unwrap()).collect();
+        // La siguiente se cierra sin respuesta, aunque pida algo.
+        let (buf, r) = pide(port);
+        if let Err(e) = &r {
+            assert!(!matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut), "el servidor ni cerró ni contestó: {e}");
+        }
+        assert!(buf.is_empty(), "la conexión que sobra no recibe respuesta: {:?}", String::from_utf8_lossy(&buf));
+        assert_eq!(atendidas.load(Ordering::Relaxed), 0, "el manejador no debe ver la conexión que sobra");
+        // Cuelgan las ociosas: sus plazas se liberan y el servidor vuelve a atender.
+        drop(ociosas);
+        let mut respuesta = None;
+        for _ in 0..100 {
+            let (buf, _) = pide(port);
+            if !buf.is_empty() {
+                respuesta = Some(String::from_utf8_lossy(&buf).to_string());
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        let respuesta = respuesta.expect("el servidor no volvió a atender tras liberar las plazas");
+        assert!(respuesta.starts_with("HTTP/1.1 200 OK\r\n"), "{respuesta}");
+        assert!(respuesta.ends_with("{\"ok\":true}"), "{respuesta}");
+        assert_eq!(atendidas.load(Ordering::Relaxed), 1);
     }
 
     #[test]
