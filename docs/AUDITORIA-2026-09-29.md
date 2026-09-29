@@ -18,7 +18,9 @@ Método y límites, dichos claros:
   crate con fallo.
 - Los parches se escribieron desde una sesión sin terminal. Los compiló y
   probó el CI del PR que los trae (`security.yml`: `cargo test --release
-  --locked`), que pasó la suite completa en la cabeza `22aaac7`; el primer
+  --locked`, `cargo audit`, inventario de red, panel y compatibilidad de
+  ficheros), que pasó entero en la cabeza `89ec0a2` (la red y SHARAMI ya
+  habían pasado en `22aaac7`; el panel entró en `a6f77cd`). El primer
   intento falló por una `á` dentro de un literal de bytes y se corrigió.
 
 ## Resumen
