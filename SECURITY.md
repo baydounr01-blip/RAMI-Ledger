@@ -26,6 +26,8 @@ lo encuentre en `docs/AUDITORIA-2026-09.md`.
 | **Multiverso** (`/api/city/multiverse`, `?tip=`, v0.10.0) | consumo de memoria/CPU por un árbol frondoso | se describen como mucho las 12 puntas más pesadas y 256 diferencias por punta; los estados de las puntas ya estaban en memoria (`tip_state`); solo lectura, en el panel local |
 | **API pública de mercado** (`rami-node market`, v0.9.0) | cualquier cliente HTTP | solo lectura (solo `GET`), sin monedero ni claves, sin órdenes; mismo servidor acotado del panel (líneas, cabeceras, cuerpo, timeouts); CORS abierto solo en este modo; publica hechos de la cadena en RAMI de prueba, nunca un precio externo |
 | **Cadena de suministro** | dependencia con vulnerabilidad, acción de CI alterada, «puerta trasera» en un cambio | `Cargo.lock` con `--locked`; `cargo audit` semanal; **inventario de red y procesos** (`tools/security/inventory.py`) comparado con `SECURITY-INVENTORY.txt` en cada push: cualquier host, comando o variable nueva rompe el CI hasta revisarse; guardián de `process::exit`; escaneo de secretos |
+| **Avalancha de conexiones y de `Peers`** (auditoría 2026‑09‑29, R1 y R2) | cualquier dirección de Internet (conexiones vacías) o un par conectado (`Peers` con direcciones inventadas) | ≤ 64 saludos entrantes a la vez (el resto se cierra sin leer), ≤ 32 marcados salientes en vuelo, una misma dirección como mucho una vez cada 10 s, forma de la dirección comprobada antes de gastar un hilo, `thread::Builder::spawn` (un fallo del sistema al crear hilos ya no tumba el hilo central de la red) |
+| **Mensajes entre identidades: SHARAMI** (`rami_net::sharami`, v1) | quien vea el tráfico o un lote de celdas | cada mensaje son dos celdas del mismo tamaño que solas son ruido uniforme (máscara aleatoria y mensaje enmascarado), X25519 efímero por celda, HKDF-SHA256, ChaCha20-Poly1305, sobre firmado Ed25519 solo visible para el destinatario, lotes barajados; formato con sitio reservado para el híbrido post-cuántico (`docs/SHARAMI.md`) |
 
 ## Autoauditoría con nuestra propia tecnología
 
@@ -74,6 +76,18 @@ ejecutable frente a `BINARIES-SHA256.txt` del release.
 - **Secretos en memoria:** las claves privadas se borran al soltar
   (`ed25519-dalek` implementa `ZeroizeOnDrop`), pero las copias temporales de
   32 bytes no se borran explícitamente.
+- **De la auditoría de 2026‑09‑29** (`docs/AUDITORIA-2026-09-29.md`): el
+  ritmo de presencia y chat se comprueba después de verificar la firma (R3);
+  el panel no manda `X-Frame-Options` ni CSP (R5); el paso de publicación del
+  release interpola la etiqueta en el shell (R6); ficheros de una sesión
+  local de regtest siguen en git (R8). Los parches de R1, R2 y R7 de esa
+  auditoría **no se compilaron en la sesión que los escribió**: los valida el
+  CI, y hasta que esté en verde cuentan como propuestos.
+- **SHARAMI v1 no resiste un ordenador cuántico** (X25519): el modo híbrido
+  con ML-KEM-768 tiene el sitio reservado en el formato y entra cuando la
+  dependencia esté en `Cargo.lock`.
 
-Detalle de hallazgos y correcciones: [`docs/AUDITORIA-2026-09.md`](docs/AUDITORIA-2026-09.md).
+Detalle de hallazgos y correcciones: [`docs/AUDITORIA-2026-09.md`](docs/AUDITORIA-2026-09.md)
+(v0.7.0 → v0.7.1) y [`docs/AUDITORIA-2026-09-29.md`](docs/AUDITORIA-2026-09-29.md)
+(v0.11.0, los tres repositorios).
 Bytes del protocolo: [`chain/crates/rami-net/PROTOCOL.md`](chain/crates/rami-net/PROTOCOL.md).
