@@ -22,6 +22,13 @@ Método y límites, dichos claros:
   ficheros), que pasó entero en la cabeza `89ec0a2` (la red y SHARAMI ya
   habían pasado en `22aaac7`; el panel entró en `a6f77cd`). El primer
   intento falló por una `á` dentro de un literal de bytes y se corrigió.
+- **Segunda entrega** (el mismo día, desde una sesión con terminal): la
+  parte del nodo de R2, R3 y R4, los tres en `rami-node`, con la batería
+  corriendo en local antes de cada push: `cargo test --release --locked`
+  en verde entero (171 tests: 74 en `rami-core`, 42 en `rami-net`, 45 en
+  `rami-node` y 10 en `rami-wallet`, con los cuatro nuevos) y el inventario
+  igual a la lista aprobada. Cada test nuevo se comprobó también al revés:
+  con el código anterior (o sin el tope) falla.
 
 ## Resumen
 
@@ -49,9 +56,9 @@ obligatorio) y todos los `innerHTML` del panel que muestran datos de otros
 | # | Sev. | Dónde | Problema | Estado |
 |---|---|---|---|---|
 | R1 | **Alta** | `chain/crates/rami-net/src/lib.rs` (`Internal::Inbound`, `spawn_conn`) | Sin tope de conexiones entrantes en fase de saludo: cada TCP aceptado lanzaba un hilo con 5 s de espera. Unas 200 conexiones vacías por segundo mantenían ~1000 sockets abiertos y agotaban los descriptores del proceso entero (el panel local deja de responder, `chain.jsonl` no se escribe). Además `thread::spawn` entra en pánico si el sistema no da más hilos, y ese pánico ocurría **dentro del hilo central de la red**: el nodo se quedaba sin P2P hasta reiniciar, minando solo. | **Corregido**: `MAX_PENDING_INBOUND = 64` (el exceso se cierra sin leer ni contestar), `thread::Builder::spawn` con el error registrado, y la plaza se libera en cuanto termina el saludo. Test `inbound_flood_does_not_kill_the_network` |
-| R2 | **Alta** | `chain/crates/rami-node/src/lib.rs` (`Frame::Peers`), `rami-net/src/lib.rs` (`spawn_dialer`, `Cmd::Dial`) | Cada `Peers` recibido lanzaba hasta 8 marcados salientes (hilo + resolución DNS bloqueante + 5 s de conexión) sin ritmo, sin deduplicar y sin comprobar la dirección. Un par conectado podía mandar cientos de `Peers` por segundo: miles de hilos, `thread::spawn` en pánico en el hilo central (mismo efecto que R1), y el nodo abriendo conexiones a cualquier `host:puerto` que el par eligiera (nombres a resolver incluidos). | **Corregido en el transporte**: `MAX_DIALS_IN_FLIGHT = 32`; una misma dirección no se marca más de una vez cada 10 s (`DIAL_MEMORY`); forma de la dirección comprobada en `Network::dial` antes de gastar un hilo; `Builder::spawn`. Con eso un par hostil obtiene como mucho ~6 marcados por segundo en todo el proceso. **Pendiente en el nodo**: un `Peers` por par cada 30 s y solo `IP:puerto` literales (sin nombres que resolver). Test `dial_addr_shape_is_checked_before_spawning` |
-| R3 | Media | `rami-node/src/lib.rs` (`on_presence`, `on_chat`) | El ritmo mínimo por identidad (400 ms / 1,5 s) se comprueba **después** de verificar la firma Ed25519 (~50 µs) y la prueba de trabajo. Un par conectado fuerza una verificación por frame: a 20 000 frames/s satura un núcleo del nodo. | Pendiente (cambio pequeño: comprobar `seq` y el ritmo antes de `ed_verify`). No entra en esta entrega para no tocar `rami-node/src/lib.rs` sin poder correr su batería en local |
-| R4 | Baja | `chain/crates/rami-node/src/http.rs` (`serve`) | Un hilo por conexión sin tope para el panel. Solo escucha en loopback: lo explota otro proceso local, no la red. | Endurecimiento pendiente (mismo tope que R1) |
+| R2 | **Alta** | `chain/crates/rami-node/src/lib.rs` (`Frame::Peers`), `rami-net/src/lib.rs` (`spawn_dialer`, `Cmd::Dial`) | Cada `Peers` recibido lanzaba hasta 8 marcados salientes (hilo + resolución DNS bloqueante + 5 s de conexión) sin ritmo, sin deduplicar y sin comprobar la dirección. Un par conectado podía mandar cientos de `Peers` por segundo: miles de hilos, `thread::spawn` en pánico en el hilo central (mismo efecto que R1), y el nodo abriendo conexiones a cualquier `host:puerto` que el par eligiera (nombres a resolver incluidos). | **Corregido**. Transporte (primera entrega): `MAX_DIALS_IN_FLIGHT = 32`; una misma dirección no se marca más de una vez cada 10 s (`DIAL_MEMORY`); forma de la dirección comprobada en `Network::dial` antes de gastar un hilo; `Builder::spawn`. Nodo (segunda entrega, `peers_a_marcar` y `literal_addr_ok`): de un mismo par se atiende como mucho un `Peers` cada 30 s (`PEERS_MIN_INTERVAL`; los demás se ignoran sin cerrar la conexión y sin adelantar su turno) y solo se marcan direcciones `IP:puerto` literales, IPv4 o `[IPv6]:puerto`, sin puerto 0 ni IP «cualquiera», de multidifusión o de difusión: un nombre que haya que resolver ya no lo elige el par. Con eso un par hostil obtiene como mucho 8 marcados cada 30 s, ninguno con resolución de nombre. Tests `dial_addr_shape_is_checked_before_spawning` y `peers_are_rate_limited_per_peer_and_only_literal_addresses_are_dialed` |
+| R3 | Media | `rami-node/src/lib.rs` (`on_presence`, `on_chat`) | El ritmo mínimo por identidad (400 ms / 1,5 s) se comprobaba **después** de verificar la firma Ed25519 (~50 µs) y la prueba de trabajo. Un par conectado forzaba una verificación por frame: a 20 000 frames/s saturaba un núcleo del nodo. | **Corregido** (segunda entrega): `admitir_presence` y `admitir_chat` deciden en este orden: forma de los campos, eco de lo nuestro, secuencia (presencia), ritmo, repetido (chat) y solo entonces prueba de trabajo y firma; devuelven el motivo (`Descarte`). Secuencia y ritmo miran memoria que únicamente un frame ya verificado pudo escribir, y un descarte no la toca: quien reutiliza la clave de otro no lo deja fuera de ritmo. Lo que queda: un frame de una identidad nunca vista con prueba de trabajo válida sigue costando una verificación (crear cada identidad cuesta al atacante ~1 s de CPU). Tests `presence_over_the_rate_is_dropped_before_the_signature` y `chat_over_the_rate_is_dropped_before_the_signature` (frames con firma y prueba de trabajo inválidas a propósito se descartan por ritmo, secuencia o repetido; con el orden antiguo el motivo era la prueba de trabajo) |
+| R4 | Baja | `chain/crates/rami-node/src/http.rs` (`serve`) | Un hilo por conexión sin tope para el panel. Solo escucha en loopback: lo explota otro proceso local, no la red. La API pública de `rami-node market` usa el mismo servidor, y ahí lo explota cualquiera. | **Corregido** (segunda entrega): `MAX_CONNS = 64` conexiones atendidas a la vez, con el patrón de R1 (contador que solo sube el bucle de aceptación y plaza que lo baja al soltarse, salga el hilo por donde salga); la que sobra se cierra sin leer nada; `thread::Builder::spawn` con el error registrado. `serve_public` hereda el tope. Test `excess_connections_are_closed_without_reading` |
 | R5 | Baja | `rami-node/src/http.rs` (`write_response`) | El panel no mandaba `X-Frame-Options` ni `Content-Security-Policy`. La guardia de Host/Origin/token impide dar órdenes desde otra web, pero una web podía enmarcar `http://127.0.0.1:8645/` (el navegador no lo bloquea por defecto) y superponer su interfaz para engañar con clics. | **Corregido**: `X-Frame-Options: DENY` y `Content-Security-Policy: frame-ancestors 'none'` en toda respuesta (`response_head`). Test `every_response_refuses_framing` |
 | R6 | Baja | `.github/workflows/release.yml` (paso «Publicar Release») | `TAG="${{ github.event.inputs.tag \|\| github.ref_name }}"` se interpolaba en el `run:`; un nombre de etiqueta o una entrada de `workflow_dispatch` con `$(…)` ejecutaría en el runner con `contents: write`. Solo lo puede disparar quien ya tiene permiso de escritura, así que no es una escalada; es la forma que GitHub documenta como inyección de script. | **Corregido**: la etiqueta entra por `env:` (como ya hacía el paso de empaquetado) |
 | R7 | Baja | `rami-net/src/identity.rs` (test `file_roundtrip_and_creation_time`) | El test exigía crear la identidad en < 20 s; la búsqueda del nonce es geométrica (media 2^20 hashes, sin tope) y en el perfil `test` corrió en 20,3 s: fallaba en máquinas cargadas y bloqueaba el resto de la suite (`rami-node` y `rami-wallet` no llegaban a ejecutarse). | **Corregido**: 60 s, con la explicación en el test |
@@ -95,10 +102,23 @@ mayores de 16 MiB (se cortan antes de reservar memoria).
   SHARAMI v1 con su batería (nueve tests). No toca consenso ni protocolo.
 - `SECURITY.md`: esta auditoría en el modelo de amenazas y en los pendientes.
 
+## Cambios de la segunda entrega
+
+- `chain/crates/rami-node/src/lib.rs`: R3 (`Descarte`, `admitir_presence`,
+  `admitir_chat`; `on_presence` y `on_chat` reciben el `Frame` entero y solo
+  guardan y retransmiten) y la parte del nodo de R2 (`PEERS_MIN_INTERVAL`,
+  `PEERS_MAX_DIAL`, `literal_addr_ok`, `peers_a_marcar`, `peers_last`, que
+  se limpia al desconectar). Tres tests nuevos en un módulo al final del
+  fichero: el inventario corta en el primer `#[cfg(test)]`, así que ningún
+  código de producción queda detrás.
+- `chain/crates/rami-node/src/http.rs`: R4 (`MAX_CONNS`, `Plaza`,
+  `Builder::spawn`), con test.
+- `SECURITY.md`: modelo de amenazas y pendientes al día.
+- Ni `Cargo.lock`, ni dependencias, ni `SECURITY-INVENTORY.txt` cambian.
+
 ## Pendiente (por orden)
 
-1. R3 y la parte del nodo de R2 (los dos en `rami-node/src/lib.rs`), R4.
-2. SHARAMI: integración en la red (`docs/SHARAMI.md` §8: frame, lote por
+1. SHARAMI: integración en la red (`docs/SHARAMI.md` §8: frame, lote por
    ventana, relé, panel) y el modo híbrido post-cuántico cuando `ml-kem` esté
    en `Cargo.lock`.
-3. R11: CSP en la web pública; Argon2id en el keystore.
+2. R11: CSP en la web pública; Argon2id en el keystore.
