@@ -323,6 +323,41 @@ pub fn make_genesis(is_testnet: bool, params: Params, miner: AccountId) -> Block
 /// Pares conocidos persistidos (peers.json, array JSON de "host:puerto").
 /// Tope de 64 para que el archivo no crezca sin límite.
 const KNOWN_PEERS_CAP: usize = 64;
+/// De un mismo par se atiende como mucho un `Peers` en este plazo; los demás
+/// se ignoran sin cerrar la conexión. Un par honesto contesta un `Peers` al
+/// `GetPeers` de la conexión y poco más (auditoría de 2026‑09‑29, R2).
+const PEERS_MIN_INTERVAL: Duration = Duration::from_secs(30);
+/// Direcciones de un `Peers` que se marcan como mucho.
+const PEERS_MAX_DIAL: usize = 8;
+
+/// ¿Es `addr` una dirección `IP:puerto` LITERAL (IPv4 o `[IPv6]:puerto`) a la
+/// que tiene sentido conectar? Un nombre no vale: resolverlo costaría un hilo
+/// y una consulta DNS que elegiría el par, y el transporte lo aceptaría
+/// (`dial_addr_ok` admite nombres porque los seeds de configuración los
+/// llevan). Fuera también el puerto 0 y las IP «cualquiera», de
+/// multidifusión y de difusión.
+fn literal_addr_ok(addr: &str) -> bool {
+    let Ok(sa) = addr.parse::<std::net::SocketAddr>() else {
+        return false;
+    };
+    let ip = sa.ip();
+    let difusion = matches!(ip, std::net::IpAddr::V4(v4) if v4.is_broadcast());
+    sa.port() != 0 && !ip.is_unspecified() && !ip.is_multicast() && !difusion
+}
+
+/// Direcciones de un `Peers` recibido de `from` que se pasan al transporte:
+/// ninguna si a ese par ya se le atendió un `Peers` hace menos de
+/// `PEERS_MIN_INTERVAL` (`peers_last` solo cambia al atender uno, así que un
+/// par que insiste no adelanta su turno); si no, las `IP:puerto` literales,
+/// hasta `PEERS_MAX_DIAL`. El transporte pone además sus propios topes
+/// (`rami_net::MAX_DIALS_IN_FLIGHT`, `rami_net::DIAL_MEMORY`).
+fn peers_a_marcar(peers_last: &mut HashMap<rami_net::PeerId, Instant>, from: rami_net::PeerId, addrs: Vec<String>, now: Instant) -> Vec<String> {
+    if peers_last.get(&from).is_some_and(|t| now.duration_since(*t) < PEERS_MIN_INTERVAL) {
+        return Vec::new();
+    }
+    peers_last.insert(from, now);
+    addrs.into_iter().filter(|a| literal_addr_ok(a)).take(PEERS_MAX_DIAL).collect()
+}
 
 fn peers_path(root: &Path) -> PathBuf {
     root.join("peers.json")
@@ -2108,6 +2143,8 @@ struct Node {
     /// Pares conocidos remarcables; se persisten en peers.json del directorio de
     /// cadena y se re-marcan al arrancar (descubrimiento sin servidor central).
     known_peers: HashSet<String>,
+    /// peer -> cuándo se le atendió el último `Peers` (ver PEERS_MIN_INTERVAL).
+    peers_last: HashMap<rami_net::PeerId, Instant>,
     netinfo: Arc<Mutex<NetInfo>>,
     net: Network,
     mining: Arc<MiningShared>,
@@ -2250,6 +2287,7 @@ pub fn spawn(cfg: NodeConfig) -> Result<NodeHandle, String> {
         peer_ident: HashMap::new(),
         known_identities: HashMap::new(),
         known_peers: HashSet::new(),
+        peers_last: HashMap::new(),
         netinfo: netinfo.clone(),
         net,
         mining: mining.clone(),
@@ -2625,6 +2663,7 @@ impl Node {
                 self.peer_rule.remove(&peer);
                 self.peer_meta.remove(&peer);
                 self.peer_ident.remove(&peer);
+                self.peers_last.remove(&peer);
                 self.peer_tips.remove(&peer);
                 self.inflight.remove(&peer);
                 self.strikes.remove(&peer);
@@ -2855,8 +2894,11 @@ impl Node {
                 }
             }
             Frame::Peers { addrs } => {
+                // Un `Peers` por par cada 30 s y solo `IP:puerto` literales
+                // (`peers_a_marcar`); el que sobra se ignora, no se corta.
+                let addrs = peers_a_marcar(&mut self.peers_last, peer, addrs, Instant::now());
                 if self.net.peer_count() < 16 {
-                    for a in addrs.into_iter().take(8) {
+                    for a in addrs {
                         self.net.dial(a);
                     }
                 }
@@ -3791,5 +3833,48 @@ mod tests {
         assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 3, 100, "", None)), Err(Descarte::Forma));
         assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 3, 100, "hola\nadiós", None)), Err(Descarte::Forma));
         assert_eq!(admitir_chat(&chat, &last, &id.pubkey, &chat_frame(id, 3, 100, "hola", None)), Err(Descarte::Eco));
+    }
+
+    /// Auditoría de 2026‑09‑29, R2 (la parte del nodo): de un `Peers` solo se
+    /// marcan direcciones `IP:puerto` literales, nunca nombres que haya que
+    /// resolver, y de un mismo par se atiende como mucho un `Peers` cada
+    /// `PEERS_MIN_INTERVAL`; los demás se ignoran sin adelantar su turno.
+    #[test]
+    fn peers_are_rate_limited_per_peer_and_only_literal_addresses_are_dialed() {
+        let mut last: HashMap<rami_net::PeerId, Instant> = HashMap::new();
+        let t0 = Instant::now();
+        let mezcla: Vec<String> = [
+            "1.2.3.4:30301",
+            "seed.quantbot.army:30301",
+            "[::1]:30301",
+            "localhost:30301",
+            "0.0.0.0:30301",
+            "[::]:30301",
+            "255.255.255.255:30301",
+            "239.255.77.77:30301",
+            "1.2.3.4:0",
+            "1.2.3.4",
+            "::1:30301",
+            "",
+            "10.0.0.1:30302",
+        ]
+        .iter()
+        .map(|a| a.to_string())
+        .collect();
+        assert_eq!(peers_a_marcar(&mut last, 7, mezcla.clone(), t0), vec!["1.2.3.4:30301", "[::1]:30301", "10.0.0.1:30302"]);
+        // El mismo par, dentro del plazo: nada, y sin adelantar su turno.
+        assert!(peers_a_marcar(&mut last, 7, mezcla.clone(), t0 + Duration::from_millis(100)).is_empty());
+        assert!(peers_a_marcar(&mut last, 7, mezcla.clone(), t0 + PEERS_MIN_INTERVAL - Duration::from_millis(1)).is_empty());
+        // Otro par tiene su propio ritmo.
+        assert_eq!(peers_a_marcar(&mut last, 8, mezcla.clone(), t0 + Duration::from_secs(1)).len(), 3);
+        // Cumplido el plazo desde el ÚLTIMO atendido (no desde el último ignorado), se vuelve a atender.
+        assert_eq!(peers_a_marcar(&mut last, 7, mezcla.clone(), t0 + PEERS_MIN_INTERVAL).len(), 3);
+        // Tope de direcciones por `Peers`, y las literales cuentan aunque vengan detrás de nombres.
+        let muchas: Vec<String> = (0..20).map(|i| format!("10.0.1.{i}:30301")).collect();
+        assert_eq!(peers_a_marcar(&mut last, 9, muchas, t0).len(), PEERS_MAX_DIAL);
+        let detras: Vec<String> = ["a.example.com:30301", "b.example.com:30301", "10.0.2.1:30301"].iter().map(|a| a.to_string()).collect();
+        assert_eq!(peers_a_marcar(&mut last, 10, detras, t0), vec!["10.0.2.1:30301"]);
+        // Todo lo que el nodo deja pasar lo acepta también el transporte.
+        assert!(rami_net::dial_addr_ok("1.2.3.4:30301") && rami_net::dial_addr_ok("[::1]:30301"));
     }
 }
