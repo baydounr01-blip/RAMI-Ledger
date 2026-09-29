@@ -453,7 +453,7 @@ mod tests {
     #[test]
     fn ida_y_vuelta_dos_celdas() {
         let (_, x_pub, x_sec) = recipient(1);
-        for msg in [b"".to_vec(), b"hola Dubái".to_vec(), vec![0x5au8; SHARE_LEN]] {
+        for msg in [Vec::new(), "hola Dubái".as_bytes().to_vec(), vec![0x5au8; SHARE_LEN]] {
             let cells = seal(&x_pub, &msg).unwrap();
             assert_eq!(cells[0].to_bytes().len(), CELL_LEN);
             assert_eq!(cells[1].to_bytes().len(), CELL_LEN);
@@ -486,7 +486,7 @@ mod tests {
         assert_ne!(&ha.share[..msg.len()], &msg[..]);
         assert_ne!(&ha1.share[..msg.len()], &msg[..]);
         // Una sola mitad no es un mensaje.
-        assert_eq!(open_batch(&x_sec, &a[..1]), vec![]);
+        assert!(open_batch(&x_sec, &a[..1]).is_empty());
         assert_eq!(join(&ha, &ha), Err(SharamiError::Incomplete));
         assert_eq!(join(&ha, &hb), Err(SharamiError::Incomplete));
         // Y las dos de la misma pareja, sí.
