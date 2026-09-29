@@ -107,6 +107,22 @@ pub const PRESENCE_NAME_MAX: usize = 24;
 pub const CHAT_TEXT_MAX: usize = 280;
 /// Coordenadas locales del avatar acotadas (metros; la ciudad mide ~42 km).
 const PRESENCE_COORD_MAX: i32 = 100_000;
+/// Verificaciones caras (prueba de trabajo y firma Ed25519) de presencia y
+/// chat que se conceden a un mismo par por ventana. Secuencia y ritmo solo
+/// ahorran la firma de las identidades ya admitidas: un par que manda firmas
+/// inválidas con una identidad válida, o que rota identidades con prueba de
+/// trabajo precalculada, llegaba a la firma en cada frame. Lo legítimo cabe
+/// de sobra: un relé honesto entrega como mucho PRESENCE_CAP /
+/// PRESENCE_MIN_INTERVAL = 640 presencias nuevas por segundo (6400 por
+/// ventana) más el chat. Y como un relé honesto verifica antes de
+/// retransmitir, una firma o prueba de trabajo inválida es culpa del par que
+/// la manda: agota su presupuesto hasta que acabe la ventana. La clave es la
+/// IP del par, no su `PeerId`: reconectar no da presupuesto nuevo
+/// (auditoría de 2026‑09‑29, R3, segunda vuelta).
+const META_VERIFICACIONES_VENTANA: Duration = Duration::from_secs(10);
+const META_VERIFICACIONES_MAX: u32 = 8000;
+/// Pares (por IP) de los que se recuerda el presupuesto a la vez.
+const META_PRESUPUESTOS_CAP: usize = 1024;
 
 pub fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
@@ -323,40 +339,74 @@ pub fn make_genesis(is_testnet: bool, params: Params, miner: AccountId) -> Block
 /// Pares conocidos persistidos (peers.json, array JSON de "host:puerto").
 /// Tope de 64 para que el archivo no crezca sin límite.
 const KNOWN_PEERS_CAP: usize = 64;
-/// De un mismo par se atiende como mucho un `Peers` en este plazo; los demás
+/// De una misma IP se atiende como mucho un `Peers` en este plazo; los demás
 /// se ignoran sin cerrar la conexión. Un par honesto contesta un `Peers` al
-/// `GetPeers` de la conexión y poco más (auditoría de 2026‑09‑29, R2).
+/// `GetPeers` de la conexión y poco más. La clave es la IP y no el `PeerId`
+/// (que nunca se reutiliza) porque si no bastaba con reconectar para
+/// obtener otro turno (auditoría de 2026‑09‑29, R2).
 const PEERS_MIN_INTERVAL: Duration = Duration::from_secs(30);
 /// Direcciones de un `Peers` que se marcan como mucho.
 const PEERS_MAX_DIAL: usize = 8;
+/// IP de las que se recuerda el último `Peers` atendido, a la vez.
+const PEERS_MEMORIA_CAP: usize = 1024;
 
-/// ¿Es `addr` una dirección `IP:puerto` LITERAL (IPv4 o `[IPv6]:puerto`) a la
-/// que tiene sentido conectar? Un nombre no vale: resolverlo costaría un hilo
-/// y una consulta DNS que elegiría el par, y el transporte lo aceptaría
-/// (`dial_addr_ok` admite nombres porque los seeds de configuración los
-/// llevan). Fuera también el puerto 0 y las IP «cualquiera», de
-/// multidifusión y de difusión.
-fn literal_addr_ok(addr: &str) -> bool {
-    let Ok(sa) = addr.parse::<std::net::SocketAddr>() else {
-        return false;
-    };
-    let ip = sa.ip();
+/// Forma canónica de una dirección `IP:puerto` LITERAL (IPv4 o
+/// `[IPv6]:puerto`) a la que tiene sentido conectar, o `None`. Un nombre no
+/// vale: resolverlo costaría un hilo y una consulta DNS que elegiría el par,
+/// y el transporte lo aceptaría (`dial_addr_ok` admite nombres porque los
+/// seeds de configuración los llevan). Tampoco valen el puerto 0, un ámbito
+/// IPv6 (`%3`, que el transporte rechaza) ni las IP «cualquiera», de
+/// multidifusión o de difusión. Una IPv4 dentro de IPv6 (`[::ffff:1.2.3.4]`)
+/// vuelve como la IPv4: así la memoria de marcados del transporte reconoce
+/// la misma dirección escrita de varias formas.
+fn direccion_literal(addr: &str) -> Option<String> {
+    let sa: std::net::SocketAddr = addr.parse().ok()?;
+    if let std::net::SocketAddr::V6(v6) = &sa {
+        if v6.scope_id() != 0 {
+            return None;
+        }
+    }
+    let ip = sa.ip().to_canonical();
     let difusion = matches!(ip, std::net::IpAddr::V4(v4) if v4.is_broadcast());
-    sa.port() != 0 && !ip.is_unspecified() && !ip.is_multicast() && !difusion
+    if sa.port() == 0 || ip.is_unspecified() || ip.is_multicast() || difusion {
+        return None;
+    }
+    Some(std::net::SocketAddr::new(ip, sa.port()).to_string())
 }
 
-/// Direcciones de un `Peers` recibido de `from` que se pasan al transporte:
-/// ninguna si a ese par ya se le atendió un `Peers` hace menos de
-/// `PEERS_MIN_INTERVAL` (`peers_last` solo cambia al atender uno, así que un
-/// par que insiste no adelanta su turno); si no, las `IP:puerto` literales,
-/// hasta `PEERS_MAX_DIAL`. El transporte pone además sus propios topes
-/// (`rami_net::MAX_DIALS_IN_FLIGHT`, `rami_net::DIAL_MEMORY`).
-fn peers_a_marcar(peers_last: &mut HashMap<rami_net::PeerId, Instant>, from: rami_net::PeerId, addrs: Vec<String>, now: Instant) -> Vec<String> {
-    if peers_last.get(&from).is_some_and(|t| now.duration_since(*t) < PEERS_MIN_INTERVAL) {
-        return Vec::new();
+/// Direcciones de un `Peers` recibido de la IP `clave` que se pasan al
+/// transporte: ninguna si a esa IP ya se le atendió un `Peers` hace menos de
+/// `PEERS_MIN_INTERVAL` (`peers_last` solo cambia al atender uno, así que
+/// quien insiste, o reconecta, no adelanta su turno); si no, las
+/// `IP:puerto` literales en forma canónica, sin repetidas, hasta
+/// `PEERS_MAX_DIAL`. La memoria de turnos está acotada: llena de turnos
+/// vivos, una IP nueva espera a que caduque alguno. El transporte pone
+/// además sus propios topes (`rami_net::MAX_DIALS_IN_FLIGHT`,
+/// `rami_net::DIAL_MEMORY`).
+fn peers_a_marcar(peers_last: &mut HashMap<String, Instant>, clave: &str, addrs: Vec<String>, now: Instant) -> Vec<String> {
+    match peers_last.get(clave) {
+        Some(t) if now.duration_since(*t) < PEERS_MIN_INTERVAL => return Vec::new(),
+        Some(_) => {}
+        None => {
+            if peers_last.len() >= PEERS_MEMORIA_CAP {
+                peers_last.retain(|_, t| now.duration_since(*t) < PEERS_MIN_INTERVAL);
+            }
+            if peers_last.len() >= PEERS_MEMORIA_CAP {
+                return Vec::new();
+            }
+        }
     }
-    peers_last.insert(from, now);
-    addrs.into_iter().filter(|a| literal_addr_ok(a)).take(PEERS_MAX_DIAL).collect()
+    peers_last.insert(clave.to_string(), now);
+    let mut out: Vec<String> = Vec::new();
+    for a in addrs.iter().filter_map(|a| direccion_literal(a)) {
+        if !out.contains(&a) {
+            out.push(a);
+        }
+        if out.len() == PEERS_MAX_DIAL {
+            break;
+        }
+    }
+    out
 }
 
 fn peers_path(root: &Path) -> PathBuf {
@@ -1759,19 +1809,84 @@ enum Descarte {
     Ritmo,
     /// El mismo mensaje ya está en el chat reciente.
     Repetido,
+    /// El par gastó ya las verificaciones caras de su ventana (o mandó una
+    /// inválida): el frame no llega a la prueba de trabajo ni a la firma.
+    Presupuesto,
     /// La prueba de trabajo de la identidad no vale.
     Pow,
     /// La firma Ed25519 no vale.
     Firma,
 }
 
+/// Presupuesto de verificaciones caras por par (ver META_VERIFICACIONES_MAX).
+#[derive(Default)]
+struct PresupuestoVerificaciones {
+    /// IP del par -> (inicio de su ventana, verificaciones gastadas en ella).
+    por_par: HashMap<String, (Instant, u32)>,
+}
+
+impl PresupuestoVerificaciones {
+    /// ¿Le queda a `clave` presupuesto para una verificación cara ahora? Un
+    /// par nuevo cuando la memoria está llena no lo tiene hasta que caduque
+    /// alguna ventana (se prefiere cerrar a crecer sin tope).
+    fn disponible(&mut self, clave: &str, now: Instant) -> bool {
+        match self.por_par.get(clave) {
+            Some((inicio, gastado)) => {
+                now.duration_since(*inicio) >= META_VERIFICACIONES_VENTANA || *gastado < META_VERIFICACIONES_MAX
+            }
+            None => {
+                if self.por_par.len() >= META_PRESUPUESTOS_CAP {
+                    self.por_par.retain(|_, (inicio, _)| now.duration_since(*inicio) < META_VERIFICACIONES_VENTANA);
+                }
+                self.por_par.len() < META_PRESUPUESTOS_CAP
+            }
+        }
+    }
+
+    /// Apunta una verificación cara de `clave`; si falló (prueba de trabajo o
+    /// firma inválidas), el par agota el presupuesto de la ventana entera.
+    fn gastar(&mut self, clave: &str, now: Instant, fallo: bool) {
+        if !self.por_par.contains_key(clave) && self.por_par.len() >= META_PRESUPUESTOS_CAP {
+            return; // `disponible` ya lo dijo: sin sitio no hay cuenta que llevar
+        }
+        let e = self.por_par.entry(clave.to_string()).or_insert((now, 0));
+        if now.duration_since(e.0) >= META_VERIFICACIONES_VENTANA {
+            *e = (now, 0);
+        }
+        e.1 = if fallo { META_VERIFICACIONES_MAX } else { e.1.saturating_add(1) };
+    }
+}
+
+/// Las dos comprobaciones caras pasan por aquí para que los tests puedan
+/// contar cuántas veces se llegó a ellas (contador por hilo, solo en tests).
+fn verificar_pow(pk: &[u8; 32], pow: u64) -> bool {
+    #[cfg(test)]
+    tests::VERIFICACIONES.with(|c| c.set(c.get() + 1));
+    identity_pow_ok(pk, pow)
+}
+
+fn verificar_firma(pk: &[u8; 32], msg: &[u8], sig: &[u8; 64]) -> bool {
+    #[cfg(test)]
+    tests::VERIFICACIONES.with(|c| c.set(c.get() + 1));
+    ed_verify(pk, msg, sig)
+}
+
+/// Parte «host» de una dirección `host:puerto` (`[::1]:30301` -> `[::1]`).
+fn host_de(addr: &str) -> &str {
+    addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(addr)
+}
+
 /// Puerta de un `Presence` ajeno: decide sin tocar el estado y devuelve la
-/// clave pública de la identidad si el frame se admite.
+/// clave pública de la identidad si el frame se admite. `verificar` dice si
+/// el par que lo manda tiene presupuesto para la prueba de trabajo y la
+/// firma; sin él, el frame se descarta justo antes de ellas.
 fn admitir_presence(
     presence: &HashMap<[u8; 32], PresenceEntry>,
     presence_last: &HashMap<[u8; 32], Instant>,
     own: &[u8; 32],
     frame: &Frame,
+    now: Instant,
+    verificar: bool,
 ) -> Result<[u8; 32], Descarte> {
     let Frame::Presence { pk, pow, seq, ts, name, x, y, z, yaw, avatar, sig, .. } = frame else {
         return Err(Descarte::Forma);
@@ -1789,13 +1904,16 @@ fn admitir_presence(
     if presence.get(&pkb).is_some_and(|e| *seq <= e.seq) {
         return Err(Descarte::Secuencia);
     }
-    if presence_last.get(&pkb).is_some_and(|t| t.elapsed() < PRESENCE_MIN_INTERVAL) {
+    if presence_last.get(&pkb).is_some_and(|t| now.duration_since(*t) < PRESENCE_MIN_INTERVAL) {
         return Err(Descarte::Ritmo);
     }
-    if !identity_pow_ok(&pkb, *pow) {
+    if !verificar {
+        return Err(Descarte::Presupuesto);
+    }
+    if !verificar_pow(&pkb, *pow) {
         return Err(Descarte::Pow);
     }
-    if !ed_verify(&pkb, &presence_msg(&pkb, *seq, *ts, name, *x, *y, *z, *yaw, *avatar), &sigb) {
+    if !verificar_firma(&pkb, &presence_msg(&pkb, *seq, *ts, name, *x, *y, *z, *yaw, *avatar), &sigb) {
         return Err(Descarte::Firma);
     }
     Ok(pkb)
@@ -1810,6 +1928,8 @@ fn admitir_chat(
     chat_last: &HashMap<[u8; 32], Instant>,
     own: &[u8; 32],
     frame: &Frame,
+    now: Instant,
+    verificar: bool,
 ) -> Result<[u8; 32], Descarte> {
     let Frame::Chat { pk, pow, seq, ts, name, text, sig, .. } = frame else {
         return Err(Descarte::Forma);
@@ -1824,16 +1944,19 @@ fn admitir_chat(
     if pkb == *own {
         return Err(Descarte::Eco);
     }
-    if chat_last.get(&pkb).is_some_and(|t| t.elapsed() < CHAT_MIN_INTERVAL) {
+    if chat_last.get(&pkb).is_some_and(|t| now.duration_since(*t) < CHAT_MIN_INTERVAL) {
         return Err(Descarte::Ritmo);
     }
     if chat.iter().any(|c| c.pk == pkb && c.ts == *ts && c.text == *text) {
         return Err(Descarte::Repetido);
     }
-    if !identity_pow_ok(&pkb, *pow) {
+    if !verificar {
+        return Err(Descarte::Presupuesto);
+    }
+    if !verificar_pow(&pkb, *pow) {
         return Err(Descarte::Pow);
     }
-    if !ed_verify(&pkb, &chat_msg(&pkb, *seq, *ts, name, text), &sigb) {
+    if !verificar_firma(&pkb, &chat_msg(&pkb, *seq, *ts, name, text), &sigb) {
         return Err(Descarte::Firma);
     }
     Ok(pkb)
@@ -2143,8 +2266,10 @@ struct Node {
     /// Pares conocidos remarcables; se persisten en peers.json del directorio de
     /// cadena y se re-marcan al arrancar (descubrimiento sin servidor central).
     known_peers: HashSet<String>,
-    /// peer -> cuándo se le atendió el último `Peers` (ver PEERS_MIN_INTERVAL).
-    peers_last: HashMap<rami_net::PeerId, Instant>,
+    /// IP del par -> cuándo se le atendió el último `Peers` (ver
+    /// PEERS_MIN_INTERVAL). No se borra al desconectar: es lo que impide que
+    /// reconectar dé otro turno.
+    peers_last: HashMap<String, Instant>,
     netinfo: Arc<Mutex<NetInfo>>,
     net: Network,
     mining: Arc<MiningShared>,
@@ -2160,6 +2285,8 @@ struct Node {
     presence_last: HashMap<[u8; 32], Instant>,
     chat: VecDeque<ChatEntry>,
     chat_last: HashMap<[u8; 32], Instant>,
+    /// Verificaciones caras concedidas a cada par (por IP; ver META_VERIFICACIONES_MAX).
+    meta_presupuesto: PresupuestoVerificaciones,
     my_presence: Option<PresenceLocal>,
     my_presence_at: Option<Instant>,
     my_seq: u64,
@@ -2300,6 +2427,7 @@ pub fn spawn(cfg: NodeConfig) -> Result<NodeHandle, String> {
         presence_last: HashMap::new(),
         chat: VecDeque::new(),
         chat_last: HashMap::new(),
+        meta_presupuesto: PresupuestoVerificaciones::default(),
         my_presence: None,
         my_presence_at: None,
         my_seq: 0,
@@ -2663,7 +2791,6 @@ impl Node {
                 self.peer_rule.remove(&peer);
                 self.peer_meta.remove(&peer);
                 self.peer_ident.remove(&peer);
-                self.peers_last.remove(&peer);
                 self.peer_tips.remove(&peer);
                 self.inflight.remove(&peer);
                 self.strikes.remove(&peer);
@@ -2894,9 +3021,10 @@ impl Node {
                 }
             }
             Frame::Peers { addrs } => {
-                // Un `Peers` por par cada 30 s y solo `IP:puerto` literales
+                // Un `Peers` por IP cada 30 s y solo `IP:puerto` literales
                 // (`peers_a_marcar`); el que sobra se ignora, no se corta.
-                let addrs = peers_a_marcar(&mut self.peers_last, peer, addrs, Instant::now());
+                let clave = self.peer_host(peer);
+                let addrs = peers_a_marcar(&mut self.peers_last, &clave, addrs, Instant::now());
                 if self.net.peer_count() < 16 {
                     for a in addrs {
                         self.net.dial(a);
@@ -2917,6 +3045,15 @@ impl Node {
         self.publish_status();
     }
 
+    /// IP del par (la del socket), como clave de los ritmos y presupuestos
+    /// que deben sobrevivir a una reconexión: un `PeerId` nuevo no los borra.
+    fn peer_host(&self, peer: PeerId) -> String {
+        match self.peer_meta.get(&peer) {
+            Some((addr, _, _)) => host_de(addr).to_string(),
+            None => format!("#{peer}"),
+        }
+    }
+
     /// Pares que entienden Dubái (anuncian regla ≥ 3): solo a ellos se les
     /// retransmite lo efímero del metaverso (los demás lo ignorarían igual).
     fn peers_dubai(&self, except: Option<PeerId>) -> Vec<PeerId> {
@@ -2928,9 +3065,16 @@ impl Node {
     /// trabajo y la firma). Si pasa, se guarda (tope de memoria) y se
     /// retransmite con un salto menos.
     fn on_presence(&mut self, from: PeerId, frame: Frame) {
-        let Ok(pkb) = admitir_presence(&self.presence, &self.presence_last, &self.identity.pubkey, &frame) else {
-            return;
-        };
+        let now = Instant::now();
+        let clave = self.peer_host(from);
+        let verificar = self.meta_presupuesto.disponible(&clave, now);
+        let r = admitir_presence(&self.presence, &self.presence_last, &self.identity.pubkey, &frame, now, verificar);
+        match r {
+            Ok(_) => self.meta_presupuesto.gastar(&clave, now, false),
+            Err(Descarte::Pow | Descarte::Firma) => self.meta_presupuesto.gastar(&clave, now, true),
+            Err(_) => {}
+        }
+        let Ok(pkb) = r else { return };
         let Frame::Presence { seq, ts, name, x, y, z, yaw, avatar, hops, .. } = &frame else { return };
         if !self.presence.contains_key(&pkb) && self.presence.len() >= PRESENCE_CAP {
             // Tope: fuera el más antiguo.
@@ -2939,10 +3083,10 @@ impl Node {
                 self.presence_last.remove(&old);
             }
         }
-        self.presence_last.insert(pkb, Instant::now());
+        self.presence_last.insert(pkb, now);
         self.presence.insert(
             pkb,
-            PresenceEntry { seq: *seq, ts: *ts, name: name.clone(), x: *x, y: *y, z: *z, yaw: *yaw, avatar: *avatar, seen: Instant::now() },
+            PresenceEntry { seq: *seq, ts: *ts, name: name.clone(), x: *x, y: *y, z: *z, yaw: *yaw, avatar: *avatar, seen: now },
         );
         if *hops < PRESENCE_MAX_HOPS {
             let mut f = frame;
@@ -2959,11 +3103,18 @@ impl Node {
     /// presencia. Si pasa, entra en el chat reciente (tope) y se retransmite
     /// con un salto menos.
     fn on_chat(&mut self, from: PeerId, frame: Frame) {
-        let Ok(pkb) = admitir_chat(&self.chat, &self.chat_last, &self.identity.pubkey, &frame) else {
-            return;
-        };
+        let now = Instant::now();
+        let clave = self.peer_host(from);
+        let verificar = self.meta_presupuesto.disponible(&clave, now);
+        let r = admitir_chat(&self.chat, &self.chat_last, &self.identity.pubkey, &frame, now, verificar);
+        match r {
+            Ok(_) => self.meta_presupuesto.gastar(&clave, now, false),
+            Err(Descarte::Pow | Descarte::Firma) => self.meta_presupuesto.gastar(&clave, now, true),
+            Err(_) => {}
+        }
+        let Ok(pkb) = r else { return };
         let Frame::Chat { ts, name, text, hops, .. } = &frame else { return };
-        self.chat_last.insert(pkb, Instant::now());
+        self.chat_last.insert(pkb, now);
         if self.chat_last.len() > PRESENCE_CAP * 2 {
             self.chat_last.retain(|_, t| t.elapsed() < Duration::from_secs(60));
         }
@@ -3721,7 +3872,18 @@ fn miner_loop(shared: Arc<MiningShared>, tx: Sender<NodeMsg>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     use std::sync::OnceLock;
+
+    thread_local! {
+        /// Cuántas veces se llegó a una comprobación cara (prueba de trabajo
+        /// o firma) en ESTE hilo: cada test lleva su propia cuenta.
+        pub(super) static VERIFICACIONES: Cell<u32> = const { Cell::new(0) };
+    }
+
+    fn verificaciones() -> u32 {
+        VERIFICACIONES.with(|c| c.get())
+    }
 
     /// Identidad de prueba con prueba de trabajo válida (la búsqueda del
     /// nonce cuesta alrededor de un segundo; se hace una vez por proceso).
@@ -3752,98 +3914,161 @@ mod tests {
         n
     }
 
-    fn hace(d: Duration) -> Instant {
-        Instant::now().checked_sub(d).expect("reloj monótono demasiado joven")
-    }
-
     /// Auditoría de 2026‑09‑29, R3: un `Presence` de una identidad ya vista
     /// que llega por encima del ritmo, o con la secuencia repetida, se
     /// descarta ANTES de comprobar la prueba de trabajo y la firma. Los
-    /// frames de la prueba llevan las dos inválidas a propósito: si se
-    /// comprobaran primero, el motivo sería `Pow` o `Firma`.
+    /// frames de la prueba llevan las dos inválidas a propósito (si se
+    /// comprobaran primero, el motivo sería `Pow` o `Firma`) y el contador
+    /// de comprobaciones caras del hilo demuestra que ni se calculan. El
+    /// reloj va inyectado: nada depende de lo que tarde el test.
     #[test]
     fn presence_over_the_rate_is_dropped_before_the_signature() {
         let id = ident();
         let own = [0u8; 32];
+        let t0 = Instant::now();
         let mut presence: HashMap<[u8; 32], PresenceEntry> = HashMap::new();
         let mut last: HashMap<[u8; 32], Instant> = HashMap::new();
-        // Una presencia legítima (seq 5) admitida hace un instante.
-        presence.insert(id.pubkey, PresenceEntry { seq: 5, ts: 1, name: "Rami".into(), x: 0, y: 0, z: 0, yaw: 0, avatar: 0, seen: Instant::now() });
-        last.insert(id.pubkey, Instant::now());
+        // Una presencia legítima (seq 5) admitida en t0.
+        presence.insert(id.pubkey, PresenceEntry { seq: 5, ts: 1, name: "Rami".into(), x: 0, y: 0, z: 0, yaw: 0, avatar: 0, seen: t0 });
+        last.insert(id.pubkey, t0);
 
         let mut malo = presence_frame(id, 6, Some(FIRMA_MALA));
         if let Frame::Presence { pow, .. } = &mut malo {
             *pow = pow_malo(id);
         }
-        assert_eq!(admitir_presence(&presence, &last, &own, &malo), Err(Descarte::Ritmo));
+        let antes = verificaciones();
+        let pronto = t0 + Duration::from_millis(1);
+        assert_eq!(admitir_presence(&presence, &last, &own, &malo, pronto, true), Err(Descarte::Ritmo));
         let mut repetido = presence_frame(id, 5, Some(FIRMA_MALA));
         if let Frame::Presence { pow, .. } = &mut repetido {
             *pow = pow_malo(id);
         }
-        assert_eq!(admitir_presence(&presence, &last, &own, &repetido), Err(Descarte::Secuencia));
+        assert_eq!(admitir_presence(&presence, &last, &own, &repetido, pronto, true), Err(Descarte::Secuencia));
+        assert_eq!(verificaciones(), antes, "por ritmo o secuencia no se calcula ni la prueba de trabajo ni la firma");
 
         // Pasado el ritmo mínimo, ese mismo frame SÍ llega a la prueba de
         // trabajo y a la firma, y cae por ellas, en ese orden.
-        last.insert(id.pubkey, hace(PRESENCE_MIN_INTERVAL * 2));
-        assert_eq!(admitir_presence(&presence, &last, &own, &malo), Err(Descarte::Pow));
+        let tarde = t0 + PRESENCE_MIN_INTERVAL * 2;
+        assert_eq!(admitir_presence(&presence, &last, &own, &malo, tarde, true), Err(Descarte::Pow));
+        assert_eq!(verificaciones(), antes + 1, "solo la prueba de trabajo");
         let firma_mala = presence_frame(id, 6, Some(FIRMA_MALA));
-        assert_eq!(admitir_presence(&presence, &last, &own, &firma_mala), Err(Descarte::Firma));
+        assert_eq!(admitir_presence(&presence, &last, &own, &firma_mala, tarde, true), Err(Descarte::Firma));
+        assert_eq!(verificaciones(), antes + 3, "prueba de trabajo y firma");
         // El legítimo entra.
-        assert_eq!(admitir_presence(&presence, &last, &own, &presence_frame(id, 6, None)), Ok(id.pubkey));
+        assert_eq!(admitir_presence(&presence, &last, &own, &presence_frame(id, 6, None), tarde, true), Ok(id.pubkey));
+        // Sin presupuesto del par, el frame que pasa lo barato se queda a las
+        // puertas de lo caro (y lo barato sigue decidiendo antes).
+        let antes = verificaciones();
+        assert_eq!(admitir_presence(&presence, &last, &own, &presence_frame(id, 7, None), tarde, false), Err(Descarte::Presupuesto));
+        assert_eq!(admitir_presence(&presence, &last, &own, &malo, pronto, false), Err(Descarte::Ritmo));
+        assert_eq!(verificaciones(), antes);
         // Una identidad sin memoria (nunca vista) no tiene atajo: su firma se verifica.
-        assert_eq!(admitir_presence(&HashMap::new(), &HashMap::new(), &own, &firma_mala), Err(Descarte::Firma));
-        assert_eq!(admitir_presence(&HashMap::new(), &HashMap::new(), &own, &presence_frame(id, 1, None)), Ok(id.pubkey));
+        assert_eq!(admitir_presence(&HashMap::new(), &HashMap::new(), &own, &firma_mala, t0, true), Err(Descarte::Firma));
+        assert_eq!(admitir_presence(&HashMap::new(), &HashMap::new(), &own, &presence_frame(id, 1, None), t0, true), Ok(id.pubkey));
         // Lo nuestro de vuelta y lo mal formado se descartan antes que nada.
-        assert_eq!(admitir_presence(&presence, &last, &id.pubkey, &presence_frame(id, 9, None)), Err(Descarte::Eco));
+        assert_eq!(admitir_presence(&presence, &last, &id.pubkey, &presence_frame(id, 9, None), tarde, true), Err(Descarte::Eco));
         let mut lejos = presence_frame(id, 9, None);
         if let Frame::Presence { x, .. } = &mut lejos {
             *x = PRESENCE_COORD_MAX + 1;
         }
-        assert_eq!(admitir_presence(&HashMap::new(), &HashMap::new(), &own, &lejos), Err(Descarte::Forma));
-        assert_eq!(admitir_presence(&presence, &last, &own, &Frame::Ping { nonce: 1 }), Err(Descarte::Forma));
+        assert_eq!(admitir_presence(&HashMap::new(), &HashMap::new(), &own, &lejos, t0, true), Err(Descarte::Forma));
+        assert_eq!(admitir_presence(&presence, &last, &own, &Frame::Ping { nonce: 1 }, t0, true), Err(Descarte::Forma));
     }
 
     /// R3 para el chat: ritmo y repetido antes que la prueba de trabajo y la
-    /// firma, con los mismos frames inválidos.
+    /// firma, con los mismos frames inválidos y el mismo contador.
     #[test]
     fn chat_over_the_rate_is_dropped_before_the_signature() {
         let id = ident();
         let own = [0u8; 32];
+        let t0 = Instant::now();
         let mut chat: VecDeque<ChatEntry> = VecDeque::new();
         let mut last: HashMap<[u8; 32], Instant> = HashMap::new();
-        last.insert(id.pubkey, Instant::now());
+        last.insert(id.pubkey, t0);
 
         let mut malo = chat_frame(id, 2, 100, "hola", Some(FIRMA_MALA));
         if let Frame::Chat { pow, .. } = &mut malo {
             *pow = pow_malo(id);
         }
-        assert_eq!(admitir_chat(&chat, &last, &own, &malo), Err(Descarte::Ritmo));
+        let antes = verificaciones();
+        let pronto = t0 + Duration::from_millis(1);
+        let tarde = t0 + CHAT_MIN_INTERVAL * 2;
+        assert_eq!(admitir_chat(&chat, &last, &own, &malo, pronto, true), Err(Descarte::Ritmo));
 
         // Con el ritmo cumplido, el mismo mensaje ya en el chat reciente se
         // reconoce como repetido, también sin mirar la firma.
-        last.insert(id.pubkey, hace(CHAT_MIN_INTERVAL * 2));
         chat.push_back(ChatEntry { pk: id.pubkey, name: "Rami".into(), text: "hola".into(), ts: 100 });
-        assert_eq!(admitir_chat(&chat, &last, &own, &malo), Err(Descarte::Repetido));
+        assert_eq!(admitir_chat(&chat, &last, &own, &malo, tarde, true), Err(Descarte::Repetido));
         chat.clear();
+        // Sin presupuesto, tampoco.
+        assert_eq!(admitir_chat(&chat, &last, &own, &malo, tarde, false), Err(Descarte::Presupuesto));
+        assert_eq!(verificaciones(), antes, "por ritmo, repetido o presupuesto no se calcula nada caro");
         // Y solo entonces se llega a la prueba de trabajo y a la firma.
-        assert_eq!(admitir_chat(&chat, &last, &own, &malo), Err(Descarte::Pow));
-        assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 2, 100, "hola", Some(FIRMA_MALA))), Err(Descarte::Firma));
-        assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 2, 100, "hola", None)), Ok(id.pubkey));
+        assert_eq!(admitir_chat(&chat, &last, &own, &malo, tarde, true), Err(Descarte::Pow));
+        assert_eq!(verificaciones(), antes + 1);
+        assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 2, 100, "hola", Some(FIRMA_MALA)), tarde, true), Err(Descarte::Firma));
+        assert_eq!(verificaciones(), antes + 3);
+        assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 2, 100, "hola", None), tarde, true), Ok(id.pubkey));
         // Forma: texto vacío o con control, y lo nuestro de vuelta.
-        assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 3, 100, "", None)), Err(Descarte::Forma));
-        assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 3, 100, "hola\nadiós", None)), Err(Descarte::Forma));
-        assert_eq!(admitir_chat(&chat, &last, &id.pubkey, &chat_frame(id, 3, 100, "hola", None)), Err(Descarte::Eco));
+        assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 3, 100, "", None), tarde, true), Err(Descarte::Forma));
+        assert_eq!(admitir_chat(&chat, &last, &own, &chat_frame(id, 3, 100, "hola\nadiós", None), tarde, true), Err(Descarte::Forma));
+        assert_eq!(admitir_chat(&chat, &last, &id.pubkey, &chat_frame(id, 3, 100, "hola", None), tarde, true), Err(Descarte::Eco));
+    }
+
+    /// R3, segunda vuelta: el presupuesto de verificaciones caras por par. Un
+    /// par honesto gasta una por frame admitido y no se acerca al tope; uno
+    /// que manda una prueba de trabajo o una firma inválidas agota la ventana
+    /// entera; al acabar la ventana, cuenta nueva. La clave es la IP: la
+    /// misma IP con otra conexión sigue en la misma cuenta.
+    #[test]
+    fn expensive_verifications_are_budgeted_per_peer_and_a_bad_signature_exhausts_the_window() {
+        let mut p = PresupuestoVerificaciones::default();
+        let t0 = Instant::now();
+        assert!(p.disponible("10.0.0.1", t0));
+        for _ in 0..META_VERIFICACIONES_MAX - 1 {
+            p.gastar("10.0.0.1", t0, false);
+        }
+        assert!(p.disponible("10.0.0.1", t0 + Duration::from_secs(1)), "queda una");
+        p.gastar("10.0.0.1", t0, false);
+        assert!(!p.disponible("10.0.0.1", t0 + Duration::from_secs(1)), "tope de la ventana");
+        assert!(p.disponible("10.0.0.2", t0), "otro par tiene su cuenta");
+        // Una inválida agota la ventana de golpe.
+        p.gastar("10.0.0.2", t0, true);
+        assert!(!p.disponible("10.0.0.2", t0 + Duration::from_secs(9)));
+        // Y al acabar la ventana, cuenta nueva para los dos.
+        let luego = t0 + META_VERIFICACIONES_VENTANA;
+        assert!(p.disponible("10.0.0.1", luego) && p.disponible("10.0.0.2", luego));
+        p.gastar("10.0.0.1", luego, false);
+        p.gastar("10.0.0.2", luego, false);
+        assert_eq!(p.por_par["10.0.0.2"], (luego, 1));
+        // Memoria acotada: con la tabla llena de ventanas vivas, un par nuevo
+        // espera a que caduque alguna (se cierra antes que crecer sin tope).
+        for i in 0..META_PRESUPUESTOS_CAP {
+            p.gastar(&format!("10.1.{}.{}", i / 256, i % 256), luego, false);
+        }
+        assert_eq!(p.por_par.len(), META_PRESUPUESTOS_CAP);
+        assert!(!p.disponible("10.9.9.9", luego + Duration::from_secs(1)));
+        assert_eq!(p.por_par.len(), META_PRESUPUESTOS_CAP, "nada que podar: todas las ventanas siguen vivas");
+        assert!(p.disponible("10.9.9.9", luego + META_VERIFICACIONES_VENTANA), "las ventanas caducadas se podan");
+        assert!(p.por_par.is_empty());
+        assert_eq!(host_de("1.2.3.4:5678"), "1.2.3.4");
+        assert_eq!(host_de("[::1]:5678"), "[::1]");
+    }
+
+    fn strs(v: &[&str]) -> Vec<String> {
+        v.iter().map(|a| a.to_string()).collect()
     }
 
     /// Auditoría de 2026‑09‑29, R2 (la parte del nodo): de un `Peers` solo se
-    /// marcan direcciones `IP:puerto` literales, nunca nombres que haya que
-    /// resolver, y de un mismo par se atiende como mucho un `Peers` cada
-    /// `PEERS_MIN_INTERVAL`; los demás se ignoran sin adelantar su turno.
+    /// marcan direcciones `IP:puerto` literales en forma canónica, nunca
+    /// nombres que haya que resolver, y de una misma IP se atiende como mucho
+    /// un `Peers` cada `PEERS_MIN_INTERVAL`; los demás se ignoran sin
+    /// adelantar su turno, venga de la conexión que venga.
     #[test]
-    fn peers_are_rate_limited_per_peer_and_only_literal_addresses_are_dialed() {
-        let mut last: HashMap<rami_net::PeerId, Instant> = HashMap::new();
+    fn peers_are_rate_limited_per_host_and_only_literal_addresses_are_dialed() {
+        let mut last: HashMap<String, Instant> = HashMap::new();
         let t0 = Instant::now();
-        let mezcla: Vec<String> = [
+        let mezcla = strs(&[
             "1.2.3.4:30301",
             "seed.quantbot.army:30301",
             "[::1]:30301",
@@ -3856,25 +4081,43 @@ mod tests {
             "1.2.3.4",
             "::1:30301",
             "",
+            "[fe80::1%3]:30301",
+            "[::ffff:0.0.0.0]:30301",
+            "[::ffff:255.255.255.255]:30301",
+            "[::ffff:224.0.0.1]:30301",
             "10.0.0.1:30302",
-        ]
-        .iter()
-        .map(|a| a.to_string())
-        .collect();
-        assert_eq!(peers_a_marcar(&mut last, 7, mezcla.clone(), t0), vec!["1.2.3.4:30301", "[::1]:30301", "10.0.0.1:30302"]);
-        // El mismo par, dentro del plazo: nada, y sin adelantar su turno.
-        assert!(peers_a_marcar(&mut last, 7, mezcla.clone(), t0 + Duration::from_millis(100)).is_empty());
-        assert!(peers_a_marcar(&mut last, 7, mezcla.clone(), t0 + PEERS_MIN_INTERVAL - Duration::from_millis(1)).is_empty());
-        // Otro par tiene su propio ritmo.
-        assert_eq!(peers_a_marcar(&mut last, 8, mezcla.clone(), t0 + Duration::from_secs(1)).len(), 3);
+        ]);
+        assert_eq!(peers_a_marcar(&mut last, "203.0.113.7", mezcla.clone(), t0), strs(&["1.2.3.4:30301", "[::1]:30301", "10.0.0.1:30302"]));
+        // Cuatro grafías de la misma dirección son una sola, ya canónica: la
+        // memoria de marcados del transporte la reconoce.
+        let grafias = strs(&["[::ffff:1.2.3.4]:30301", "[0:0:0:0:0:ffff:102:304]:30301", "[::FFFF:1.2.3.4]:30301", "1.2.3.4:30301"]);
+        assert_eq!(peers_a_marcar(&mut last, "203.0.113.8", grafias, t0), strs(&["1.2.3.4:30301"]));
+        // La misma IP, dentro del plazo: nada, y sin adelantar su turno.
+        assert!(peers_a_marcar(&mut last, "203.0.113.7", mezcla.clone(), t0 + Duration::from_millis(100)).is_empty());
+        assert!(peers_a_marcar(&mut last, "203.0.113.7", mezcla.clone(), t0 + PEERS_MIN_INTERVAL - Duration::from_millis(1)).is_empty());
+        // Otra IP tiene su propio ritmo.
+        assert_eq!(peers_a_marcar(&mut last, "203.0.113.9", mezcla.clone(), t0 + Duration::from_secs(1)).len(), 3);
         // Cumplido el plazo desde el ÚLTIMO atendido (no desde el último ignorado), se vuelve a atender.
-        assert_eq!(peers_a_marcar(&mut last, 7, mezcla.clone(), t0 + PEERS_MIN_INTERVAL).len(), 3);
+        assert_eq!(peers_a_marcar(&mut last, "203.0.113.7", mezcla.clone(), t0 + PEERS_MIN_INTERVAL).len(), 3);
         // Tope de direcciones por `Peers`, y las literales cuentan aunque vengan detrás de nombres.
         let muchas: Vec<String> = (0..20).map(|i| format!("10.0.1.{i}:30301")).collect();
-        assert_eq!(peers_a_marcar(&mut last, 9, muchas, t0).len(), PEERS_MAX_DIAL);
-        let detras: Vec<String> = ["a.example.com:30301", "b.example.com:30301", "10.0.2.1:30301"].iter().map(|a| a.to_string()).collect();
-        assert_eq!(peers_a_marcar(&mut last, 10, detras, t0), vec!["10.0.2.1:30301"]);
+        assert_eq!(peers_a_marcar(&mut last, "203.0.113.10", muchas, t0).len(), PEERS_MAX_DIAL);
+        let detras = strs(&["a.example.com:30301", "b.example.com:30301", "10.0.2.1:30301"]);
+        assert_eq!(peers_a_marcar(&mut last, "203.0.113.11", detras, t0), strs(&["10.0.2.1:30301"]));
+        // Memoria acotada: llena de turnos vivos, una IP nueva espera a que
+        // caduque alguno; los caducados se podan.
+        let mut llena: HashMap<String, Instant> = HashMap::new();
+        let t1 = t0 + Duration::from_secs(600);
+        for i in 0..PEERS_MEMORIA_CAP {
+            peers_a_marcar(&mut llena, &format!("10.2.{}.{}", i / 256, i % 256), strs(&["10.0.0.1:30302"]), t1);
+        }
+        assert_eq!(llena.len(), PEERS_MEMORIA_CAP);
+        assert!(peers_a_marcar(&mut llena, "10.9.9.9", strs(&["10.0.0.1:30302"]), t1 + Duration::from_secs(1)).is_empty());
+        assert_eq!(peers_a_marcar(&mut llena, "10.9.9.9", strs(&["10.0.0.1:30302"]), t1 + PEERS_MIN_INTERVAL).len(), 1);
+        assert_eq!(llena.len(), 1);
         // Todo lo que el nodo deja pasar lo acepta también el transporte.
-        assert!(rami_net::dial_addr_ok("1.2.3.4:30301") && rami_net::dial_addr_ok("[::1]:30301"));
+        for a in ["1.2.3.4:30301", "[::1]:30301", "10.0.0.1:30302"] {
+            assert!(rami_net::dial_addr_ok(a), "{a}");
+        }
     }
 }

@@ -2,7 +2,7 @@
 //! canónico de testnet. La sincronización es la del universo de ramas
 //! (`Tips` -> `GetBranch` -> `Branch`): toda rama válida llega a todos.
 
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -509,6 +509,69 @@ fn hostile_tips_do_not_amplify_requests() {
     assert_eq!(served, Some((10, false)));
     // y el par sigue conectado (nada de esto es motivo de expulsión por sí solo)
     assert_eq!(a.status().peers.len(), 1);
+
+    let _ = std::fs::remove_dir_all(&da);
+}
+
+/// Auditoría de 2026‑09‑29, R2 (la parte del nodo), con un nodo real y
+/// «vecinos» que solo cuentan las conexiones que les llegan: de un `Peers`
+/// se marca la dirección IP:puerto literal y nunca el nombre; el siguiente
+/// `Peers` del mismo origen dentro de los 30 s se ignora sin cortar la
+/// conexión (el nodo sigue contestando), y reconectar no adelanta el turno.
+#[test]
+fn peers_are_dialed_once_per_window_per_host_and_never_by_name() {
+    let da = tmpdir("peers-a");
+    let a = regtest_node(&da, true, vec![]);
+    let port = listen_port(&a);
+    let net_hex = a.status().network_id;
+    let vecinos: Vec<TcpListener> = (0..4)
+        .map(|_| {
+            let l = TcpListener::bind("127.0.0.1:0").expect("vecino");
+            l.set_nonblocking(true).unwrap();
+            l
+        })
+        .collect();
+    let puerto = |i: usize| vecinos[i].local_addr().unwrap().port();
+    let recibidas = |i: usize| {
+        let mut n = 0;
+        while vecinos[i].accept().is_ok() {
+            n += 1;
+        }
+        n
+    };
+
+    let mut p = RawPeer::connect(port, &net_hex);
+    let hello = p.drain(Duration::from_millis(500));
+    assert!(hello.iter().any(|f| matches!(f, Frame::GetPeers)), "{hello:?}");
+    // 1) Un nombre y una IP literal: solo la IP se marca. 2) Otro `Peers`
+    // acto seguido: dentro del plazo se ignora entero.
+    p.send(&Frame::Peers { addrs: vec![format!("localhost:{}", puerto(0)), format!("127.0.0.1:{}", puerto(1))] });
+    p.send(&Frame::Peers { addrs: vec![format!("127.0.0.1:{}", puerto(2))] });
+    std::thread::sleep(Duration::from_millis(700));
+    assert_eq!(recibidas(1), 1, "la IP literal del primer Peers se marca una vez");
+    assert_eq!(recibidas(0), 0, "un nombre nunca se marca");
+    assert_eq!(recibidas(2), 0, "el segundo Peers dentro del plazo se ignora");
+    // ...sin cortar la conexión: el nodo sigue contestando.
+    p.send(&Frame::Ping { nonce: 77 });
+    let got = p.drain(Duration::from_millis(500));
+    assert!(got.iter().any(|f| matches!(f, Frame::Pong { nonce: 77 })), "{got:?}");
+    assert_eq!(a.status().peers.len(), 1);
+
+    // 3) Reconectar (misma IP, otro PeerId) no da otro turno.
+    drop(p);
+    let t0 = Instant::now();
+    while !a.status().peers.is_empty() && t0.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(a.status().peers.is_empty(), "el nodo no vio la desconexión");
+    let mut p2 = RawPeer::connect(port, &net_hex);
+    let _ = p2.drain(Duration::from_millis(500));
+    p2.send(&Frame::Peers { addrs: vec![format!("127.0.0.1:{}", puerto(3))] });
+    std::thread::sleep(Duration::from_millis(700));
+    assert_eq!(recibidas(3), 0, "reconectar no adelanta el turno de Peers");
+    p2.send(&Frame::Ping { nonce: 78 });
+    let got = p2.drain(Duration::from_millis(500));
+    assert!(got.iter().any(|f| matches!(f, Frame::Pong { nonce: 78 })), "{got:?}");
 
     let _ = std::fs::remove_dir_all(&da);
 }

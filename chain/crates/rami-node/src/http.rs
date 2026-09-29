@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Longitud máxima de la línea de petición y de cada cabecera.
 const MAX_LINE: usize = 8 * 1024;
@@ -27,13 +27,17 @@ const MAX_LINE: usize = 8 * 1024;
 const MAX_HEADERS: usize = 100;
 /// Cuerpo máximo (panel local, cuerpos pequeños).
 const MAX_BODY: usize = 1 << 20;
-/// Un cliente que no termina de hablar en este tiempo se corta.
+/// Plazo TOTAL de una conexión: petición leída y respuesta escrita en este
+/// tiempo, o se corta. Es por conexión y no por lectura (`ConPlazo`): un
+/// cliente que gotea un byte cada pocos segundos nunca deja el socket en
+/// silencio, y con un timeout por lectura retenía su hilo, y desde R4 su
+/// plaza, sin límite.
 const IO_TIMEOUT: Duration = Duration::from_secs(15);
-/// Conexiones atendidas a la vez: cada una ocupa un hilo hasta que contesta
-/// o vence `IO_TIMEOUT`. La que sobra se cierra sin leerla, con el mismo
-/// patrón que `rami_net::MAX_PENDING_INBOUND` (contador y plaza que se
-/// libera al soltarse). El panel abre un puñado; sin tope, otro proceso de
-/// la máquina, o cualquier cliente de la API pública de `rami-node market`,
+/// Conexiones atendidas a la vez: cada una ocupa un hilo como mucho
+/// `IO_TIMEOUT`. La que sobra se cierra sin leerla, con el mismo patrón que
+/// `rami_net::MAX_PENDING_INBOUND` (contador y plaza que se libera al
+/// soltarse). El panel abre un puñado; sin tope, otro proceso de la
+/// máquina, o cualquier cliente de la API pública de `rami-node market`,
 /// abría conexiones hasta agotar los hilos del proceso entero (auditoría de
 /// 2026‑09‑29, hallazgo R4).
 pub const MAX_CONNS: usize = 64;
@@ -282,17 +286,42 @@ impl Drop for Plaza {
     }
 }
 
+/// Conexiones que sobraron y se cerraron sin leer (solo para los tests).
+#[cfg(test)]
+static RECHAZADAS: AtomicUsize = AtomicUsize::new(0);
+
 /// Sirve para siempre. `handler` se comparte entre hilos. Como mucho
 /// `MAX_CONNS` conexiones a la vez: la que sobra se cierra sin leer nada.
 pub fn serve<F>(listener: TcpListener, handler: F)
 where
     F: Fn(Request) -> Response + Send + Sync + 'static,
 {
+    servir(listener, handler, IO_TIMEOUT)
+}
+
+/// `serve` con el plazo por conexión como parámetro (los tests lo acortan).
+fn servir<F>(listener: TcpListener, handler: F, plazo: Duration)
+where
+    F: Fn(Request) -> Response + Send + Sync + 'static,
+{
     let handler = Arc::new(handler);
     // Solo este bucle sube el contador; lo bajan las plazas al soltarse.
     let conns = Arc::new(AtomicUsize::new(0));
-    for stream in listener.incoming().flatten() {
+    for stream in listener.incoming() {
+        let stream = match stream {
+            Ok(s) => s,
+            Err(e) => {
+                // Sin descriptores (EMFILE) `accept` falla en el acto y la
+                // conexión sigue en cola: sin esta pausa el bucle giraría
+                // ocupando una CPU entera hasta que se libere alguno.
+                eprintln!("[panel] accept: {e}");
+                thread::sleep(Duration::from_millis(100));
+                continue;
+            }
+        };
         if conns.load(Ordering::Relaxed) >= MAX_CONNS {
+            #[cfg(test)]
+            RECHAZADAS.fetch_add(1, Ordering::Relaxed);
             let _ = stream.shutdown(Shutdown::Both);
             continue;
         }
@@ -304,7 +333,7 @@ where
         // pánico).
         let spawned = thread::Builder::new().name("rami-http".into()).spawn(move || {
             let _plaza = plaza;
-            let _ = handle_conn(stream, h);
+            let _ = handle_conn(stream, h, plazo);
         });
         if let Err(e) = spawned {
             // Sin hilo no hay respuesta: el socket y la plaza (movidos al
@@ -324,6 +353,42 @@ where
     serve(listener, handler)
 }
 
+/// Socket con plazo TOTAL: cada lectura o escritura espera como mucho lo que
+/// quede hasta `fin` (el timeout del socket se reajusta antes de cada una),
+/// así que ningún goteo mantiene la conexión viva más allá del plazo. Los
+/// dos lados (`try_clone` del mismo socket) comparten el mismo `fin`.
+struct ConPlazo {
+    s: TcpStream,
+    fin: Instant,
+}
+
+impl ConPlazo {
+    fn queda(&self) -> io::Result<Duration> {
+        let queda = self.fin.saturating_duration_since(Instant::now());
+        if queda.is_zero() {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "plazo de la conexión vencido"));
+        }
+        Ok(queda)
+    }
+}
+
+impl Read for ConPlazo {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.s.set_read_timeout(Some(self.queda()?))?;
+        self.s.read(buf)
+    }
+}
+
+impl Write for ConPlazo {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.s.set_write_timeout(Some(self.queda()?))?;
+        self.s.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.s.flush()
+    }
+}
+
 /// Lee una línea de como mucho `MAX_LINE` bytes; más largo = petición
 /// rechazada (nunca se acumula memoria sin tope).
 fn read_line_bounded<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
@@ -338,17 +403,17 @@ fn read_line_bounded<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
     Ok(Some(l))
 }
 
-fn handle_conn<F>(stream: TcpStream, handler: Arc<F>) -> io::Result<()>
+fn handle_conn<F>(stream: TcpStream, handler: Arc<F>, plazo: Duration) -> io::Result<()>
 where
     F: Fn(Request) -> Response,
 {
-    let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
-    let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
-    let mut reader = BufReader::new(stream.try_clone()?);
+    let fin = Instant::now() + plazo;
+    let mut reader = BufReader::new(ConPlazo { s: stream.try_clone()?, fin });
+    let mut stream = ConPlazo { s: stream, fin };
     let line = match read_line_bounded(&mut reader) {
         Ok(Some(l)) => l,
         Ok(None) => return Ok(()),
-        Err(_) => return write_simple(stream, 400, "bad request"),
+        Err(_) => return write_simple(&mut stream, 400, "bad request"),
     };
     let mut parts = line.trim_end().split_whitespace();
     let method = parts.next().unwrap_or("").to_string();
@@ -371,7 +436,7 @@ where
         let hl = match read_line_bounded(&mut reader) {
             Ok(Some(l)) => l,
             Ok(None) => break,
-            Err(_) => return write_simple(stream, 400, "bad request"),
+            Err(_) => return write_simple(&mut stream, 400, "bad request"),
         };
         let t = hl.trim_end();
         if t.is_empty() {
@@ -379,7 +444,7 @@ where
         }
         count += 1;
         if count > MAX_HEADERS {
-            return write_simple(stream, 400, "too many headers");
+            return write_simple(&mut stream, 400, "too many headers");
         }
         if let Some((k, v)) = t.split_once(':') {
             let k = k.trim();
@@ -399,7 +464,7 @@ where
         }
     }
     if content_length > MAX_BODY {
-        return write_simple(stream, 413, "body too large");
+        return write_simple(&mut stream, 413, "body too large");
     }
     let mut body = vec![0u8; content_length];
     if content_length > 0 {
@@ -407,14 +472,11 @@ where
     }
 
     let resp = handler(Request { method, path, query, body, content_type, host, origin, referer, token });
-    write_response(stream, resp)
+    write_response(&mut stream, resp)
 }
 
-fn write_simple(stream: TcpStream, status: u16, msg: &str) -> io::Result<()> {
-    write_response(
-        stream,
-        Response { status, content_type: "text/plain; charset=utf-8".into(), body: msg.as_bytes().to_vec() },
-    )
+fn write_simple<W: Write>(w: &mut W, status: u16, msg: &str) -> io::Result<()> {
+    write_response(w, Response { status, content_type: "text/plain; charset=utf-8".into(), body: msg.as_bytes().to_vec() })
 }
 
 /// Cabeceras de TODA respuesta del proceso (panel local y API pública): sin
@@ -432,7 +494,7 @@ fn response_head(resp: &Response, cors: &str) -> String {
     )
 }
 
-fn write_response(mut w: TcpStream, resp: Response) -> io::Result<()> {
+fn write_response<W: Write>(w: &mut W, resp: Response) -> io::Result<()> {
     let cors = if PUBLIC_CORS.load(std::sync::atomic::Ordering::Relaxed) { "Access-Control-Allow-Origin: *\r\n" } else { "" };
     let head = response_head(&resp, cors);
     w.write_all(head.as_bytes())?;
@@ -563,12 +625,15 @@ mod tests {
         // MAX_CONNS clientes que conectan y callan: cada uno ocupa una plaza
         // (y un hilo) hasta que cuelgue o venza IO_TIMEOUT.
         let ociosas: Vec<TcpStream> = (0..MAX_CONNS).map(|_| TcpStream::connect(("127.0.0.1", port)).unwrap()).collect();
-        // La siguiente se cierra sin respuesta, aunque pida algo.
+        // La siguiente se cierra sin respuesta, aunque pida algo: pasa por la
+        // rama de rechazo (que no lee nada) y el manejador no la ve.
+        let rechazadas = RECHAZADAS.load(Ordering::Relaxed);
         let (buf, r) = pide(port);
         if let Err(e) = &r {
             assert!(!matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut), "el servidor ni cerró ni contestó: {e}");
         }
         assert!(buf.is_empty(), "la conexión que sobra no recibe respuesta: {:?}", String::from_utf8_lossy(&buf));
+        assert_eq!(RECHAZADAS.load(Ordering::Relaxed), rechazadas + 1, "la conexión que sobra pasa por la rama de rechazo");
         assert_eq!(atendidas.load(Ordering::Relaxed), 0, "el manejador no debe ver la conexión que sobra");
         // Cuelgan las ociosas: sus plazas se liberan y el servidor vuelve a atender.
         drop(ociosas);
@@ -585,6 +650,42 @@ mod tests {
         assert!(respuesta.starts_with("HTTP/1.1 200 OK\r\n"), "{respuesta}");
         assert!(respuesta.ends_with("{\"ok\":true}"), "{respuesta}");
         assert_eq!(atendidas.load(Ordering::Relaxed), 1);
+    }
+
+    /// R4, segunda vuelta: el plazo es por CONEXIÓN, no por lectura. Un
+    /// cliente que gotea un byte cada pocos milisegundos nunca deja el socket
+    /// en silencio y aun así se le corta al vencer el plazo total; con el
+    /// timeout por lectura de antes retenía su plaza para siempre.
+    #[test]
+    fn a_dripping_client_is_cut_at_the_total_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let plazo = Duration::from_millis(300);
+        thread::spawn(move || servir(listener, |_req| Response::json(&serde_json::json!({"ok": true})), plazo));
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let t0 = Instant::now();
+        let mut cortado = false;
+        // Una petición que nunca termina, a un byte cada 20 ms (quince veces
+        // más rápido que el plazo: ninguna lectura llega a vencer sola).
+        for b in b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Goteo: ".iter().cycle() {
+            if s.write_all(&[*b]).is_err() {
+                cortado = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+            if t0.elapsed() > Duration::from_secs(5) {
+                break;
+            }
+        }
+        assert!(cortado, "el servidor no cortó al cliente que gotea en {:?}", t0.elapsed());
+        assert!(t0.elapsed() >= plazo, "se cortó antes del plazo: {:?}", t0.elapsed());
+        // Y el hilo y su plaza quedaron libres: una petición normal se atiende.
+        let mut ok = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        ok.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        ok.write_all(format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").as_bytes()).unwrap();
+        let mut buf = Vec::new();
+        let _ = ok.read_to_end(&mut buf);
+        assert!(String::from_utf8_lossy(&buf).starts_with("HTTP/1.1 200 OK\r\n"));
     }
 
     #[test]
