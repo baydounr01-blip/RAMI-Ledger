@@ -1,6 +1,11 @@
 # Rust
 chain/target/
 **/*.rs.bk
+# Restos de sesiones locales de regtest (auditoría de 2026‑09‑29, R8): la
+# carpeta personal de una prueba, sus registros y sus datos de cadena.
+chain/.rami/
+chain/*.log
+chain/c3/
 # El Cargo.lock del workspace SÍ se versiona: los binarios (nodo/monedero) que
 # se distribuyen deben construirse de forma reproducible con --locked.
 # RAMI ledger secretos (NUNCA se publican)

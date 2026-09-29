@@ -303,7 +303,12 @@ mod tests {
         let dt = t0.elapsed();
         eprintln!("[identidad] creación de node.key con {IDENTITY_POW_BITS} bits: {dt:?}");
         assert!(a.pow_ok());
-        assert!(dt.as_secs() < 20, "la creación tardó demasiado: {dt:?}");
+        // La búsqueda del nonce es geométrica (media 2^20 hashes, sin tope
+        // por arriba) y en el perfil `test` (sin optimizar) corre junto a las
+        // demás pruebas del crate: con 20 s falló en CI por 0,3 s. El límite
+        // vigila que la creación siga siendo «del orden de segundos», no
+        // «minutos»: 60 s lo dice igual sin depender de la carga de la máquina.
+        assert!(dt.as_secs() < 60, "la creación tardó demasiado: {dt:?}");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
